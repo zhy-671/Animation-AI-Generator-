@@ -208,6 +208,10 @@ export default function VideoEditor() {
   const [videoQuality, setVideoQuality] = useState<"512P" | "768P" | "1080P">("768P");
   const [videoDuration, setVideoDuration] = useState<5 | 10>(5);
   
+  // Editable video description
+  const [editingVideoDescription, setEditingVideoDescription] = useState<string>("");
+  const [isSavingDescription, setIsSavingDescription] = useState(false);
+  
   // Video player type: 'native' | 'react-player' | 'videojs'
   const [playerType, setPlayerType] = useState<"native" | "react-player">("react-player");
   
@@ -876,8 +880,17 @@ export default function VideoEditor() {
     
     setIsRegenerating(true);
     try {
-      // Prioritize using video_prompt from storyboard as video description
-      const videoDescription = selectedClip.shotData?.video_prompt || selectedClip.shotData?.image_prompt || selectedClip.shotData?.description || "";
+      // Use edited description if available, otherwise use original
+      const videoDescription = editingVideoDescription.trim() || 
+        selectedClip.shotData?.video_prompt || 
+        selectedClip.shotData?.image_prompt || 
+        selectedClip.shotData?.description || "";
+      
+      if (!videoDescription.trim()) {
+        showWarning("Please enter a video description");
+        setIsRegenerating(false);
+        return;
+      }
       
       // Call video generation API
       const response = await fetch("/api/video/generate", {
@@ -944,11 +957,89 @@ export default function VideoEditor() {
               
               if (uploadResponse.ok) {
                 const uploadResult = await uploadResponse.json();
-                if (uploadResult.success) {
-                  // Reload video list
+                if (uploadResult.success && uploadResult.data?.videoUrl) {
+                  // Automatically replace the video in the track
+                  const newVideoUrl = uploadResult.data.videoUrl;
+                  
+                  // Update the clip URL in tracks
+                  setTracks(prevTracks => 
+                    prevTracks.map(track => ({
+                      ...track,
+                      clips: track.clips.map(c => {
+                        if (c.id === clip.id) {
+                          return {
+                            ...c,
+                            url: newVideoUrl,
+                            // Update thumbnail if available
+                            thumbnail: uploadResult.data?.thumbnailUrl || c.thumbnail,
+                          };
+                        }
+                        return c;
+                      })
+                    }))
+                  );
+                  
+                  // Update clipsArrayRef for video player
+                  clipsArrayRef.current = clipsArrayRef.current.map(c => {
+                    if (c.id === clip.id) {
+                      return {
+                        ...c,
+                        url: newVideoUrl,
+                        thumbnail: uploadResult.data?.thumbnailUrl || c.thumbnail,
+                      };
+                    }
+                    return c;
+                  });
+                  
+                  // If this is the currently playing clip, update the ref
+                  if (currentPlayingClipRef.current?.id === clip.id) {
+                    currentPlayingClipRef.current = {
+                      ...currentPlayingClipRef.current,
+                      url: newVideoUrl,
+                      thumbnail: uploadResult.data?.thumbnailUrl || currentPlayingClipRef.current.thumbnail,
+                    };
+                  }
+                  
+                  // Update sceneData to reflect the new video URL
+                  if (sceneData?.items) {
+                    const updatedSceneData = {
+                      ...sceneData,
+                      items: sceneData.items.map((item: any) => {
+                        if (item.id === clip.sceneItemId && item.metadata?.storyboard?.shots) {
+                          return {
+                            ...item,
+                            metadata: {
+                              ...item.metadata,
+                              storyboard: {
+                                ...item.metadata.storyboard,
+                                shots: item.metadata.storyboard.shots.map((shot: any) => {
+                                  if (shot.shot_number === clip.shotNumber) {
+                                    return {
+                                      ...shot,
+                                      video_url: newVideoUrl,
+                                      thumbnail_url: uploadResult.data?.thumbnailUrl || shot.thumbnail_url,
+                                    };
+                                  }
+                                  return shot;
+                                })
+                              }
+                            }
+                          };
+                        }
+                        return item;
+                      })
+                    };
+                    setSceneData(updatedSceneData);
+                  }
+                  
+                  // Reload videos to ensure consistency
                   await loadVideos();
-                  showSuccess("Video regenerated successfully!");
+                  showSuccess("Video regenerated and replaced successfully!");
+                } else {
+                  showError("Failed to upload video");
                 }
+              } else {
+                showError("Failed to upload video to storage");
               }
               return;
             } else if (result.data.status === "FAILED") {
@@ -974,6 +1065,112 @@ export default function VideoEditor() {
     };
     
     poll();
+  };
+
+  // Update editing description when selected clip changes
+  useEffect(() => {
+    const selectedShot = getSelectedShot();
+    if (selectedShot) {
+      const description = selectedShot.video_prompt || selectedShot.image_prompt || selectedShot.description || "";
+      setEditingVideoDescription(description);
+    } else {
+      setEditingVideoDescription("");
+    }
+  }, [selectedClipId, tracks]);
+
+  // Save edited video description
+  const handleSaveVideoDescription = async () => {
+    const selectedClip = getCurrentSelectedClip();
+    if (!selectedClip || !selectedClip.sceneItemId || !selectedClip.shotNumber) {
+      showWarning("Please select a valid video clip");
+      return;
+    }
+
+    if (!editingVideoDescription.trim()) {
+      showWarning("Video description cannot be empty");
+      return;
+    }
+
+    setIsSavingDescription(true);
+    try {
+      // Save to database
+      const response = await fetch("/api/storyboard/update-shot-description", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_id: projectId,
+          scene_item_id: selectedClip.sceneItemId,
+          shot_number: selectedClip.shotNumber,
+          video_prompt: editingVideoDescription.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error || "Failed to save video description");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || "Failed to save video description");
+      }
+
+      // Update local shot data after successful database save
+      const updatedTracks = tracks.map(track => ({
+        ...track,
+        clips: track.clips.map(clip => {
+          if (clip.id === selectedClip.id && clip.shotData) {
+            return {
+              ...clip,
+              shotData: {
+                ...clip.shotData,
+                video_prompt: editingVideoDescription.trim(),
+              }
+            };
+          }
+          return clip;
+        })
+      }));
+      setTracks(updatedTracks);
+
+      // Update sceneData to reflect the change
+      if (sceneData?.items) {
+        const updatedSceneData = {
+          ...sceneData,
+          items: sceneData.items.map((item: any) => {
+            if (item.id === selectedClip.sceneItemId && item.metadata?.storyboard?.shots) {
+              return {
+                ...item,
+                metadata: {
+                  ...item.metadata,
+                  storyboard: {
+                    ...item.metadata.storyboard,
+                    shots: item.metadata.storyboard.shots.map((shot: any) => {
+                      if (shot.shot_number === selectedClip.shotNumber) {
+                        return {
+                          ...shot,
+                          video_prompt: editingVideoDescription.trim(),
+                        };
+                      }
+                      return shot;
+                    })
+                  }
+                }
+              };
+            }
+            return item;
+          })
+        };
+        setSceneData(updatedSceneData);
+      }
+
+      showSuccess("Video description saved successfully");
+    } catch (error) {
+      console.error("Error saving video description:", error);
+      showError("Failed to save video description");
+    } finally {
+      setIsSavingDescription(false);
+    }
   };
 
   // Get current subtitle (based on playback time)
@@ -1099,16 +1296,27 @@ export default function VideoEditor() {
             
             {/* Video description */}
             <div className="mb-6">
-              <div className="flex items-center gap-2 mb-2">
-                <label className="text-sm font-medium text-white">Video Description</label>
-                <div className="w-4 h-4 rounded-full bg-gray-700 flex items-center justify-center">
-                  <span className="text-xs text-gray-400">i</span>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium text-white">Video Description</label>
+                  <div className="w-4 h-4 rounded-full bg-gray-700 flex items-center justify-center">
+                    <span className="text-xs text-gray-400">i</span>
+                  </div>
                 </div>
+                {editingVideoDescription !== (getSelectedShot()?.video_prompt || getSelectedShot()?.image_prompt || getSelectedShot()?.description || "") && (
+                  <Button
+                    onClick={handleSaveVideoDescription}
+                    disabled={isSavingDescription}
+                    className="h-6 px-2 text-xs bg-yellow-400 hover:bg-yellow-500 text-gray-900"
+                  >
+                    {isSavingDescription ? "Saving..." : "Save"}
+                  </Button>
+                )}
               </div>
               <Textarea
-                value={getSelectedShot()?.video_prompt || getSelectedShot()?.image_prompt || getSelectedShot()?.description || ""}
-                readOnly
-                className="bg-gray-800 border-gray-700 text-white min-h-[120px] resize-none text-sm"
+                value={editingVideoDescription}
+                onChange={(e) => setEditingVideoDescription(e.target.value)}
+                className="bg-gray-800 border-gray-700 text-white min-h-[120px] resize-none text-sm focus:border-yellow-400 focus:ring-1 focus:ring-yellow-400"
                 placeholder="Enter video description..."
               />
             </div>
