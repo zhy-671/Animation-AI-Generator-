@@ -1,0 +1,138 @@
+{
+  "metadata": {
+    "title": "Animation AI Generator | Create Animated Videos from Text or Images",
+    "description": "Make animation scenes online. Create animated shorts from text descriptions or images. Generate animation videos in seconds with our animation creator.",
+    "keywords": "animation ai generator, ai animation creator, make animation online, create animated short, generate animation scenes, ai cartoon video maker"
+  },
+  "navigation": {
+    "home": "Home",
+    "examples": "Examples",
+    "pricing": "Pricing",
+    "faq": "FAQ"
+  },
+  "hero": {
+    "badge": "Turn ideas into motion",
+    "title": "Animation AI Generator",
+    "subtitle": "Bring your stories to life. Create animated scenes from words or images.",
+    "description": "No design skills needed. Describe what you see, upload an image, and watch it come alive.",
+    "cta_primary": "Start creating",
+    "cta_secondary": "See examples",
+    "stats": {
+      "professional": "Text or image input",
+      "instant": "Ready in seconds",
+      "flexible": "Multiple styles",
+      "realistic": "HD quality"
+    }
+  },
+  "features": {
+    "title": "How it works",
+    "description": "Simple tools that give you creative freedom. No learning curve, just results.",
+    "features": [
+      {
+        "title": "Text to motion",
+        "description": "Write what you imagine. Turn descriptions into animated scenes that move and breathe."
+      },
+      {
+        "title": "Image to animation",
+        "description": "Upload any image. Watch static pictures transform into dynamic animated sequences."
+      },
+      {
+        "title": "Choose your style",
+        "description": "Pick from realistic, cartoon, anime, or 3D. Match the look that fits your vision."
+      },
+      {
+        "title": "Quick results",
+        "description": "See your animation ready in seconds. No waiting, no complicated setup."
+      },
+      {
+        "title": "Export anywhere",
+        "description": "Download in HD or 4K. Share on social platforms or use in your projects."
+      },
+      {
+        "title": "Works everywhere",
+        "description": "Create on any device. Phone, tablet, or computer—your workspace, your way."
+      }
+    ]
+  },
+  "pricing": {
+    "title": "Choose your plan",
+    "description": "Start free, upgrade when you need more. Simple pricing that grows with you.",
+    "plans": {
+      "free": {
+        "name": "Free",
+        "price": "Free",
+        "description": "Perfect for trying out",
+        "features": [
+          "3 animations per day",
+          "Text and image input",
+          "720p quality",
+          "Standard styles"
+        ],
+        "cta": "Start free"
+      },
+      "pro": {
+        "name": "Pro",
+        "price": "$19",
+        "period": "/month",
+        "description": "For creators and designers",
+        "features": [
+          "Unlimited animations",
+          "All styles",
+          "HD and 4K quality",
+          "No watermarks",
+          "Priority processing"
+        ],
+        "cta": "Get started"
+      },
+      "business": {
+        "name": "Business",
+        "price": "$49",
+        "period": "/month",
+        "description": "For teams and agencies",
+        "features": [
+          "Everything in Pro",
+          "Bulk generation",
+          "API access",
+          "Team collaboration",
+          "Custom branding"
+        ],
+        "cta": "Contact sales"
+      }
+    }
+  },
+  "faq": {
+    "title": "Frequently asked questions",
+    "subtitle": "Everything you need to know",
+    "items": [
+      {
+        "q": "How does it work?",
+        "a": "Describe what you want to see in text, or upload an image. Choose your style and duration, then create. Your animation appears in seconds."
+      },
+      {
+        "q": "What can I create?",
+        "a": "Any animated scene you imagine. Characters, objects, landscapes, abstract concepts—if you can describe it or show an image, you can animate it."
+      },
+      {
+        "q": "How long does it take?",
+        "a": "Most animations are ready in 30-60 seconds. Complex scenes or higher quality settings may take a bit longer."
+      },
+      {
+        "q": "Can I use these commercially?",
+        "a": "Yes. All animations you create are yours to use however you want—social media, marketing, presentations, or personal projects."
+      },
+      {
+        "q": "What formats are supported?",
+        "a": "We support MP4, MOV, and AVI formats. You can choose from 720p, 1080p, or 4K quality depending on your plan."
+      },
+      {
+        "q": "Do I need an account?",
+        "a": "No account needed to start. You can create animations immediately. Signing up lets you save your work and access your history."
+      }
+    ],
+    "contactTitle": "Still have questions?",
+    "contactDesc": "We're here to help. Reach out anytime.",
+    "contactSupport": "Contact support",
+    "viewDocs": "View docs"
+  }
+}
+
