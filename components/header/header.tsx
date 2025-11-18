@@ -23,25 +23,45 @@ export default function Header() {
     let mounted = true;
 
     // Function to refresh credits balance
-    const refreshCredits = async () => {
+    const refreshCredits = async (retryCount = 0) => {
       try {
         const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
         if (userError) {
           console.error("Error getting user for credits refresh:", userError);
+          // Retry once if it's a network error
+          if (retryCount < 1 && userError.message?.includes('fetch')) {
+            setTimeout(() => refreshCredits(retryCount + 1), 1000);
+          }
           return;
         }
         if (currentUser && mounted) {
           try {
+            console.log('Fetching credits balance for user:', currentUser.id);
             const balanceCheck = await checkCreditsBalance(0);
+            console.log('Credits balance response:', balanceCheck);
             if (balanceCheck.balance !== undefined && mounted) {
               setCreditsBalance(balanceCheck.balance);
+            } else if (balanceCheck.error && mounted) {
+              console.error("Error in balance check response:", balanceCheck.error);
+              // Retry once if it's a network error
+              if (retryCount < 1 && balanceCheck.error.includes('fetch')) {
+                setTimeout(() => refreshCredits(retryCount + 1), 1000);
+              }
             }
           } catch (error) {
             console.error("Error loading credits balance:", error);
+            // Retry once on error
+            if (retryCount < 1 && mounted) {
+              setTimeout(() => refreshCredits(retryCount + 1), 1000);
+            }
           }
         }
       } catch (error) {
         console.error("Error in refreshCredits:", error);
+        // Retry once on error
+        if (retryCount < 1 && mounted) {
+          setTimeout(() => refreshCredits(retryCount + 1), 1000);
+        }
       }
     };
 
@@ -77,6 +97,22 @@ export default function Header() {
 
     getUser();
 
+    // Also try to refresh credits after a delay on initial load
+    // This helps in production where session might take time to establish
+    const initialRefreshTimer = setTimeout(async () => {
+      if (mounted) {
+        try {
+          const { data: { user: currentUser } } = await supabase.auth.getUser();
+          if (currentUser) {
+            console.log('Initial load: Refreshing credits after delay');
+            refreshCredits();
+          }
+        } catch (error) {
+          console.error('Error checking user for delayed refresh:', error);
+        }
+      }
+    }, 2000);
+
     // Listen for authentication state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -90,7 +126,12 @@ export default function Header() {
       // If user logs in, fetch credits balance
       if (session?.user) {
         console.log('User logged in, refreshing credits...');
-        await refreshCredits();
+        // Add a small delay to ensure session is fully established
+        setTimeout(() => {
+          if (mounted) {
+            refreshCredits();
+          }
+        }, 500);
       } else {
         setCreditsBalance(null);
       }
@@ -106,6 +147,7 @@ export default function Header() {
 
     return () => {
       mounted = false;
+      clearTimeout(initialRefreshTimer);
       subscription.unsubscribe();
       window.removeEventListener('credits-updated', handleCreditsUpdated);
     };
