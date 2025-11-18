@@ -106,7 +106,6 @@ export async function createScene(data: CreateSceneRequest): Promise<AnimScene> 
         camera: item.camera || null, // 镜头语言
         dialogue: item.dialogue || null, // 对白
         scene_duration: item.sceneDuration || null, // 场景持续时间
-        ...(item.metadata || {}), // 保留其他metadata
       },
       image_url: item.imageUrl || null,
     }))

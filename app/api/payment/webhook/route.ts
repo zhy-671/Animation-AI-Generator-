@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { verifyCreemWebhookSignature, getCreemOrderStatus } from '@/lib/payment/creem';
 import { operateCredits } from '@/lib/supabase/customers';
-import type { CreamPaymentWebhook } from '@/lib/payment/types';
+import type { CreemWebhookEvent, CreamPaymentWebhook } from '@/lib/payment/types';
 
 /**
  * Cream支付Webhook回调处理
@@ -21,24 +21,53 @@ export async function POST(request: NextRequest) {
     
     // 🔒 安全措施1: 获取原始请求体（用于签名验证）
     const rawBody = await request.text();
-    const signature = request.headers.get('x-creem-signature') || '';
+    
+    // 尝试多个可能的签名头部名称
+    const signature = request.headers.get('x-creem-signature') || 
+                     request.headers.get('x-signature') || 
+                     request.headers.get('creem-signature') || 
+                     request.headers.get('signature') || '';
+    
     const creemIp = request.headers.get('x-forwarded-for') || '';
+    
+    // 记录所有相关头部信息用于调试
+    const allHeaders: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+      if (key.toLowerCase().includes('signature') || key.toLowerCase().includes('creem')) {
+        allHeaders[key] = value;
+      }
+    });
+
+    console.log('Webhook received:', {
+      hasSignature: !!signature,
+      signatureLength: signature.length,
+      signaturePrefix: signature.substring(0, 20) + '...',
+      relevantHeaders: allHeaders,
+      bodyLength: rawBody.length,
+      bodyPreview: rawBody.substring(0, 100) + '...',
+    });
 
     // 🔒 安全措施2: 验证webhook签名（必须通过）
     if (!verifyCreemWebhookSignature(rawBody, signature)) {
       console.error('Invalid webhook signature', {
         ip: creemIp,
         signature: signature.substring(0, 20) + '...',
+        signatureLength: signature.length,
+        hasWebhookSecret: !!process.env.CREEM_WEBHOOK_SECRET,
+        webhookSecretLength: process.env.CREEM_WEBHOOK_SECRET?.length || 0,
         timestamp: new Date().toISOString(),
+        allRelevantHeaders: allHeaders,
       });
       return NextResponse.json(
         { success: false, error: 'Invalid signature' },
         { status: 401 }
       );
     }
+    
+    console.log('Webhook signature verified successfully');
 
     // 解析webhook数据
-    let webhookData: CreamPaymentWebhook;
+    let webhookData: CreemWebhookEvent | CreamPaymentWebhook;
     try {
       webhookData = JSON.parse(rawBody);
     } catch (error) {
@@ -48,20 +77,89 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { order_id, payment_id, status, amount, payment_method, metadata } = webhookData;
+    // 处理 Creem 新格式的 webhook (checkout.completed 事件)
+    let orderId: string | null = null;
+    let paymentId: string | null = null;
+    let status: 'success' | 'failed' | 'cancelled' = 'failed';
+    let amount: number = 0;
+    let paymentMethod: string | undefined;
+    let metadata: Record<string, any> = {};
+    let subscriptionId: string | null = null;
 
-    // 🔒 安全措施3: 查找订单（使用creem_order_id）
-    const { data: order, error: orderError } = await supabase
-      .from('payment_orders')
-      .select('*, anim_customers!inner(user_id)')
-      .eq('creem_order_id', order_id)
-      .single();
+    if ('eventType' in webhookData && webhookData.eventType === 'checkout.completed') {
+      // 新格式：CreemWebhookEvent
+      const event = webhookData as CreemWebhookEvent;
+      orderId = event.object.order?.id || event.object.id; // 使用 order.id 或 checkout.id
+      paymentId = event.object.order?.transaction || event.object.id;
+      status = event.object.status === 'completed' ? 'success' : 
+               event.object.status === 'failed' ? 'failed' : 'cancelled';
+      amount = event.object.order?.amount || 0;
+      metadata = event.object.metadata || event.object.subscription?.metadata || {};
+      subscriptionId = event.object.subscription?.id || null;
+      
+      console.log('Processing Creem webhook event:', {
+        eventType: event.eventType,
+        checkoutId: event.object.id,
+        orderId,
+        status,
+        amount,
+        hasSubscription: !!event.object.subscription,
+      });
+    } else if ('order_id' in webhookData) {
+      // 旧格式：CreamPaymentWebhook（向后兼容）
+      const oldFormat = webhookData as CreamPaymentWebhook;
+      orderId = oldFormat.order_id;
+      paymentId = oldFormat.payment_id;
+      status = oldFormat.status;
+      amount = oldFormat.amount;
+      paymentMethod = oldFormat.payment_method;
+      metadata = oldFormat.metadata || {};
+    } else {
+      return NextResponse.json(
+        { success: false, error: 'Unknown webhook format' },
+        { status: 400 }
+      );
+    }
+
+    if (!orderId) {
+      return NextResponse.json(
+        { success: false, error: 'Missing order ID in webhook' },
+        { status: 400 }
+      );
+    }
+
+    // 🔒 安全措施3: 查找订单（使用creem_order_id或metadata中的order_id）
+    // 优先使用 metadata 中的 order_id（我们自己的订单ID），如果没有则使用 creem_order_id
+    let order;
+    let orderError;
+    
+    if (metadata.order_id) {
+      // 从 metadata 中获取我们自己的订单 ID
+      const { data, error } = await supabase
+        .from('payment_orders')
+        .select('*, anim_customers!inner(user_id)')
+        .eq('id', metadata.order_id)
+        .single();
+      order = data;
+      orderError = error;
+    } else {
+      // 使用 creem_order_id 查找
+      const { data, error } = await supabase
+        .from('payment_orders')
+        .select('*, anim_customers!inner(user_id)')
+        .eq('creem_order_id', orderId)
+        .single();
+      order = data;
+      orderError = error;
+    }
 
     if (orderError || !order) {
       console.error('Order not found:', {
-        creem_order_id: order_id,
+        creem_order_id: orderId,
+        metadata_order_id: metadata.order_id,
         error: orderError,
         ip: creemIp,
+        webhook_metadata: metadata,
       });
       return NextResponse.json(
         { success: false, error: 'Order not found' },
@@ -104,7 +202,7 @@ export async function POST(request: NextRequest) {
       if (existingHistory && existingHistory.length > 0) {
         console.log('Order already processed, skipping:', {
           order_id: order.id,
-          creem_order_id: order_id,
+          creem_order_id: orderId,
         });
         return NextResponse.json({
           success: true,
@@ -143,13 +241,16 @@ export async function POST(request: NextRequest) {
         .from('payment_orders')
         .update({
           status: 'completed',
-          creem_payment_id: payment_id,
-          payment_method: payment_method || null,
+          creem_payment_id: paymentId,
+          creem_order_id: orderId, // 确保保存 creem_order_id
+          payment_method: paymentMethod || null,
           completed_at: new Date().toISOString(),
           metadata: {
             ...order.metadata,
-            payment_id,
-            payment_method,
+            payment_id: paymentId,
+            creem_order_id: orderId,
+            subscription_id: subscriptionId,
+            payment_method: paymentMethod,
             webhook_data: webhookData,
             webhook_ip: creemIp,
             processed_at: new Date().toISOString(),
@@ -189,8 +290,8 @@ export async function POST(request: NextRequest) {
           metadata: {
             order_id: order.id,
             plan_name: order.plan_name,
-            payment_id,
-            creem_order_id: order_id,
+            payment_id: paymentId,
+            creem_order_id: orderId,
             type: 'subscription',
             webhook_verified: true,
           },
@@ -232,8 +333,8 @@ export async function POST(request: NextRequest) {
           metadata: {
             order_id: order.id,
             credit_package_name: order.credit_package_name,
-            payment_id,
-            creem_order_id: order_id,
+            payment_id: paymentId,
+            creem_order_id: orderId,
             type: 'credit_purchase',
             webhook_verified: true,
           },
@@ -263,10 +364,10 @@ export async function POST(request: NextRequest) {
         .from('payment_orders')
         .update({
           status: status === 'failed' ? 'failed' : 'cancelled',
-          creem_payment_id: payment_id,
+          creem_payment_id: paymentId,
           metadata: {
             ...order.metadata,
-            payment_id,
+            payment_id: paymentId,
             webhook_data: webhookData,
             webhook_ip: creemIp,
           },

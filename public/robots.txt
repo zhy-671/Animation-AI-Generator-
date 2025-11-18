@@ -2,18 +2,48 @@
 User-agent: *
 Allow: /
 
-# Disallow specific paths
+# Disallow specific paths (Next.js internal files should not be indexed)
 Disallow: /api/
 Disallow: /_next/
 Disallow: /admin/
 
-# Explicitly allow Googlebot
+# Disallow static media files (fonts, images, etc. in _next/static)
+Disallow: /_next/static/
+
+# Disallow authentication and legal pages (login, privacy, terms)
+Disallow: /login
+Disallow: /signup
+Disallow: /register
+Disallow: /auth/
+Disallow: /privacy
+Disallow: /terms
+
+# Explicitly allow Googlebot for main content
 User-agent: Googlebot
 Allow: /
+# But still disallow Next.js internal files and authentication/legal pages
+Disallow: /api/
+Disallow: /_next/
+Disallow: /admin/
+Disallow: /_next/static/
+Disallow: /login
+Disallow: /signup
+Disallow: /register
+Disallow: /auth/
+Disallow: /privacy
+Disallow: /terms
 
-# Explicitly allow Googlebot-Image
+# Explicitly allow Googlebot-Image for images (but not Next.js internal files or auth/legal pages)
 User-agent: Googlebot-Image
 Allow: /
+Disallow: /_next/
+Disallow: /_next/static/
+Disallow: /login
+Disallow: /signup
+Disallow: /register
+Disallow: /auth/
+Disallow: /privacy
+Disallow: /terms
 
 # Sitemap
 Sitemap: https://animationaigenerator.com/sitemap.xml

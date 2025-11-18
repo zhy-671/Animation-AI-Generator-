@@ -51,9 +51,9 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "WebSite",
-            "name": "Animation AI Generator | Animaker AI",
+            "name": "AI Animation Video Generator",
             "url": "https://animationaigenerator.com",
-            "description": "Create stunning animated videos with AI-powered 2D and 3D animation tools. Animaker AI - the ultimate animation generator.",
+            "description": "Generate high-quality animated videos and cartoons from text or images with our AI animation generator. Create professional animations instantly!",
             "potentialAction": {
               "@type": "SearchAction",
               "target": {
@@ -71,10 +71,10 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "Organization",
-            "name": "Animation AI Generator | Animaker AI",
+            "name": "AnimationAIGenerator",
             "url": "https://animationaigenerator.com",
             "logo": "https://animationaigenerator.com/images/logo.png",
-            "description": "AI-powered animation generator (Animaker AI) for creating 2D and 3D animated videos",
+            "description": "AI-powered animation generator for creating high-quality animated videos and cartoons from text or images",
             "sameAs": []
           })
         }}
@@ -85,15 +85,16 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "Animation AI Generator | Animaker AI",
+            "name": "AI Animation Video Generator",
             "applicationCategory": "MultimediaApplication",
             "operatingSystem": "Web Browser",
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
             },
-            "description": "Create animated videos from text or images using AI-powered animation tools. Animaker AI technology for seamless video generation.",
+            "description": "Generate high-quality animated videos and cartoons from text or images with our AI animation generator. Create professional animations instantly!",
             "aggregateRating": {
               "@type": "AggregateRating",
               "ratingValue": "4.8",

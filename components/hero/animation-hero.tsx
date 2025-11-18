@@ -71,7 +71,7 @@ export default function AnimationHero() {
             className="space-y-4"
           >
             <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl md:text-6xl lg:text-7xl drop-shadow-lg">
-              Animation AI Generator | Animaker AI - Unleash Your Creativity
+              Animation AI Generator
             </h1>
             
             <h2 className="text-lg font-normal text-gray-100 sm:text-xl md:text-2xl max-w-3xl mx-auto leading-relaxed drop-shadow-md">

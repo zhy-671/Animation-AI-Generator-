@@ -15,45 +15,81 @@ export default function Header() {
   const [loading, setLoading] = useState(true);
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // Create Supabase client once and reuse it
   const supabase = createClient();
 
   useEffect(() => {
+    let mounted = true;
+
     // Function to refresh credits balance
     const refreshCredits = async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser) {
-        try {
-          const balanceCheck = await checkCreditsBalance(0);
-          if (balanceCheck.balance !== undefined) {
-            setCreditsBalance(balanceCheck.balance);
-          }
-        } catch (error) {
-          console.error("Error loading credits balance:", error);
+      try {
+        const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+        if (userError) {
+          console.error("Error getting user for credits refresh:", userError);
+          return;
         }
+        if (currentUser && mounted) {
+          try {
+            const balanceCheck = await checkCreditsBalance(0);
+            if (balanceCheck.balance !== undefined && mounted) {
+              setCreditsBalance(balanceCheck.balance);
+            }
+          } catch (error) {
+            console.error("Error loading credits balance:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Error in refreshCredits:", error);
       }
     };
+
     // Get current user
     const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setUser(user);
-      setLoading(false);
-      
-      // If user is logged in, fetch credits balance
-      if (user) {
-        await refreshCredits();
-      } else {
-        setCreditsBalance(null);
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser();
+        if (mounted) {
+          if (error) {
+            console.error("Error getting user:", error);
+            setUser(null);
+            setCreditsBalance(null);
+          } else {
+            setUser(user);
+            // If user is logged in, fetch credits balance
+            if (user) {
+              await refreshCredits();
+            } else {
+              setCreditsBalance(null);
+            }
+          }
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error("Error in getUser:", error);
+        if (mounted) {
+          setUser(null);
+          setCreditsBalance(null);
+          setLoading(false);
+        }
       }
     };
 
     getUser();
 
     // Listen for authentication state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!mounted) return;
+      
+      console.log('Auth state changed:', event, session?.user?.id);
+      
+      // 立即更新用户状态和加载状态
       setUser(session?.user ?? null);
+      setLoading(false); // 确保 loading 状态被更新
       
       // If user logs in, fetch credits balance
       if (session?.user) {
+        console.log('User logged in, refreshing credits...');
         await refreshCredits();
       } else {
         setCreditsBalance(null);
@@ -62,26 +98,18 @@ export default function Header() {
 
     // Listen for credits update events
     const handleCreditsUpdated = async () => {
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser) {
-        try {
-          const balanceCheck = await checkCreditsBalance(0);
-          if (balanceCheck.balance !== undefined) {
-            setCreditsBalance(balanceCheck.balance);
-          }
-        } catch (error) {
-          console.error("Error loading credits balance:", error);
-        }
-      }
+      if (!mounted) return;
+      await refreshCredits();
     };
 
     window.addEventListener('credits-updated', handleCreditsUpdated);
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
       window.removeEventListener('credits-updated', handleCreditsUpdated);
     };
-  }, [supabase.auth]);
+  }, []);
 
   const handleLogout = async () => {
     try {
@@ -133,7 +161,9 @@ export default function Header() {
               </Link>
             </nav>
             {/* User status and credits balance/logout button */}
-            {!loading && user ? (
+            {loading ? (
+              <div className="w-20 h-9">{/* Placeholder during loading to prevent layout shift */}</div>
+            ) : user ? (
               <div className="flex items-center gap-4">
                 {/* Credits balance display - always shown, even if creditsBalance is null */}
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 border border-gray-700 rounded-lg">
@@ -150,7 +180,7 @@ export default function Header() {
                   <span>Logout</span>
                 </Button>
               </div>
-            ) : !loading && !user ? (
+            ) : (
               <Button
                 asChild
                 className="bg-transparent border border-gray-700 text-white hover:bg-gray-800 hover:text-white h-9 px-4"
@@ -160,8 +190,6 @@ export default function Header() {
                   <span>Login</span>
                 </Link>
               </Button>
-            ) : (
-              <div className="w-20 h-9">{/* Placeholder during loading to prevent layout shift */}</div>
             )}
           </div>
           <div className="md:hidden">

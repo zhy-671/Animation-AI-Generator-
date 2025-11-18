@@ -16,7 +16,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, X, Sparkles, Diamond, Info, Plus, Trash2, ArrowLeft } from "lucide-react";
+import { Upload, X, Sparkles, Diamond, Info, Plus, Trash2, ArrowLeft, Coins, Clock } from "lucide-react";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import {
@@ -30,7 +31,7 @@ import {
 interface FormData {
   textPrompt: string;
   referenceImage: File | null;
-  readerGroup: "儿童" | "青少年" | "成人" | "全年龄";
+  readerGroup: "Children" | "Teen" | "Adult" | "All Ages";
   model: string;
   duration: string;
   quality: string;
@@ -61,7 +62,7 @@ export default function StoryboardForm() {
   const [formData, setFormData] = useState<FormData>({
     textPrompt: "",
     referenceImage: null,
-    readerGroup: "全年龄",
+    readerGroup: "All Ages",
     model: "2d",
     duration: "5",
     quality: "480p"
@@ -75,6 +76,14 @@ export default function StoryboardForm() {
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
   const [isMounted, setIsMounted] = useState(false);
+  
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false); // 是否显示创作区域
   const [showIdeaInput, setShowIdeaInput] = useState(false); // 是否显示初始想法输入界面
   const [ideaText, setIdeaText] = useState(""); // 初始想法文本
@@ -203,7 +212,7 @@ export default function StoryboardForm() {
     setFormData({
       textPrompt: "",
       referenceImage: null,
-      readerGroup: "全年龄",
+      readerGroup: "All Ages",
       model: "2d",
       duration: "5",
       quality: "480p"
@@ -222,7 +231,7 @@ export default function StoryboardForm() {
     setFormData({
       textPrompt: "",
       referenceImage: null,
-      readerGroup: "全年龄",
+      readerGroup: "All Ages",
       model: "2d",
       duration: "5",
       quality: "480p"
@@ -234,7 +243,7 @@ export default function StoryboardForm() {
 
   const handleNextStep = () => {
     if (!ideaText.trim()) {
-      alert("请输入你的想法或创意");
+      alert("Please enter your idea or creative concept");
       return;
     }
     setShowIdeaInput(false);
@@ -302,7 +311,7 @@ export default function StoryboardForm() {
                 isGeneratingImage: false,
                 imageGenerationFailed: false,
                 sceneItemId: item.id,
-                imageStatus: displayImageUrl ? 'completed' : 'failed',
+                imageStatus: displayImageUrl ? ('completed' as const) : ('failed' as const),
               };
             })
           );
@@ -319,13 +328,13 @@ export default function StoryboardForm() {
       }
     } catch (error) {
       console.error("Error loading project:", error);
-      alert("加载项目失败");
+      alert("Failed to load project");
     }
   };
 
   const handleDeleteProject = async (sceneId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("确定要删除这个项目吗？")) {
+    if (!confirm("Are you sure you want to delete this project?")) {
       return;
     }
     
@@ -346,7 +355,7 @@ export default function StoryboardForm() {
       }
     } catch (error) {
       console.error("Error deleting project:", error);
-      alert("删除项目失败");
+      alert("Failed to delete project");
     }
   };
 
@@ -366,7 +375,7 @@ export default function StoryboardForm() {
 
   const handleGenerate = async () => {
     if (!formData.textPrompt.trim()) {
-      alert("请输入故事描述");
+      alert("Please enter story description");
       return;
     }
 
@@ -427,7 +436,7 @@ export default function StoryboardForm() {
           imageGenerationFailed: scene.imageGenerationFailed || false,
           sceneItemId: scene.sceneItemId,
           imageTaskId: scene.imageTaskId || null,
-          imageStatus: scene.imageUrl ? 'completed' : (index === 0 && scene.imageTaskId ? 'generating' : 'pending'),
+          imageStatus: scene.imageUrl ? ('completed' as const) : (index === 0 && scene.imageTaskId ? ('generating' as const) : ('pending' as const)),
         }));
         
         setGeneratedImages(newImages);
@@ -487,7 +496,7 @@ export default function StoryboardForm() {
       
       setGeneratedImages(prev => prev.map(img => 
         img.id === item.id 
-          ? { ...img, imageStatus: 'generating', isGeneratingImage: true }
+          ? { ...img, imageStatus: 'generating' as const, isGeneratingImage: true }
           : img
       ));
       
@@ -527,7 +536,7 @@ export default function StoryboardForm() {
                           ...img, 
                           imageUrl: finalImageUrl,
                           isGeneratingImage: false,
-                          imageStatus: 'completed',
+                          imageStatus: 'completed' as const,
                           imageTaskId: undefined
                         }
                       : img
@@ -575,7 +584,7 @@ export default function StoryboardForm() {
                   ? { 
                       ...img, 
                       isGeneratingImage: false,
-                      imageStatus: 'failed',
+                      imageStatus: 'failed' as const,
                       imageGenerationFailed: true,
                       imageTaskId: undefined
                     }
@@ -625,7 +634,7 @@ export default function StoryboardForm() {
   const handleGenerateVideo = async (imageId: string) => {
     const imageItem = generatedImages.find(img => img.id === imageId);
     if (!imageItem || !imageItem.imageUrl) {
-      alert("请先上传或生成图片");
+      alert("Please upload or generate an image first");
       return;
     }
 
@@ -637,7 +646,12 @@ export default function StoryboardForm() {
     const balanceCheck = await checkCreditsBalance(requiredCredits);
     
     if (!balanceCheck.sufficient) {
-      alert(`积分不足！生成 ${currentDuration}秒 ${currentQuality} 视频需要 ${requiredCredits} 积分，当前余额：${balanceCheck.balance || 0} 积分。请购买积分后再试。`);
+      setInsufficientCreditsData({
+        required: requiredCredits,
+        current: balanceCheck.balance || 0,
+        action: `generate ${currentDuration}s ${currentQuality} video`
+      });
+      setShowInsufficientCreditsDialog(true);
       return;
     }
 
@@ -740,6 +754,16 @@ export default function StoryboardForm() {
               
               if (!deductResult.success) {
                 console.error("Failed to deduct credits:", deductResult.error);
+              } else {
+                // 更新积分余额
+                if (deductResult.newBalance !== undefined) {
+                  setCreditsBalance(deductResult.newBalance);
+                } else {
+                  const updatedBalance = await checkCreditsBalance(0);
+                  if (updatedBalance.balance !== undefined) {
+                    setCreditsBalance(updatedBalance.balance);
+                  }
+                }
               }
             
               const uploadResponse = await fetch("/api/video/upload", {
@@ -803,7 +827,7 @@ export default function StoryboardForm() {
                   : img
               )
             );
-            alert(error instanceof Error ? error.message : "视频生成失败");
+            alert(error instanceof Error ? error.message : "Video generation failed");
             return;
           }
         }
@@ -821,7 +845,7 @@ export default function StoryboardForm() {
             : img
         )
       );
-      alert(error instanceof Error ? error.message : "生成视频失败");
+      alert(error instanceof Error ? error.message : "Video generation failed");
     }
   };
 
@@ -846,7 +870,8 @@ export default function StoryboardForm() {
   const isCurrentModelAllowed = isAnimationStyleAllowed(subscriptionPlan, formData.model);
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <>
+      <div className="min-h-screen bg-black text-white">
       <Header />
       
       <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -985,7 +1010,7 @@ export default function StoryboardForm() {
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex flex-col items-center gap-2">
                   <label className="text-sm font-medium text-gray-300">
-                    参考图（可选）
+                    Reference Image (Optional)
                   </label>
                   {referenceImagePreview ? (
                     <div className="relative group h-12 w-12">
@@ -1032,7 +1057,7 @@ export default function StoryboardForm() {
 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-gray-300">
-                    读者群
+                    Reader Group
                   </label>
                   <Select
                     value={formData.readerGroup}
@@ -1042,10 +1067,10 @@ export default function StoryboardForm() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="全年龄">全年龄</SelectItem>
-                      <SelectItem value="儿童">儿童</SelectItem>
-                      <SelectItem value="青少年">青少年</SelectItem>
-                      <SelectItem value="成人">成人</SelectItem>
+                      <SelectItem value="All Ages">All Ages</SelectItem>
+                      <SelectItem value="Children">Children</SelectItem>
+                      <SelectItem value="Teen">Teen</SelectItem>
+                      <SelectItem value="Adult">Adult</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1074,7 +1099,7 @@ export default function StoryboardForm() {
                               if (!isAllowed) {
                                 e.preventDefault();
                                 const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                alert(`当前订阅计划（${planConfig.name}）不支持 ${model.label} 风格。\n\n请升级套餐以使用此风格。\n\n点击确定前往定价页面。`);
+                                alert(`Your current subscription plan (${planConfig.name}) does not support ${model.label} style.\n\nPlease upgrade your plan to use this style.\n\nClick OK to go to the pricing page.`);
                                 router.push('/pricing');
                               }
                             }}
@@ -1082,10 +1107,10 @@ export default function StoryboardForm() {
                             <span className="flex items-center gap-2">
                               {model.label}
                               {requiresSub && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
                               )}
                               {!isAllowed && subscriptionPlan !== null && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
                               )}
                             </span>
                           </SelectItem>
@@ -1120,7 +1145,7 @@ export default function StoryboardForm() {
                                 e.preventDefault();
                                 const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
                                 const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                                alert(`当前订阅计划（${planConfig.name}）仅支持 ${allowedResolutions} 分辨率。\n\n请升级套餐以使用 ${quality.value} 分辨率。\n\n点击确定前往定价页面。`);
+                                alert(`Your current subscription plan (${planConfig.name}) only supports ${allowedResolutions} resolution.\n\nPlease upgrade your plan to use ${quality.value} resolution.\n\nClick OK to go to the pricing page.`);
                                 router.push('/pricing');
                               }
                             }}
@@ -1128,13 +1153,13 @@ export default function StoryboardForm() {
                             <span className="flex items-center gap-2">
                               {quality.label}
                               {requiresSub && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
                               )}
                               {quality.requiresSubscription && subscriptionPlan !== null && isAllowed && (
                                 <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
                               )}
                               {!isAllowed && subscriptionPlan !== null && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
                               )}
                             </span>
                           </SelectItem>
@@ -1187,14 +1212,18 @@ export default function StoryboardForm() {
                 </>
               ) : (
                 <>
-                  <Diamond className="w-5 h-5 text-gray-900" />
-                  <span>Generate Story Script</span>
+                  <Diamond className="w-7 h-7 text-gray-900" />
+                  <span className="text-sm">
+                    Generate Story Script
+                    <span className="ml-2 text-xs opacity-90">
+                      {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "5"))}
+                    </span>
+                  </span>
                 </>
               )}
             </Button>
           </div>
-        </div>
-            </motion.div>
+        </motion.div>
           )}
         </AnimatePresence>
 
@@ -1294,8 +1323,8 @@ export default function StoryboardForm() {
           <div id="scene-preview-section" className="mt-8 bg-gray-900 rounded-xl p-6 md:p-8 shadow-xl">
             <div className="space-y-8">
               <div className="mb-6">
-                <h3 className="text-xl font-semibold text-white mb-2">故事剧本预览</h3>
-                <p className="text-sm text-gray-400">将文本描述生成对应的故事剧本，每个场景对应一段文本描述，点击"生成video"按钮可为每个场景生成动画视频</p>
+                <h3 className="text-xl font-semibold text-white mb-2">Story Script Preview</h3>
+                <p className="text-sm text-gray-400">Generate story scripts from text descriptions. Each scene corresponds to a text description. Click the "Generate Video" button to create animated videos for each scene.</p>
               </div>
               <AnimatePresence mode="popLayout">
                 {generatedImages.map((item, index) => {
@@ -1328,14 +1357,14 @@ export default function StoryboardForm() {
                           >
                             <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                           </motion.div>
-                          <span className="text-sm text-[#FFDA2A] font-medium">生成中...</span>
+                          <span className="text-sm text-[#FFDA2A] font-medium">Generating...</span>
                         </div>
                       )}
                       
                       {isPending && (
                         <div className="absolute inset-0 bg-black/40 rounded-xl flex flex-col items-center justify-center gap-2 z-40 pointer-events-none">
                           <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                          <span className="text-xs text-gray-400">等待中...</span>
+                          <span className="text-xs text-gray-400">Waiting...</span>
                         </div>
                       )}
                       
@@ -1343,24 +1372,24 @@ export default function StoryboardForm() {
                         <div className="flex-shrink-0 flex flex-col items-center gap-3">
                           <div className="flex items-center justify-center gap-2">
                             <Info className="w-5 h-5 text-gray-400" />
-                            <span className="text-sm text-gray-300 font-medium">场景{item.sceneNumber}</span>
+                            <span className="text-sm text-gray-300 font-medium">Scene {item.sceneNumber}</span>
                           </div>
                           <div className="relative w-56 h-40">
                             {item.imageStatus === 'failed' || (item.imageGenerationFailed && !item.imageUrl) ? (
                               <div className="w-full h-full bg-gray-700 rounded-lg flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-600">
                                 <Upload className="w-8 h-8 text-gray-500" />
-                                <span className="text-xs text-gray-400">图片生成失败</span>
+                                <span className="text-xs text-gray-400">Image generation failed</span>
                               </div>
                             ) : item.imageUrl ? (
                               <img
                                 src={item.imageUrl}
-                                alt={`场景${item.sceneNumber}: ${item.text}`}
+                                alt={`Scene ${item.sceneNumber}: ${item.text}`}
                                 className="w-full h-full object-cover rounded-lg border-2 border-gray-700"
                               />
                             ) : (
                               <div className="w-full h-full bg-gray-700 rounded-lg flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-600">
                                 <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                                <span className="text-xs text-gray-400">生成中...</span>
+                                <span className="text-xs text-gray-400">Generating...</span>
                               </div>
                             )}
                           </div>
@@ -1381,14 +1410,14 @@ export default function StoryboardForm() {
                           
                           {item.camera && (
                             <div>
-                              <span className="text-xs text-gray-500">镜头：</span>
+                              <span className="text-xs text-gray-500">Camera: </span>
                               <span className="text-sm text-gray-400">{item.camera}</span>
                             </div>
                           )}
                           
                           {item.dialogue && item.dialogue.length > 0 && (
                             <div>
-                              <span className="text-xs text-gray-500">对白：</span>
+                              <span className="text-xs text-gray-500">Dialogue: </span>
                               <div className="mt-1 space-y-1">
                                 {item.dialogue.map((line, idx) => (
                                   <p key={idx} className="text-sm text-gray-300">"{line}"</p>
@@ -1402,7 +1431,7 @@ export default function StoryboardForm() {
                             disabled={item.isGeneratingVideo || !item.imageUrl || hasGeneratingImages || !allImagesGenerated}
                             className="px-6 py-3 bg-[#FFDA2A] text-gray-900 font-semibold rounded-lg hover:bg-[#FFDA2A]/90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {item.isGeneratingVideo ? '生成中...' : item.videoUrl ? '重新生成视频' : '生成视频'}
+                            {item.isGeneratingVideo ? 'Generating...' : item.videoUrl ? 'Regenerate Video' : 'Generate Video'}
                           </Button>
                           
                           {item.videoUrl && (
@@ -1428,7 +1457,19 @@ export default function StoryboardForm() {
       </div>
 
       <Footer />
-    </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
+      </div>
+    </>
   );
 }
 

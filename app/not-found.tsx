@@ -18,13 +18,13 @@ export default function NotFound() {
         
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
           <Button asChild className="rounded-full">
-            <Link href="/en">
+            <Link href="/">
               <Home className="w-4 h-4 mr-2" />
               Go home
             </Link>
           </Button>
           <Button asChild variant="outline" className="rounded-full">
-            <Link href="/en/generate">
+            <Link href="/animation-ai-generator/text-to-video">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Create animation
             </Link>

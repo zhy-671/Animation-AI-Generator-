@@ -42,6 +42,8 @@ import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
 import EnhancedVideoPlayer from "./enhanced-video-player";
 import CanvasVideoPlayer, { CanvasVideoPlayerRef } from "./canvas-video-player";
+import { getUserSubscriptionPlan } from "@/lib/subscription/client";
+import { isCompleteVideoExportAllowed, type SubscriptionPlan } from "@/lib/subscription/rules";
 
 interface Shot {
   shot_number: number;
@@ -148,6 +150,9 @@ export default function VideoEditor() {
   // Export dialog state
   const [showExportDialog, setShowExportDialog] = useState(false);
   
+  // Subscription plan state
+  const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
+  
   // Timeline state
   const [timelineZoom, setTimelineZoom] = useState(1); // Zoom level for timeline
   const pixelsPerSecond = 50; // Base pixels per second
@@ -245,6 +250,22 @@ export default function VideoEditor() {
     return () => {
       resizeObserver.disconnect();
     };
+  }, []);
+
+  // Load subscription plan
+  useEffect(() => {
+    const loadSubscriptionPlan = async () => {
+      try {
+        const planData = await getUserSubscriptionPlan();
+        if (planData.plan !== undefined) {
+          setSubscriptionPlan(planData.plan);
+        }
+      } catch (error) {
+        console.error("Error loading subscription plan:", error);
+      }
+    };
+    
+    loadSubscriptionPlan();
   }, []);
 
   // Load project information and videos
@@ -1251,7 +1272,7 @@ export default function VideoEditor() {
           >
             <Play className="w-12 h-12 text-[#FFDA2A]" />
           </motion.div>
-          <p className="text-gray-400">加载视频中...</p>
+          <p className="text-gray-400">Loading video...</p>
         </div>
       </div>
     );
@@ -1437,16 +1458,19 @@ export default function VideoEditor() {
                       // All videos finished, reset to first
                       console.log('✅ All videos finished, resetting to first');
                       setIsPlaying(false);
-                      setCurrentTime(0);
                       currentClipIndexRef.current = 0;
                       if (tracks[0]?.clips.length > 0) {
                         setSelectedClipId(tracks[0].clips[0].id);
                         currentPlayingClipRef.current = tracks[0].clips[0];
                       }
-                      // Reset canvas player to first video
+                      // Reset canvas player to first video (this will also reset currentTime via onTimeUpdate)
                       if (canvasPlayerRef.current) {
                         canvasPlayerRef.current.resetToFirst();
                       }
+                      // Ensure currentTime is reset to 0 after resetToFirst completes
+                      setTimeout(() => {
+                        setCurrentTime(0);
+                      }, 100);
                     }}
                   />
                 ) : (
@@ -1523,7 +1547,7 @@ export default function VideoEditor() {
               
               {/* Subtitle Toggle */}
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-300">字幕</span>
+                <span className="text-sm text-gray-300">Subtitles</span>
                 <button
                   onClick={() => setShowSubtitles(!showSubtitles)}
                   className={`relative w-11 h-6 rounded-full transition-colors ${
@@ -1563,7 +1587,7 @@ export default function VideoEditor() {
                 <button
                   onClick={handleZoomOut}
                   className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
-                  title="缩小"
+                  title="Zoom Out"
                 >
                   <ZoomOut className="w-4 h-4" />
                 </button>
@@ -1573,7 +1597,7 @@ export default function VideoEditor() {
                 <button
                   onClick={handleZoomIn}
                   className="p-1.5 rounded hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
-                  title="放大"
+                  title="Zoom In"
                 >
                   <ZoomIn className="w-4 h-4" />
                 </button>
@@ -1584,7 +1608,7 @@ export default function VideoEditor() {
                 variant="ghost"
                 size="icon"
                 className="w-8 h-8 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/20"
-                title="导出"
+                title="Export"
                 onClick={() => setShowExportDialog(true)}
               >
                 <Download className="w-4 h-4" />
@@ -1618,7 +1642,7 @@ export default function VideoEditor() {
                 style={{ top: "40px" }}
               >
                 <FileText className="w-4 h-4" />
-                <span className="text-xs">字幕</span>
+                <span className="text-xs">Subtitles</span>
               </button>
               {/* Voiceover Button - aligned with voiceover track */}
               <button
@@ -1631,7 +1655,7 @@ export default function VideoEditor() {
                 style={{ top: "80px" }}
               >
                 <Mic className="w-4 h-4" />
-                <span className="text-xs">配音</span>
+                <span className="text-xs">Voiceover</span>
               </button>
               {/* Scenes Button - aligned with video track */}
               <button
@@ -1644,7 +1668,7 @@ export default function VideoEditor() {
                 style={{ top: "120px" }}
               >
                 <Film className="w-5 h-5" />
-                <span className="text-xs">分镜</span>
+                <span className="text-xs">Scenes</span>
               </button>
           </div>
 
@@ -1972,7 +1996,7 @@ export default function VideoEditor() {
             <button
               onClick={() => {
                 // TODO: 实现下载视频功能
-                console.log("下载视频");
+                console.log("Download videos");
                 setShowExportDialog(false);
               }}
               className="w-full p-4 border border-gray-600 rounded-lg hover:border-yellow-400 hover:bg-yellow-400/10 transition-all text-left group cursor-pointer"
@@ -1989,19 +2013,38 @@ export default function VideoEditor() {
             </button>
             <button
               onClick={() => {
+                if (!isCompleteVideoExportAllowed(subscriptionPlan)) {
+                  showWarning("Complete video export is only available for Pro and Studio plans. Please upgrade your subscription.");
+                  return;
+                }
                 // TODO: 实现导出完整视频功能
-                console.log("导出完整视频");
+                console.log("Export complete video");
                 setShowExportDialog(false);
               }}
-              className="w-full p-4 border border-gray-600 rounded-lg hover:border-yellow-400 hover:bg-yellow-400/10 transition-all text-left group cursor-pointer"
+              disabled={!isCompleteVideoExportAllowed(subscriptionPlan)}
+              className={`w-full p-4 border rounded-lg text-left group transition-all ${
+                isCompleteVideoExportAllowed(subscriptionPlan)
+                  ? "border-gray-600 hover:border-yellow-400 hover:bg-yellow-400/10 cursor-pointer"
+                  : "border-gray-700 bg-gray-800/50 opacity-50 cursor-not-allowed"
+              }`}
             >
               <div className="flex items-start gap-3">
-                <div className="p-2 bg-gray-700 rounded-lg group-hover:bg-yellow-400/20 transition-colors flex-shrink-0">
-                  <Save className="w-5 h-5 text-yellow-400" />
+                <div className={`p-2 rounded-lg transition-colors flex-shrink-0 ${
+                  isCompleteVideoExportAllowed(subscriptionPlan)
+                    ? "bg-gray-700 group-hover:bg-yellow-400/20"
+                    : "bg-gray-800"
+                }`}>
+                  <Save className={`w-5 h-5 ${
+                    isCompleteVideoExportAllowed(subscriptionPlan) ? "text-yellow-400" : "text-gray-600"
+                  }`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="font-medium text-white mb-1">Export Complete Video</div>
-                  <div className="text-sm text-gray-400 leading-relaxed">All videos merged into a single complete video file</div>
+                  <div className="text-sm text-gray-400 leading-relaxed">
+                    {isCompleteVideoExportAllowed(subscriptionPlan)
+                      ? "All videos merged into a single complete video file"
+                      : "Available for Pro and Studio plans only"}
+                  </div>
                 </div>
               </div>
             </button>

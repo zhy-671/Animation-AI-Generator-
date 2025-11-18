@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     
     if (characters && characters.trim()) {
       // 如果传入了 characters 参数，使用它
-      characterNames = characters.split(',').map(name => name.trim()).filter(name => name.length > 0);
+      characterNames = characters.split(',').map((name: string) => name.trim()).filter((name: string) => name.length > 0);
     }
     
     // 如果 characters 为空，从 image_prompt 中提取角色名称

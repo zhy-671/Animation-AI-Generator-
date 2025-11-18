@@ -32,6 +32,46 @@ export interface CreatePaymentOrderRequest {
   credits_amount?: number; // 购买的积分数量
 }
 
+// Creem 实际 webhook 格式
+export interface CreemWebhookEvent {
+  id: string;
+  eventType: string; // 'checkout.completed', 'checkout.failed', etc.
+  created_at: number;
+  object: {
+    id: string; // checkout ID
+    object: 'checkout';
+    order?: {
+      id: string; // Creem order ID
+      object: 'order';
+      customer: string;
+      product: string;
+      amount: number;
+      currency: string;
+      status: 'paid' | 'pending' | 'failed' | 'cancelled';
+      type?: 'recurring' | 'one-time';
+      transaction?: string;
+      created_at: string;
+      updated_at: string;
+      mode: 'test' | 'live';
+    };
+    subscription?: {
+      id: string;
+      object: 'subscription';
+      product: string;
+      customer: string;
+      status: 'active' | 'canceled' | 'past_due';
+      current_period_start_date: string;
+      current_period_end_date: string;
+      metadata?: Record<string, any>;
+      mode: 'test' | 'live';
+    };
+    status: 'completed' | 'pending' | 'failed' | 'cancelled';
+    metadata?: Record<string, any>;
+    mode: 'test' | 'live';
+  };
+}
+
+// 向后兼容的旧格式（如果 Creem 使用）
 export interface CreamPaymentWebhook {
   order_id: string;
   payment_id: string;

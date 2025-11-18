@@ -80,6 +80,81 @@ const defaultFaqs = [
     id: 15,
     question: "What video formats and resolutions are supported?",
     answer: "Videos are generated in MP4 format. Supported resolutions include 480P, 720P, and 1080P. Duration options are 5 seconds or 10 seconds per clip. The final composed video maintains your selected aspect ratio and can be exported for download."
+  },
+  {
+    id: 16,
+    question: "Can AI generate animations?",
+    answer: "Yes! AI can generate animations from text descriptions or images. Our Animation AI Generator uses advanced AI technology to create professional animated videos in seconds. Simply describe your idea or upload an image, and our AI will transform it into a captivating animated video."
+  },
+  {
+    id: 17,
+    question: "Can ChatGPT animate?",
+    answer: "ChatGPT is a text-based AI that can help with animation scripts and ideas, but it cannot directly create animated videos. Our Animation AI Generator specializes in creating actual animated videos from text or images, bringing your ideas to life visually."
+  },
+  {
+    id: 18,
+    question: "Is there a free AI cartoon generator?",
+    answer: "Yes! Our Animation AI Generator offers free cartoon and animation generation. You can create animated videos and cartoons from text or images without any cost. Basic features are free, and you can upgrade for more advanced options."
+  },
+  {
+    id: 19,
+    question: "How to animate a picture using AI free?",
+    answer: "Simply upload your image to our Image-to-Video Animation Generator, and our AI will automatically transform it into an animated video. The process is free and takes just seconds. You can customize styles, add effects, and create professional animations without any expertise needed."
+  },
+  {
+    id: 20,
+    question: "Can CapCut animate photos?",
+    answer: "CapCut is primarily a video editing tool, not an AI animation generator. Our Animation AI Generator specializes in creating animated videos from static images using AI technology, transforming photos into dynamic animated sequences automatically."
+  },
+  {
+    id: 21,
+    question: "How to convert picture to animation?",
+    answer: "Upload your picture to our Image-to-Video Animation Generator. Our AI analyzes your image and creates an animated video version. You can choose from various animation styles (2D, 3D, Anime, Cartoon, etc.) and customize the animation to match your vision."
+  },
+  {
+    id: 22,
+    question: "Can ChatGPT cartoonize a photo?",
+    answer: "ChatGPT cannot directly cartoonize photos or create images. Our Animation AI Generator can transform photos into animated videos with various cartoon styles. Upload your photo and select a cartoon animation style to create animated content."
+  },
+  {
+    id: 23,
+    question: "Is AI animation free?",
+    answer: "Yes! Our basic AI animation features are completely free. You can create animated videos from text or images without any cost. We offer free credits to get started, and you can purchase additional credits or subscribe to plans for more advanced features."
+  },
+  {
+    id: 24,
+    question: "Is Animaker actually free?",
+    answer: "Our Animation AI Generator offers free basic features for creating animations. You can generate animated videos from text or images at no cost. We provide free credits to help you get started, with optional paid plans for extended usage and premium features."
+  },
+  {
+    id: 25,
+    question: "Which AI animation tool is best?",
+    answer: "Our Animation AI Generator stands out with its ease of use, fast generation times, and high-quality results. We support multiple animation styles (2D, 3D, Anime, Cartoon), offer both text-to-video and image-to-video options, and provide a complete storyboard workflow. Try it free and see why creators choose us!"
+  },
+  {
+    id: 26,
+    question: "How to animate a picture using ChatGPT free?",
+    answer: "ChatGPT cannot animate pictures directly. However, you can use our free Image-to-Video Animation Generator to animate your pictures. Simply upload your image, and our AI will create an animated video version in seconds - completely free to get started."
+  },
+  {
+    id: 27,
+    question: "Is Disney using AI to animate?",
+    answer: "Major animation studios are exploring AI tools for various production tasks. Our Animation AI Generator brings professional-grade AI animation capabilities to everyone, allowing creators to produce Disney-quality animated content quickly and affordably."
+  },
+  {
+    id: 28,
+    question: "Can I make 3D animation for free?",
+    answer: "Yes! Our Animation AI Generator includes free 3D animation capabilities. You can create 3D animated videos from text descriptions or images without any cost. Select the 3D animation style and watch your ideas come to life in three dimensions."
+  },
+  {
+    id: 29,
+    question: "Is AI replacing animators?",
+    answer: "AI is a powerful tool that enhances animators' capabilities rather than replacing them. Our Animation AI Generator helps creators bring ideas to life faster, allowing animators to focus on creative direction and refinement. It's a collaborative tool that empowers creators."
+  },
+  {
+    id: 30,
+    question: "What are the 4 types of animation?",
+    answer: "The four main types of animation are: 1) Traditional/2D Animation - hand-drawn frame-by-frame animation, 2) 3D Animation - computer-generated three-dimensional animation, 3) Stop Motion - physical objects photographed frame-by-frame, and 4) Motion Graphics - animated graphic design elements. Our tool supports 2D, 3D, and various modern animation styles."
   }
 ];
 
@@ -113,9 +188,9 @@ export default function AnimationFAQ() {
             transition={{ duration: 0.5 }}
             className="text-center space-y-4 mb-16"
           >
-            <h2 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
-              {(t as any).faq?.title ?? 'Frequently asked questions'}
-            </h2>
+            <h1 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
+              Frequently Asked Questions
+            </h1>
             <p className="text-lg text-gray-600 dark:text-gray-400">
               {(t as any).faq?.subtitle ?? 'Everything you need to know'}
             </p>

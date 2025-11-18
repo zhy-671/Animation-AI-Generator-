@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { Suspense } from "react";
 import VideoEditor from "@/components/storyboard/video-editor";
 
 export const metadata: Metadata = {
@@ -10,6 +11,10 @@ export const metadata: Metadata = {
 };
 
 export default function VideoProductionPage() {
-  return <VideoEditor />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center">Loading...</div>}>
+      <VideoEditor />
+    </Suspense>
+  );
 }
 

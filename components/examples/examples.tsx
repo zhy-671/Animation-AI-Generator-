@@ -97,41 +97,24 @@ export default function Examples() {
                             const target = e.target as HTMLVideoElement;
                             const error = target.error;
                             
-                            // Build comprehensive error info
-                            const errorInfo: Record<string, any> = {
-                              url: video.url || 'unknown',
-                              networkState: target.networkState ?? 'unknown',
-                              readyState: target.readyState ?? 'unknown',
-                              currentSrc: target.currentSrc || 'none',
-                              videoWidth: target.videoWidth || 0,
-                              videoHeight: target.videoHeight || 0,
-                            };
-                            
-                            if (error) {
-                              try {
-                                errorInfo.errorCode = error.code ?? 'unknown';
-                                errorInfo.errorMessage = error.message || 'No error message';
-                                
-                                // Log error code meanings
-                                const errorMessages: Record<number, string> = {
-                                  1: 'MEDIA_ERR_ABORTED - The user aborted the loading',
-                                  2: 'MEDIA_ERR_NETWORK - A network error occurred',
-                                  3: 'MEDIA_ERR_DECODE - An error occurred while decoding',
-                                  4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - The video format is not supported'
-                                };
-                                
-                                if (error.code !== null && error.code !== undefined && errorMessages[error.code]) {
-                                  errorInfo.errorDescription = errorMessages[error.code];
-                                }
-                              } catch (err) {
-                                errorInfo.errorSerializationFailed = true;
-                                errorInfo.errorString = String(error);
+                            // Silently handle video errors - just mark as failed
+                            // Only log if there's a specific error code
+                            if (error && error.code !== null && error.code !== undefined) {
+                              const errorMessages: Record<number, string> = {
+                                1: 'MEDIA_ERR_ABORTED',
+                                2: 'MEDIA_ERR_NETWORK',
+                                3: 'MEDIA_ERR_DECODE',
+                                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+                              };
+                              
+                              const errorType = errorMessages[error.code] || `Error code ${error.code}`;
+                              // Only log network and decode errors, ignore aborted errors
+                              if (error.code === 2 || error.code === 3) {
+                                console.warn(`Video load ${errorType}:`, video.url?.substring(0, 50) || 'unknown');
                               }
-                            } else {
-                              errorInfo.error = 'Unknown error (error object is null)';
                             }
                             
-                            console.error('Video load error:', JSON.stringify(errorInfo, null, 2));
+                            // Mark video as failed to show placeholder
                             handleVideoError(video.url);
                           }}
                           onLoadedData={() => {

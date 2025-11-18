@@ -389,7 +389,10 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                   exit={{ opacity: 0 }}
                   className="space-y-6"
                 >
-                  <h2 className="text-3xl md:text-4xl font-bold mb-8 text-center">
+                  <h1 className="text-3xl md:text-4xl font-bold mb-8 text-center">
+                    AI Storyboard Generator
+                  </h1>
+                  <h2 className="text-xl md:text-2xl font-semibold mb-6 text-center text-gray-300">
                     Hi! Video maker, share your ideas or creative concepts
                   </h2>
 
@@ -477,6 +480,8 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                 >
                   {/* 固定标题栏 - 包含标题和下一步按钮，移出内容区域 */}
                   <div className="flex-shrink-0 bg-gray-900 pb-4 border-b border-gray-800 mb-4">
+                    {/* SEO H1 - 固定用于SEO */}
+                    <h1 className="sr-only">AI Storyboard Generator</h1>
                     {editingField === "title" ? (
                       <div className="flex gap-2 items-start">
                         <Textarea
@@ -518,7 +523,7 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-4">
-                        <div
+                        <h2
                           className="text-3xl md:text-4xl font-bold cursor-pointer hover:text-[#FFDA2A] transition-colors flex items-center gap-2 group flex-1"
                           onClick={() => {
                             setEditingTitle(storyContent.title);
@@ -527,7 +532,7 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                         >
                           {storyContent.title}
                           <Edit2 className="w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
+                        </h2>
                         {/* 下一步按钮在标题右侧 */}
                         <motion.div
                           whileHover={!isCreatingProject && editingField === null ? { scale: 1.05 } : {}}

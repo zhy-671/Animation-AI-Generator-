@@ -145,31 +145,69 @@ export async function deductImageCredits(metadata?: Record<string, any>): Promis
 
 /**
  * 扣除视频生成积分
- * @param resolution 视频分辨率
+ * @param resolution 视频分辨率（用户选择的分辨率）
  * @param duration 视频时长（秒）
  * @param metadata 元数据
  * @param subscriptionPlan 订阅计划（可选，如果提供则使用订阅计划相关的积分计算）
+ * @param isPaidUser 是否为充值用户（无订阅但充值了积分）
  */
 export async function deductVideoCredits(
   resolution: '480p' | '720p' | '1080p',
   duration: number,
   metadata?: Record<string, any>,
-  subscriptionPlan?: SubscriptionPlan
+  subscriptionPlan?: SubscriptionPlan,
+  isPaidUser?: boolean
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
-  // 如果提供了订阅计划，使用订阅计划相关的积分计算
-  const credits = subscriptionPlan !== undefined 
-    ? calculateVideoCredits(subscriptionPlan, resolution, duration)
-    : getVideoCredits(resolution, duration);
+  let credits: number;
+  let actualResolution: '480p' | '720p' | '1080p' = resolution;
+  
+  if (subscriptionPlan !== undefined && subscriptionPlan !== null) {
+    // 订阅用户：根据订阅计划强制使用高分辨率费率
+    // Basic计划：统一按720p费率（15积分/秒）
+    // Pro计划：480p和720p按720p费率（15积分/秒），1080p按1080p费率（24积分/秒）
+    // Studio计划：统一按1080p费率（24积分/秒）
+    if (subscriptionPlan === 'basic') {
+      // Basic用户无论选择什么分辨率，都按720p费率扣除
+      actualResolution = '720p';
+      credits = calculateVideoCredits(subscriptionPlan, '720p', duration);
+    } else if (subscriptionPlan === 'pro') {
+      // Pro用户：480p和720p按720p费率扣除，1080p按1080p费率扣除
+      if (resolution === '1080p') {
+        actualResolution = '1080p';
+        credits = calculateVideoCredits(subscriptionPlan, '1080p', duration);
+      } else {
+        actualResolution = '720p';
+        credits = calculateVideoCredits(subscriptionPlan, '720p', duration);
+      }
+    } else if (subscriptionPlan === 'studio') {
+      // Studio用户无论选择什么分辨率，都按1080p费率扣除
+      actualResolution = '1080p';
+      credits = calculateVideoCredits(subscriptionPlan, '1080p', duration);
+    } else {
+      // 其他情况使用原分辨率计算
+      credits = calculateVideoCredits(subscriptionPlan, resolution, duration);
+    }
+  } else if (isPaidUser) {
+    // 充值用户（无订阅）：统一按720p费率扣除（15积分/秒）
+    actualResolution = '720p';
+    credits = getVideoCredits('720p', duration);
+  } else {
+    // Free用户或其他情况：统一按720p费率扣除（15积分/秒）
+    actualResolution = '720p';
+    credits = getVideoCredits('720p', duration);
+  }
     
   return await deductCredits(
     credits,
-    `Generated ${duration}s ${resolution} video`,
+    `Generated ${duration}s ${resolution} video (charged at ${actualResolution} rate)`,
     {
       ...metadata,
       resolution,
+      actualResolution, // 实际扣除费率对应的分辨率
       duration,
       credits,
       subscriptionPlan: subscriptionPlan || null,
+      isPaidUser: isPaidUser || false,
     }
   );
 }

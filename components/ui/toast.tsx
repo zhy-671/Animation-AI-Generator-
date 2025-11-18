@@ -13,6 +13,18 @@ export interface Toast {
   duration?: number;
 }
 
+// Types for compatibility with use-toast hook
+export type ToastActionElement = React.ReactElement;
+
+export interface ToastProps {
+  id?: string;
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  action?: ToastActionElement;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}
+
 interface ToastContextType {
   showToast: (message: string, type?: ToastType, duration?: number) => void;
   showSuccess: (message: string, duration?: number) => void;

@@ -18,26 +18,26 @@ const subscriptionPlans = [
     name: "Basic",
     price: "$19.99",
     period: "per month",
-    credits: 200,
+    credits: 1500,
     features: [
-      "200 Credits/month",
+      "1,500 Credits/month",
       "Text-to-Video Generation",
       "Image-to-Video Generation",
       "480p / 720p Resolution",
-      "4 Credits/second for video",
       "50 Images/month",
       "20 Storyboards/month",
       "60s Voiceover/month",
-      "3 Downloads per day",
-      "Video Download",
+      "Individual Video Download",
       "Email Support",
     ],
     limitations: [
       "480p / 720p only",
       "No Commercial License",
+      "No Complete Video Export",
     ],
     commercialLicense: false,
     videoResolutions: ["480p", "720p"],
+    allowsCompleteVideoExport: false,
     popular: false,
     icon: Sparkles,
   },
@@ -45,25 +45,23 @@ const subscriptionPlans = [
     name: "Pro",
     price: "$39.99",
     period: "per month",
-    credits: 700,
+    credits: 3500,
     features: [
-      "700 Credits/month",
+      "3,500 Credits/month",
       "All Basic Features",
-      "480p / 720p Resolution",
-      "5 Credits/second for video",
+      "480p / 720p / 1080p Resolution",
       "200 Images/month",
       "100 Storyboards/month",
       "300s Voiceover/month",
-      "10 Downloads per day",
+      "Individual Video Download",
+      "Complete Video Export",
       "Commercial Use License",
-      "Video Download",
       "Priority Support",
     ],
-    limitations: [
-      "480p / 720p only",
-    ],
+    limitations: [],
     commercialLicense: true,
-    videoResolutions: ["480p", "720p"],
+    videoResolutions: ["480p", "720p", "1080p"],
+    allowsCompleteVideoExport: true,
     popular: true,
     icon: Zap,
   },
@@ -71,24 +69,24 @@ const subscriptionPlans = [
     name: "Studio",
     price: "$129.99",
     period: "per month",
-    credits: 2000,
+    credits: 10000,
     features: [
-      "2,000 Credits/month",
+      "10,000 Credits/month",
       "All Pro Features",
       "720p / 1080p Resolution",
-      "720p: 4 Credits/second",
-      "1080p: 8 Credits/second",
       "500 Images/month",
       "200 Storyboards/month",
       "900s Voiceover/month",
-      "Unlimited Downloads",
+      "Individual Video Download",
+      "Complete Video Export",
       "Commercial License",
-      "Video Download & Storage",
+      "Video Storage",
       "Premium Customer Support",
     ],
     limitations: [],
     commercialLicense: true,
     videoResolutions: ["720p", "1080p"],
+    allowsCompleteVideoExport: true,
     popular: false,
     icon: Crown,
   },
@@ -140,27 +138,73 @@ export default function PricingPage() {
 
   // 处理订阅
   const handleSubscribe = async (planName: 'basic' | 'pro' | 'studio') => {
+    console.log('handleSubscribe called with planName:', planName);
     try {
       setError(null);
       setLoading(`subscribe-${planName}`);
+      console.log('Loading state set to:', `subscribe-${planName}`);
       
       // 检查用户是否登录
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login?redirect=/pricing');
+      console.log('Checking user authentication...');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      console.log('User check result:', { user: !!user, error: userError });
+      
+      if (userError || !user) {
+        console.log('User not authenticated, redirecting to login');
+        setLoading(null);
+        setError('Please login to continue');
+        setTimeout(() => {
+          router.push('/login?from=' + encodeURIComponent('/pricing'));
+        }, 1500);
         return;
       }
 
-      const result = await subscribeToPlan(planName);
+      console.log('User authenticated, creating subscription order for plan:', planName);
+      
+      // 添加超时处理
+      const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) => {
+        setTimeout(() => {
+          console.warn('Request timeout after 30 seconds');
+          resolve({ success: false, error: 'Request timeout. Please try again.' });
+        }, 30000); // 30秒超时
+      });
+
+      console.log('Calling subscribeToPlan...');
+      const result = await Promise.race([
+        subscribeToPlan(planName),
+        timeoutPromise,
+      ]);
+      
+      console.log('Subscription result:', result);
       
       if (!result.success) {
-        setError(result.error || 'Failed to create subscription order');
+        const errorMessage = result.error || 'Failed to create subscription order';
+        console.error('Subscription failed:', errorMessage);
+        setError(errorMessage);
+        setLoading(null);
+      } else if (result.payment_url) {
+        // 如果成功且有支付URL，会跳转到支付页面
+        console.log('Redirecting to payment URL:', result.payment_url);
+        // window.location.href 已经在 subscribeToPlan 中处理了
+        // 如果跳转失败，设置一个备用超时
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            // 如果页面还在焦点，说明跳转可能失败了
+            console.warn('Page still focused, redirect may have failed');
+            setError('Redirect failed. Please check the payment URL manually.');
+            setLoading(null);
+          }
+        }, 2000);
+      } else {
+        console.error('Payment URL not received in result');
+        setError('Payment URL not received from server');
         setLoading(null);
       }
-      // 如果成功，会跳转到支付页面，所以不需要处理成功情况
     } catch (err) {
       console.error('Error subscribing:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      console.error('Setting error message:', errorMessage);
+      setError(errorMessage);
       setLoading(null);
     }
   };
@@ -172,22 +216,59 @@ export default function PricingPage() {
       setLoading(`credits-${packageName}`);
       
       // 检查用户是否登录
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login?redirect=/pricing');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setLoading(null);
+        setError('Please login to continue');
+        setTimeout(() => {
+          router.push('/login?from=' + encodeURIComponent('/pricing'));
+        }, 1500);
         return;
       }
 
-      const result = await purchaseCredits(packageName);
+      console.log('Creating credit purchase order for package:', packageName);
+      
+      // 添加超时处理
+      const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) => {
+        setTimeout(() => {
+          resolve({ success: false, error: 'Request timeout. Please try again.' });
+        }, 30000); // 30秒超时
+      });
+
+      const result = await Promise.race([
+        purchaseCredits(packageName),
+        timeoutPromise,
+      ]);
+      
+      console.log('Credit purchase result:', result);
       
       if (!result.success) {
-        setError(result.error || 'Failed to create credit purchase order');
+        const errorMessage = result.error || 'Failed to create credit purchase order';
+        console.error('Credit purchase failed:', errorMessage);
+        setError(errorMessage);
+        setLoading(null);
+      } else if (result.payment_url) {
+        // 如果成功且有支付URL，会跳转到支付页面
+        console.log('Redirecting to payment URL:', result.payment_url);
+        // window.location.href 已经在 purchaseCredits 中处理了
+        // 如果跳转失败，设置一个备用超时
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            // 如果页面还在焦点，说明跳转可能失败了
+            console.warn('Page still focused, redirect may have failed');
+            setError('Redirect failed. Please check the payment URL manually.');
+            setLoading(null);
+          }
+        }, 2000);
+      } else {
+        console.error('Payment URL not received in result');
+        setError('Payment URL not received from server');
         setLoading(null);
       }
-      // 如果成功，会跳转到支付页面，所以不需要处理成功情况
     } catch (err) {
       console.error('Error purchasing credits:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMessage);
       setLoading(null);
     }
   };
@@ -358,7 +439,20 @@ export default function PricingPage() {
                               : ""
                           }`}
                           variant={plan.popular ? "default" : "outline"}
-                          onClick={() => handleSubscribe(plan.name.toLowerCase() as 'basic' | 'pro' | 'studio')}
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            console.log('Subscribe button clicked for plan:', plan.name);
+                            const planName = plan.name.toLowerCase() as 'basic' | 'pro' | 'studio';
+                            console.log('Calling handleSubscribe with planName:', planName);
+                            try {
+                              await handleSubscribe(planName);
+                            } catch (error) {
+                              console.error('Error in onClick handler:', error);
+                              setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+                              setLoading(null);
+                            }
+                          }}
                           disabled={loading === `subscribe-${plan.name.toLowerCase()}`}
                         >
                           {loading === `subscribe-${plan.name.toLowerCase()}` ? 'Processing...' : 'Get Started'}
@@ -435,7 +529,12 @@ export default function PricingPage() {
                             : ""
                         }`}
                         variant={pkg.popular ? "default" : "outline"}
-                        onClick={() => handlePurchaseCredits(pkg.name)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('Buy Credits button clicked for package:', pkg.name);
+                          handlePurchaseCredits(pkg.name);
+                        }}
                         disabled={loading === `credits-${pkg.name}`}
                       >
                         {loading === `credits-${pkg.name}` ? 'Processing...' : 'Buy Credits'}
@@ -454,13 +553,19 @@ export default function PricingPage() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg max-w-md"
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[99999] bg-red-500 text-white px-6 py-3 rounded-lg shadow-2xl max-w-md border-2 border-red-600"
+            role="alert"
           >
             <div className="flex items-center justify-between gap-4">
-              <span>{error}</span>
+              <span className="font-medium text-sm">{error}</span>
               <button
-                onClick={() => setError(null)}
-                className="text-white hover:text-gray-200"
+                onClick={() => {
+                  console.log('Closing error message');
+                  setError(null);
+                }}
+                className="text-white hover:text-gray-200 transition-colors flex-shrink-0 text-lg font-bold leading-none"
+                aria-label="Close error message"
               >
                 ✕
               </button>

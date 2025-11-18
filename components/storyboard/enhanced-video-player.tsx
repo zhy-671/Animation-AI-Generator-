@@ -13,7 +13,7 @@ const ReactPlayer = dynamic(() => import("react-player"), {
       <div className="text-white">Loading player...</div>
     </div>
   )
-});
+}) as any;
 
 interface EnhancedVideoPlayerProps {
   url: string;
@@ -64,7 +64,7 @@ export default function EnhancedVideoPlayer({
   width = "100%",
   height = "100%",
 }: EnhancedVideoPlayerProps) {
-  const playerRef = useRef<ReactPlayer>(null);
+  const playerRef = useRef<any>(null);
   const [ready, setReady] = useState(false);
   const durationFetchedRef = useRef(false);
 
@@ -79,16 +79,16 @@ export default function EnhancedVideoPlayer({
         if (internalPlayer) {
           const player = internalPlayer as HTMLVideoElement;
           if (player && Math.abs(player.currentTime - currentTime) > 0.5) {
-            playerRef.current.seekTo(currentTime, "seconds");
+            (playerRef.current as any).seekTo(currentTime, "seconds");
           }
         } else {
           // Fallback: use seekTo directly without checking current time
-          playerRef.current.seekTo(currentTime, "seconds");
+          (playerRef.current as any).seekTo(currentTime, "seconds");
         }
       } catch (err) {
         // Fallback: use seekTo directly
         try {
-          playerRef.current.seekTo(currentTime, "seconds");
+          (playerRef.current as any).seekTo(currentTime, "seconds");
         } catch (seekErr) {
           // Ignore seek errors
         }
@@ -438,9 +438,9 @@ export default function EnhancedVideoPlayer({
           progressInterval={50}
           onPlay={handlePlay}
           onPause={handlePause}
-          onProgress={handleProgress}
-          onReady={handleReady}
-          onError={handleError}
+          onProgress={handleProgress as any}
+          onReady={handleReady as any}
+          onError={handleError as any}
           onEnded={handleEnded}
           onStart={() => {
             console.log('🎬 ReactPlayer: Video started');
@@ -463,7 +463,7 @@ export default function EnhancedVideoPlayer({
               forceHLS: false,
               forceDASH: false,
             },
-          }}
+          } as any}
         />
       </div>
       

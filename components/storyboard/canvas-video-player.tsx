@@ -796,9 +796,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     // Update visibility state
     setIsAVisible(true);
     
-    // Reset time to 0 (start of first video)
-    onTimeUpdate(0);
-    lastSeekTimeRef.current = 0;
+    // Reset time to first clip's startTime (which should be 0 for the first clip)
+    const resetTime = firstClip.startTime;
+    onTimeUpdate(resetTime);
+    lastSeekTimeRef.current = resetTime;
     lastUpdateTimeRef.current = Date.now();
     
     // Clear last frame reference
@@ -809,7 +810,11 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       onClipChange?.(0);
     }, 0);
     
-    console.log("🔄 Reset to first video:", firstClip.url.substring(0, 50));
+    console.log("🔄 Reset to first video:", {
+      url: firstClip.url.substring(0, 50),
+      startTime: firstClip.startTime,
+      resetTime: resetTime
+    });
   }, [clips, isMuted, onTimeUpdate, onClipChange]);
 
   // Expose play function and reset function via ref

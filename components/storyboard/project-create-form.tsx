@@ -1513,7 +1513,15 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
             // 更新本地状态
             setCharacterDetails(prev => {
               const newMap = new Map(prev);
-              newMap.set(updatedDetail.id, updatedDetail);
+              // 确保所有必需的数组字段和字符串字段都存在
+              const normalizedDetail: CharacterDetail = {
+                ...updatedDetail,
+                skills_abilities: updatedDetail.skills_abilities || [],
+                relationships: updatedDetail.relationships || [],
+                pose_references: updatedDetail.pose_references || [],
+                visual_reference_prompt: updatedDetail.visual_reference_prompt || "",
+              };
+              newMap.set(normalizedDetail.id, normalizedDetail);
               return newMap;
             });
 

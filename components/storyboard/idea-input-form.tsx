@@ -10,12 +10,21 @@ import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import { useToast } from "@/components/ui/toast-notification";
 import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 export default function IdeaInputForm() {
   const router = useRouter();
   const { showError, showWarning } = useToast();
   const [ideaText, setIdeaText] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   const handleBackToProjects = () => {
     router.push("/storyboard");
@@ -30,14 +39,12 @@ export default function IdeaInputForm() {
     // Check credits balance before generating
     const creditsCheck = await checkCreditsBalance(2);
     if (!creditsCheck.sufficient) {
-      showWarning(
-        `Insufficient credits. You need 2 credits to generate a story script. Please purchase credits to continue.`,
-        5000
-      );
-      // Navigate to pricing page after a short delay
-      setTimeout(() => {
-        router.push("/pricing");
-      }, 2000);
+      setInsufficientCreditsData({
+        required: 2,
+        current: creditsCheck.balance || 0,
+        action: "generate a story script"
+      });
+      setShowInsufficientCreditsDialog(true);
       return;
     }
 
@@ -226,6 +233,17 @@ export default function IdeaInputForm() {
       </div>
 
       <Footer />
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

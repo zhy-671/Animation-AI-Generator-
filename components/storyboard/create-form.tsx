@@ -687,11 +687,11 @@ export default function StoryboardCreateForm() {
       const { taskId } = result.data;
       
       // 轮询图片生成状态
-      const pollImageStatus = async () => {
+      const pollImageStatus = async (): Promise<string[] | null> => {
         const maxAttempts = 60; // 最多轮询60次（约5分钟）
         let attempts = 0;
 
-        const poll = async (): Promise<string | null> => {
+        const poll = async (): Promise<string[] | null> => {
           if (attempts >= maxAttempts) {
             throw new Error("Image generation timed out");
           }
@@ -1091,7 +1091,11 @@ export default function StoryboardCreateForm() {
               }
 
               // 更新本地状态
-              const updatedShots = selectedScene.storyboard!.shots.map((s: Shot) =>
+              if (!selectedScene || !selectedScene.storyboard || !sceneData) {
+                return;
+              }
+
+              const updatedShots = selectedScene.storyboard.shots.map((s: Shot) =>
                 s.shot_number === shot.shot_number
                   ? { ...s, video_url: storedVideoUrl }
                   : s
@@ -1144,7 +1148,7 @@ export default function StoryboardCreateForm() {
 
   // 保存分镜编辑
   const handleSaveShot = async () => {
-    if (!editingShotData || !selectedScene) {
+    if (!editingShotData || !selectedScene || !selectedScene.storyboard) {
       return;
     }
 
