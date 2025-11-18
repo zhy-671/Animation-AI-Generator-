@@ -98,11 +98,37 @@ export async function POST(req: NextRequest) {
       }, { status: 500 });
     }
 
+    console.log('✅ Order created successfully:', {
+      order_id: order.id,
+      order_id_type: typeof order.id,
+      order_id_length: order.id?.length,
+      customer_id: customer.id,
+      package_name: packageName,
+      credits: credits,
+      amount: amount,
+    });
+
+    // 确保 order.id 存在且是字符串
+    if (!order.id) {
+      console.error('❌ Order ID is missing after creation!');
+      return NextResponse.json({ 
+        error: 'Failed to get order ID after creation' 
+      }, { status: 500 });
+    }
+
+    const orderIdString = String(order.id);
+    console.log('📤 Sending to Creem with metadata:', {
+      order_id: orderIdString,
+      user_id: user.id,
+      customer_id: customer.id,
+      package_name: packageName,
+    });
+
     const payload: any = {
       product_id: productId,
       metadata: {
         user_id: user.id,
-        order_id: order.id, // 添加订单ID到metadata，方便webhook处理
+        order_id: orderIdString, // 确保是字符串格式
         customer_id: customer.id,
         product_type: "credits",
         credit_package_name: packageName,
@@ -127,24 +153,63 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const text = await res.text();
-      // 如果Creem API调用失败，删除刚创建的订单记录
-      await supabase.from('payment_orders').delete().eq('id', order.id);
+      console.error('Creem API call failed:', {
+        status: res.status,
+        statusText: res.statusText,
+        error: text,
+        order_id: order.id,
+      });
+      // 不要删除订单，保留以便调试和后续处理
+      // 更新订单状态为 failed，而不是删除
+      await supabase
+        .from('payment_orders')
+        .update({ 
+          status: 'failed',
+          metadata: {
+            ...order.metadata,
+            creem_api_error: text,
+            creem_api_status: res.status,
+          },
+        })
+        .eq('id', order.id);
       return NextResponse.json({ error: text || "Failed to create checkout" }, { status: 500 });
     }
 
     const data = await res.json();
     const checkoutUrl = data?.checkout_url || data?.url;
-    const creemOrderId = data?.id || data?.checkout_id || data?.order_id;
+    const checkoutId = data?.id; // Creem checkout ID
+    
+    // 注意：此时 Creem 还没有创建订单，订单是在支付完成后才创建的
+    // 所以这里只能保存 checkout_id，真正的 creem_order_id 会在 webhook 中更新
+    console.log('📥 Creem checkout response:', {
+      checkout_id: checkoutId,
+      checkout_url: checkoutUrl,
+      full_response: data,
+    });
 
-    // 更新订单记录，保存 Creem 订单ID
-    if (creemOrderId) {
-      await supabase
+    // 更新订单记录，保存 Creem checkout ID
+    // 真正的 Creem 订单 ID (object.order.id) 会在 webhook 中收到后更新
+    if (checkoutId) {
+      const { error: updateError } = await supabase
         .from('payment_orders')
         .update({
-          creem_order_id: creemOrderId,
+          creem_order_id: checkoutId, // 暂时保存 checkout_id，webhook 会更新为真正的 order.id
           status: 'processing',
+          metadata: {
+            ...order.metadata,
+            checkout_id: checkoutId,
+          },
         })
         .eq('id', order.id);
+      
+      if (updateError) {
+        console.error('Error updating order with checkout_id:', updateError);
+      } else {
+        console.log('✅ Order updated with checkout_id:', {
+          order_id: order.id,
+          checkout_id: checkoutId,
+        });
+      }
     }
 
     return NextResponse.json({ checkoutUrl });
