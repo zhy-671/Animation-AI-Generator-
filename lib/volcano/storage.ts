@@ -96,12 +96,44 @@ class TOSClient {
    * 从 URL 下载并上传图片
    */
   async uploadImageFromUrl(imageUrl: string, filename: string): Promise<string> {
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to download image: ${response.statusText}`);
+    console.log('=== TOSClient.uploadImageFromUrl ===');
+    console.log('imageUrl:', imageUrl);
+    console.log('filename:', filename);
+    
+    try {
+      console.log('开始fetch图片URL...');
+      const response = await fetch(imageUrl);
+      console.log('fetch响应状态:', response.status, response.statusText);
+      console.log('响应头 Content-Type:', response.headers.get('content-type'));
+      console.log('响应头 Content-Length:', response.headers.get('content-length'));
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '无法读取错误响应');
+        console.error('fetch失败:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorText: errorText.substring(0, 200),
+        });
+        throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+      }
+      
+      console.log('开始读取响应为ArrayBuffer...');
+      const buffer = await response.arrayBuffer();
+      console.log('ArrayBuffer大小:', buffer.byteLength, 'bytes');
+      
+      console.log('开始上传到TOS...');
+      const uploadedUrl = await this.uploadImage(buffer, filename);
+      console.log('上传成功，返回URL:', uploadedUrl);
+      
+      return uploadedUrl;
+    } catch (error) {
+      console.error('uploadImageFromUrl错误:', error);
+      if (error instanceof Error) {
+        console.error('错误消息:', error.message);
+        console.error('错误堆栈:', error.stack);
+      }
+      throw error;
     }
-    const buffer = await response.arrayBuffer();
-    return this.uploadImage(buffer, filename);
   }
 
   /**

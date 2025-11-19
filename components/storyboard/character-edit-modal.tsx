@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Upload, Sparkles, Loader2 } from "lucide-react";
+import { X, Upload, Sparkles, Loader2, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import { useToast } from "@/components/ui/toast-notification";
 
 interface CharacterAppearance {
   hair_color: string;
@@ -72,6 +75,7 @@ export default function CharacterEditModal({
   visualStyle = "2d",
   artSetting = "16:9",
 }: CharacterEditModalProps) {
+  const { showError } = useToast();
   const [formData, setFormData] = useState<CharacterDetail | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -80,6 +84,13 @@ export default function CharacterEditModal({
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   useEffect(() => {
     if (character) {
@@ -164,28 +175,53 @@ export default function CharacterEditModal({
     const hasSelectedImage = imageUrl || (selectedImageIndex !== null && generatedImages.length > 0);
     
     if (!hasSelectedImage) {
-      const shouldContinue = confirm("Character has no image selected. Continue saving?\n\nClick \"OK\" to continue saving (without image)\nClick \"Cancel\" to return and select image");
-      if (!shouldContinue) {
-        return; // 用户取消，不保存
-      }
+      showError("Please create a character image before saving. Generate or upload an image first.");
+      return; // 阻止保存，要求用户先创建图片
     }
 
     // 如果用户选择了生成的图片但还没上传，先上传
     let finalImageUrl = imageUrl;
+    console.log("保存前检查图片状态:", {
+      imageUrl: imageUrl,
+      selectedImageIndex: selectedImageIndex,
+      generatedImagesLength: generatedImages.length,
+    });
+    
+    // 如果 imageUrl 为空，但用户选择了生成的图片，尝试上传
     if (!imageUrl && selectedImageIndex !== null && generatedImages.length > 0) {
       try {
         const selectedImageUrl = generatedImages[selectedImageIndex];
+        console.log("开始上传选中的图片:", selectedImageUrl);
         const uploadedUrl = await onImageUploadFromUrl(selectedImageUrl);
         if (uploadedUrl) {
           finalImageUrl = uploadedUrl;
           setImageUrl(uploadedUrl);
+          console.log("图片上传成功，URL:", uploadedUrl);
+        } else {
+          console.warn("图片上传返回 null，使用原始URL");
+          // 如果上传失败，使用生成的图片URL（可能是临时URL）
+          finalImageUrl = selectedImageUrl;
         }
       } catch (error) {
         console.error('Error uploading selected image:', error);
-        alert('Image upload failed. Please try again');
-        return;
+        // 如果上传失败，使用生成的图片URL（至少可以显示）
+        if (selectedImageIndex !== null && generatedImages.length > 0) {
+          finalImageUrl = generatedImages[selectedImageIndex];
+          console.log("上传失败，使用生成的图片URL（临时）:", finalImageUrl);
+          // 不阻止保存，至少图片可以显示
+        } else {
+          // 如果没有选择的图片，才阻止保存
+          alert('Image upload failed. Please try again');
+          return;
+        }
       }
+    } else if (selectedImageIndex !== null && generatedImages.length > 0 && !imageUrl) {
+      // 如果选择了图片但 imageUrl 为空，使用生成的图片URL
+      finalImageUrl = generatedImages[selectedImageIndex];
+      console.log("使用生成的图片URL（未上传）:", finalImageUrl);
     }
+
+    console.log("最终保存的图片URL:", finalImageUrl);
 
     // 保存时，将当前选中的图片URL和图片生成提示词一起保存
     const dataToSave = {
@@ -196,6 +232,7 @@ export default function CharacterEditModal({
     
     console.log("保存的角色数据（包含图片生成提示词）:", {
       ...dataToSave,
+      imageUrl: dataToSave.imageUrl,
       imageGenerationPrompt: imageGenerationPrompt.substring(0, 100) + '...',
     });
     
@@ -447,11 +484,40 @@ export default function CharacterEditModal({
       return;
     }
     
+    // Check credits balance before generating images (20 credits for 4 images)
+    const creditsCheck = await checkCreditsBalance(20);
+    if (!creditsCheck.sufficient) {
+      setInsufficientCreditsData({
+        required: 20,
+        current: creditsCheck.balance || 0,
+        action: "generate character images"
+      });
+      setShowInsufficientCreditsDialog(true);
+      return;
+    }
+    
     setIsGenerating(true);
     setGeneratedImages([]);
     setSelectedImageIndex(null);
     
     try {
+      // Deduct credits before generating images
+      const deductResult = await deductCredits(
+        20,
+        "Generate character images (4 images)",
+        { type: "character_image_generation", character_id: formData.id, character_name: formData.name }
+      );
+
+      if (!deductResult.success) {
+        console.error("Failed to deduct credits:", deductResult.error);
+        alert("Failed to deduct credits. Please try again.");
+        setIsGenerating(false);
+        return;
+      }
+
+      // Trigger credits update event to refresh header balance
+      window.dispatchEvent(new Event("credits-updated"));
+      
       // 根据角色信息构建提示词
       const prompt = buildImagePrompt(formData);
       
@@ -976,7 +1042,9 @@ export default function CharacterEditModal({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {imageUrl ? "Regenerate" : "Generate Image"}
+                    <span>{imageUrl ? "Regenerate" : "Generate Image"}</span>
+                    <Diamond className="w-4 h-4 ml-2" />
+                    <span className="text-xs ml-1">20</span>
                   </>
                 )}
               </Button>
@@ -992,6 +1060,17 @@ export default function CharacterEditModal({
           </div>
         </motion.div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </AnimatePresence>
   );
 }

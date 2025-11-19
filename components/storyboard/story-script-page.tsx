@@ -10,6 +10,8 @@ import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
+import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 interface StoryScriptPageProps {
   projectId?: string;
@@ -34,6 +36,13 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
   const [statusSettings, setStatusSettings] = useState(false); // Settings step completion status
   const [statusStoryboard, setStatusStoryboard] = useState(false); // Storyboard step completion status
   const [statusVideo, setStatusVideo] = useState(false); // Video creation step completion status
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   // Helper functions for safe sessionStorage access
   const getSessionStorage = (key: string): string | null => {
@@ -188,20 +197,41 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
     setStoryContent(null);
 
     try {
+      // 打印客户端请求参数（浏览器控制台）
+      const requestData = {
+        prompt: ideaText.trim(),
+        style: "2d", // Default style, can be obtained from project settings later
+      };
+      console.log("📤 Client Request to /api/storyboard/generate-content:", requestData);
+      
       const response = await fetch("/api/storyboard/generate-content", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: ideaText.trim(),
-          style: "2d", // Default style, can be obtained from project settings later
-        }),
+        body: JSON.stringify(requestData),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate script");
+        // Check if response is JSON
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate script");
+        } else {
+          // Response is HTML (error page)
+          const errorText = await response.text();
+          console.error("API returned HTML instead of JSON:", errorText.substring(0, 200));
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        console.error("API returned non-JSON response:", errorText.substring(0, 200));
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
@@ -300,7 +330,36 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
     if (!storyContent) return;
 
     try {
+      // Check credits balance before proceeding
+      const creditsCheck = await checkCreditsBalance(2);
+      if (!creditsCheck.sufficient) {
+        setInsufficientCreditsData({
+          required: 2,
+          current: creditsCheck.balance || 0,
+          action: "proceed to next step"
+        });
+        setShowInsufficientCreditsDialog(true);
+        return;
+      }
+
       setIsCreatingProject(true);
+
+      // Deduct credits before creating project
+      const deductResult = await deductCredits(
+        2,
+        "Proceed to project settings",
+        { type: "story_script_next_step", project_id: currentProjectId || sessionProjectId }
+      );
+
+      if (!deductResult.success) {
+        console.error("Failed to deduct credits:", deductResult.error);
+        showError("Failed to deduct credits. Please try again.");
+        setIsCreatingProject(false);
+        return;
+      }
+
+      // Trigger credits update event to refresh header balance
+      window.dispatchEvent(new Event("credits-updated"));
 
       // Call create project API to generate story outline and character information
       const existingProjectId = currentProjectId || sessionProjectId;
@@ -631,6 +690,17 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
           </motion.div>
         </div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, Plus, Edit2, Trash2, X, Loader2 } from "lucide-react";
+import { ArrowLeft, Save, Plus, Edit2, Trash2, X, Loader2, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ import {
 import CharacterEditModal from "./character-edit-modal";
 import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
+import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 interface ProjectCreateFormProps {
   projectId: string;
@@ -102,6 +104,15 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
   const [statusSettings, setStatusSettings] = useState(false);
   const [statusStoryboard, setStatusStoryboard] = useState(false);
   const [statusVideo, setStatusVideo] = useState(false);
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
+  // 是否需要显示积分（只有在会调用创建项目接口时才显示）
+  const [willCallCreateProject, setWillCallCreateProject] = useState(false);
   // 跟踪原始数据，用于检测是否有修改
   const [originalFormData, setOriginalFormData] = useState<ProjectData | null>(null);
   const [originalCharacters, setOriginalCharacters] = useState<Character[]>([]);
@@ -197,6 +208,34 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
     }
   }, [formData.characterDesign]);
 
+  // 当 characterDetails 更新时，如果编辑弹窗打开，同步更新 editingCharacterDetail
+  // 这确保了在 loadProject() 完成后，编辑弹窗显示最新的图像
+  useEffect(() => {
+    if (editingCharacterDetail && characterDetails.size > 0) {
+      const updatedDetail = characterDetails.get(editingCharacterDetail.id);
+      if (updatedDetail && updatedDetail !== editingCharacterDetail) {
+        // 只有当角色详情确实更新了才更新 editingCharacterDetail
+        // 避免不必要的重新渲染
+        setEditingCharacterDetail(updatedDetail);
+      }
+    }
+  }, [characterDetails, editingCharacterDetail?.id]);
+
+  // 当角色数据更新时，同步更新 willCallCreateProject 状态
+  useEffect(() => {
+    // 检查是否有角色图像：如果没有人物图像，说明项目未创建，需要显示积分
+    const hasCharacterImages = characters.some(char => char.imageUrl && char.imageUrl.trim() !== '');
+    setWillCallCreateProject(!hasCharacterImages);
+  }, [characters]);
+
+  // 计算编辑弹窗的初始图像URL
+  // 使用 useMemo 确保当 characters 或 editingCharacterDetail 变化时自动更新
+  const initialImageUrl = useMemo(() => {
+    if (!editingCharacterDetail) return null;
+    const character = characters.find((c) => c.id === editingCharacterDetail.id);
+    return character?.imageUrl || null;
+  }, [editingCharacterDetail?.id, characters]);
+
   const loadProject = async (retryCount = 0) => {
     setIsLoading(true);
     try {
@@ -246,6 +285,12 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         // 保存原始数据，用于检测是否有修改
         setOriginalFormData(loadedFormData);
         setHasData(true); // 标记已加载数据
+
+        // 检查是否需要显示积分（基于角色是否有图像来判断）
+        // 如果没有人物图像，说明项目未创建，需要显示积分并调用创建项目接口
+        // 如果已经有人物图像，说明项目已创建，不需要扣除积分，直接进入下一级页面
+        // 注意：这里先设置为 false，等角色数据加载完成后再更新
+        setWillCallCreateProject(false);
 
         console.log("=== 项目设置页面 - 加载数据 ===");
         console.log("完整的 projectData:", projectData);
@@ -563,18 +608,31 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
 
               // 将角色信息转换为角色卡片格式（用于显示）
               // 简化显示：只保留图片、名字、设计按钮、删除按钮
+              // 注意：保留所有字段，确保角色信息不丢失
               const characterCards: Character[] = outline.characters.map((char: any, index: number) => {
-                return {
+                const card = {
                   id: char.id || `char_${index}`,
-                  name: char.name || "",
-                  imageUrl: char.image_url || null, // 从数据库读取图片URL
-                  description: "", // 不再显示描述信息
+                  name: char.name || "", // 从数据库读取名称，如果为空则使用空字符串
+                  imageUrl: char.image_url || null, // 从数据库读取图片URL（注意：数据库字段是 image_url）
+                  description: char.description || "", // 保留描述信息（如果有）
                 };
+                // 调试：打印加载的角色卡片信息
+                console.log('从数据库加载角色卡片:', {
+                  id: card.id,
+                  name: card.name,
+                  imageUrl: card.imageUrl,
+                  db_image_url: char.image_url,
+                });
+                return card;
               });
               
               setCharacters(characterCards);
               // 保存原始角色数据，用于检测是否有修改
               setOriginalCharacters(characterCards);
+              
+              // 检查是否有角色图像：如果没有人物图像，说明项目未创建，需要显示积分
+              const hasCharacterImages = characterCards.some(char => char.imageUrl && char.imageUrl.trim() !== '');
+              setWillCallCreateProject(!hasCharacterImages);
               
               // 更新 characterDesign 字段（存储为JSON字符串）
               setFormData(prev => ({
@@ -591,10 +649,16 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
             const parsed = JSON.parse(projectData.character_design);
             if (Array.isArray(parsed)) {
               setCharacters(parsed);
+              // 检查是否有角色图像：如果没有人物图像，说明项目未创建，需要显示积分
+              const hasCharacterImages = parsed.some((char: Character) => char.imageUrl && char.imageUrl.trim() !== '');
+              setWillCallCreateProject(!hasCharacterImages);
             }
           } catch (e) {
             // 如果不是JSON，忽略
           }
+        } else {
+          // 如果没有角色数据，说明项目未创建，需要显示积分
+          setWillCallCreateProject(true);
         }
       }
     } catch (error) {
@@ -651,28 +715,20 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
   // 处理下一步按钮点击
   const handleNextStep = async () => {
     if (!projectId) {
-      alert("项目ID不存在");
+      showError("Project ID does not exist");
+      return;
+    }
+
+    // 1. 检查所有角色是否有图片
+    const charactersWithoutImage = characters.filter(char => !char.imageUrl || char.imageUrl.trim() === '');
+    if (charactersWithoutImage.length > 0) {
+      showError("Please create a character image before saving. Generate or upload an image first.");
       return;
     }
 
     setIsSaving(true);
     try {
-      // 1. 先检查是否有场次数据
-      const scenesResponse = await fetch(`/api/scenes?projectId=${projectId}`);
-      
-      if (scenesResponse.ok) {
-        const scenesResult = await scenesResponse.json();
-        
-        // 如果有场次数据，直接跳转到分镜页面
-        if (scenesResult.success && scenesResult.data && scenesResult.data.items && scenesResult.data.items.length > 0) {
-          console.log("已存在场次数据，直接跳转到分镜页面");
-          router.push(`/storyboard/create?projectId=${projectId}`);
-          setIsSaving(false);
-          return;
-        }
-      }
-
-      // 2. 如果没有场次数据，需要先获取项目数据以获取故事章节
+      // 2. 保存项目设置（比例、图像风格、角色信息）
       const getProjectResponse = await fetch(`/api/storyboard/projects/${projectId}`);
       if (!getProjectResponse.ok) {
         throw new Error("Failed to fetch project data");
@@ -696,8 +752,86 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         }
       }
 
-      // 3. 如果有故事大纲和章节信息，生成场次列表
-      if (storyOutline && storyOutline.chapters && Array.isArray(storyOutline.chapters) && storyOutline.chapters.length > 0) {
+      // 将角色列表转换为JSON字符串保存
+      const characterDesignJson = JSON.stringify(characters);
+
+      // 准备更新数据
+      const updateData: any = {
+        title: formData.title,
+        art_setting: formData.artSetting,
+        visual_style: formData.visualStyle,
+        character_design: characterDesignJson,
+        status_settings: true, // 设置步骤完成
+      };
+
+      // 更新 story_outline
+      if (storyOutline) {
+        updateData.story_outline = {
+          ...storyOutline,
+          summary: formData.storyOutline,
+        };
+      } else {
+        updateData.story_outline = {
+          summary: formData.storyOutline,
+          chapters: [],
+        };
+      }
+
+      // 更新项目信息
+      const projectResponse = await fetch(`/api/storyboard/projects/${projectId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updateData),
+      });
+
+      if (!projectResponse.ok) {
+        const error = await projectResponse.json();
+        throw new Error(error.error || "Failed to save project");
+      }
+
+      const projectResult = await projectResponse.json();
+      if (!projectResult.success) {
+        throw new Error("Failed to save project");
+      }
+
+      // 3. 检查是否有角色图像：如果没有人物图像，说明项目未创建，需要调用创建项目接口
+      const hasCharacterImages = characters.some(char => char.imageUrl && char.imageUrl.trim() !== '');
+      
+      // 4. 如果没有角色图像，需要生成场次列表（调用创建项目接口）
+      if (!hasCharacterImages && storyOutline && storyOutline.chapters && Array.isArray(storyOutline.chapters) && storyOutline.chapters.length > 0) {
+        // 检查积分余额（需要3积分）
+        const creditsCheck = await checkCreditsBalance(3);
+        if (!creditsCheck.sufficient) {
+          setInsufficientCreditsData({
+            required: 3,
+            current: creditsCheck.balance || 0,
+            action: "generate scene list"
+          });
+          setShowInsufficientCreditsDialog(true);
+          setIsSaving(false);
+          return;
+        }
+
+        // 扣除积分
+        const deductResult = await deductCredits(
+          3,
+          "Generate scene list",
+          { type: "scene_generation", project_id: projectId }
+        );
+
+        if (!deductResult.success) {
+          console.error("Failed to deduct credits:", deductResult.error);
+          showError("Failed to deduct credits. Please try again.");
+          setIsSaving(false);
+          return;
+        }
+
+        // Trigger credits update event to refresh header balance
+        window.dispatchEvent(new Event("credits-updated"));
+
+        // 调用生成场次接口
         const requestBody = {
           project_id: projectId,
           story_chapters: storyOutline.chapters,
@@ -722,19 +856,24 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
 
         const generateScenesResult = await generateScenesResponse.json();
         if (!generateScenesResult.success) {
-          throw new Error(`场次生成失败：${generateScenesResult.error || "Unknown error"}`);
+          throw new Error(`Failed to generate scenes: ${generateScenesResult.error || "Unknown error"}`);
         }
 
         console.log("场次生成成功，跳转到分镜页面");
         
-        // 4. 更新状态（生成场次接口已经更新了 status_storyboard）
+        // 更新状态（生成场次接口已经更新了 status_storyboard）
         setStatusStoryboard(true);
         
-        // 5. 跳转到分镜页面
+        // 跳转到分镜页面
         router.push(`/storyboard/create?projectId=${projectId}`);
       } else {
-        // 没有章节信息，提示用户
-        showWarning("Story chapters not found. Cannot generate scene list. Please complete story script creation first.");
+        // 已有角色图像，说明项目已创建，直接跳转到分镜页面（不需要扣除积分）
+        if (hasCharacterImages) {
+          console.log("已有角色图像，项目已创建，直接跳转到分镜页面");
+        } else {
+          showWarning("Story chapters not found. Cannot generate scene list. Please complete story script creation first.");
+        }
+        router.push(`/storyboard/create?projectId=${projectId}`);
       }
     } catch (error) {
       console.error("Error in handleNextStep:", error);
@@ -923,9 +1062,9 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-black text-white">
+      <div className="min-h-screen bg-black text-white flex flex-col">
         <Header />
-        <div className="container mx-auto px-4 py-8 max-w-7xl">
+        <div className="container mx-auto px-4 py-8 max-w-7xl flex-1">
           <div className="flex items-center justify-center py-12">
             <motion.div
               animate={{ rotate: 360 }}
@@ -937,6 +1076,17 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
           </div>
         </div>
         <Footer />
+        
+        {/* Insufficient Credits Dialog */}
+        {insufficientCreditsData && (
+          <InsufficientCreditsDialog
+            open={showInsufficientCreditsDialog}
+            onOpenChange={setShowInsufficientCreditsDialog}
+            requiredCredits={insufficientCreditsData.required}
+            currentBalance={insufficientCreditsData.current}
+            action={insufficientCreditsData.action}
+          />
+        )}
       </div>
     );
   }
@@ -969,65 +1119,41 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
                 <p className="text-xs text-gray-400">Configure visual style, aspect ratio, and character information</p>
               </div>
             </div>
-            {/* 如果有数据且没有修改，显示下一步按钮；否则显示保存按钮 */}
-            {hasData && !hasChanges() ? (
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                transition={{ duration: 0.2 }}
+            {/* 只显示下一步按钮，点击时统一保存 */}
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+            >
+              <Button
+                onClick={handleNextStep}
+                disabled={isSaving || !formData.title.trim()}
+                className="h-11 px-8 bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold text-base shadow-lg shadow-[#FFDA2A]/30 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Button
-                  onClick={handleNextStep}
-                  disabled={isSaving}
-                  className="h-11 px-8 bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold text-base shadow-lg shadow-[#FFDA2A]/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSaving ? (
-                    <>
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                        className="w-4 h-4 mr-2"
-                      >
-                        <Save className="w-4 h-4" />
-                      </motion.div>
-                      Processing...
-                    </> 
-                  ) : (
-                    "Next Step"
-                  )}
-                </Button>
-              </motion.div>
-            ) : (
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                transition={{ duration: 0.2 }}
-              >
-                <Button
-                  onClick={handleSave}
-                  disabled={isSaving || !formData.title.trim()}
-                  className="h-11 px-8 bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold text-base shadow-lg shadow-[#FFDA2A]/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isSaving ? (
-                    <>
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                        className="w-4 h-4 mr-2"
-                      >
-                        <Save className="w-4 h-4" />
-                      </motion.div>
-                      Saving...
-                    </> 
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4 mr-2" />
-                      Save
-                    </>
-                  )}
-                </Button>
-              </motion.div>
-            )}
+                {isSaving ? (
+                  <>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                      className="w-4 h-4 mr-2"
+                    >
+                      <Loader2 className="w-4 h-4" />
+                    </motion.div>
+                    Processing...
+                  </> 
+                ) : (
+                  <>
+                    <span>Next Step</span>
+                    {willCallCreateProject && (
+                      <>
+                        <Diamond className="w-4 h-4 ml-2" />
+                        <span className="text-xs ml-1">3</span>
+                      </>
+                    )}
+                  </>
+                )}
+              </Button>
+            </motion.div>
           </div>
         </div>
       </div>
@@ -1425,11 +1551,7 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         onClose={() => {
           setEditingCharacterDetail(null);
         }}
-        initialImageUrl={
-          editingCharacterDetail
-            ? characters.find((c) => c.id === editingCharacterDetail.id)?.imageUrl || null
-            : null
-        }
+        initialImageUrl={initialImageUrl}
         visualStyle={formData.visualStyle}
         artSetting={formData.artSetting}
         onSave={async (updatedDetail) => {
@@ -1525,29 +1647,101 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
               return newMap;
             });
 
-            // 更新角色卡片显示（包括图片URL）
-            // 简化显示：只更新名字和图片，不更新描述
-            handleUpdateCharacter(updatedDetail.id, {
-              name: updatedDetail.name,
-              imageUrl: imageUrl,
-              description: "", // 不再显示描述信息
+            // 更新角色卡片显示（包括图片URL和名称）
+            // 使用函数式更新确保立即更新，保留所有原有字段
+            // 注意：这里立即更新，确保保存后立即显示图片，不等待 loadProject() 完成
+            setCharacters(prev => {
+              const updated = prev.map(char => {
+                if (char.id === updatedDetail.id) {
+                  const updatedChar = {
+                    ...char, // 保留所有原有字段（id, description等）
+                    name: updatedDetail.name || char.name, // 更新名称，如果为空则保留原值
+                    imageUrl: imageUrl, // 更新图片URL
+                  };
+                  console.log('更新角色卡片:', {
+                    id: updatedChar.id,
+                    name: updatedChar.name,
+                    imageUrl: updatedChar.imageUrl,
+                  });
+                  return updatedChar;
+                }
+                return char;
+              });
+              return updated;
             });
 
             // 更新原始角色数据，以便检测修改
+            // 保留所有原有字段，只更新名称和图片URL
             setOriginalCharacters(prev => {
               const updated = [...prev];
               const index = updated.findIndex(c => c.id === updatedDetail.id);
               if (index !== -1) {
                 updated[index] = {
-                  ...updated[index],
-                  name: updatedDetail.name,
-                  imageUrl: imageUrl,
+                  ...updated[index], // 保留所有原有字段
+                  name: updatedDetail.name || updated[index].name, // 更新名称，如果为空则保留原值
+                  imageUrl: imageUrl, // 更新图片URL
                 };
               }
               return updated;
             });
 
+            // 更新 characterDesign 字段（存储为JSON字符串），确保刷新后能正确显示
+            // 注意：这里需要从 formData.characterDesign 解析，因为 characters 状态可能还没更新
+            // 保留所有原有字段，只更新名称和图片URL
+            setFormData(prev => {
+              try {
+                const currentCharacters = prev.characterDesign 
+                  ? JSON.parse(prev.characterDesign)
+                  : [];
+                const updatedCharacters = Array.isArray(currentCharacters)
+                  ? currentCharacters.map((char: Character) => {
+                      if (char.id === updatedDetail.id) {
+                        return {
+                          ...char, // 保留所有原有字段
+                          name: updatedDetail.name || char.name, // 更新名称，如果为空则保留原值
+                          imageUrl: imageUrl, // 更新图片URL
+                        };
+                      }
+                      return char;
+                    })
+                  : [];
+                return {
+                  ...prev,
+                  characterDesign: JSON.stringify(updatedCharacters),
+                };
+              } catch (e) {
+                // 如果解析失败，使用当前 characters 状态
+                const updatedCharacters = characters.map(char => {
+                  if (char.id === updatedDetail.id) {
+                    return {
+                      ...char, // 保留所有原有字段
+                      name: updatedDetail.name || char.name, // 更新名称，如果为空则保留原值
+                      imageUrl: imageUrl, // 更新图片URL
+                    };
+                  }
+                  return char;
+                });
+                return {
+                  ...prev,
+                  characterDesign: JSON.stringify(updatedCharacters),
+                };
+              }
+            });
+
             console.log('Character updated successfully in database');
+            console.log('保存的图片URL:', imageUrl);
+            console.log('保存的 characterData:', JSON.stringify(characterData, null, 2));
+            
+            // 注意：我们已经在上面的代码中立即更新了 characters 数组，所以图片应该已经显示了
+            // 重新加载项目数据，确保从数据库获取最新的角色图像URL
+            // 这样可以确保即使刷新页面也能正确显示图像
+            // 注意：useEffect 会自动同步更新 editingCharacterDetail（如果编辑弹窗打开）
+            // 使用更长的延迟，确保数据库更新完成后再重新加载
+            setTimeout(async () => {
+              console.log('开始重新加载项目数据...');
+              await loadProject();
+              console.log('项目数据重新加载完成');
+            }, 500);
           } catch (error) {
             console.error('Error saving character to database:', error);
             showError(`保存角色信息失败：${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -1601,38 +1795,143 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         }}
         onImageUploadFromUrl={async (url) => {
           // 从URL上传图片到火山存储
+          console.log('=== 客户端: 开始从URL上传图片 ===');
+          console.log('图片URL:', url);
+          console.log('URL类型:', typeof url);
+          console.log('URL长度:', url?.length);
+          
           try {
-            const response = await fetch(url);
-            if (response.ok) {
-              const blob = await response.blob();
-              const file = new File([blob], 'character-image.jpg', { type: 'image/jpeg' });
+            // 方法1: 直接通过服务器端API上传（避免CORS问题）
+            console.log('方法1: 尝试通过服务器端API上传...');
+            const proxyResponse = await fetch('/api/scenes/upload-image-from-url', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ imageUrl: url }),
+            });
+            
+            console.log('服务器端API响应状态:', proxyResponse.status, proxyResponse.statusText);
+            
+            if (proxyResponse.ok) {
+              const proxyResult = await proxyResponse.json();
+              console.log('服务器端API响应数据:', proxyResult);
               
-              const formData = new FormData();
-              formData.append('file', file);
-              const uploadResponse = await fetch('/api/scenes/upload-image', {
-                method: 'POST',
-                body: formData,
+              if (proxyResult.success && proxyResult.data?.url) {
+                console.log('✅ 通过服务器端代理上传成功:', proxyResult.data.url);
+                // 更新角色图片
+                if (editingCharacterDetail) {
+                  handleUpdateCharacter(editingCharacterDetail.id, {
+                    imageUrl: proxyResult.data.url,
+                  });
+                }
+                return proxyResult.data.url;
+              } else {
+                console.warn('服务器端API返回失败:', proxyResult);
+                if (proxyResult.error) {
+                  console.error('错误信息:', proxyResult.error);
+                  console.error('错误详情:', proxyResult.details);
+                }
+              }
+            } else {
+              const errorText = await proxyResponse.text().catch(() => '无法读取错误响应');
+              console.error('服务器端API请求失败:', {
+                status: proxyResponse.status,
+                statusText: proxyResponse.statusText,
+                errorText: errorText.substring(0, 500),
+              });
+            }
+            
+            // 方法2: 如果服务器端API失败，尝试客户端直接fetch（可能遇到CORS问题）
+            console.log('方法2: 尝试客户端直接fetch图片...');
+            try {
+              const response = await fetch(url, {
+                mode: 'cors',
+                credentials: 'omit',
               });
               
-              if (uploadResponse.ok) {
-                const uploadResult = await uploadResponse.json();
-                if (uploadResult.success && uploadResult.data?.url) {
-                  // 更新角色图片
-                  if (editingCharacterDetail) {
-                    handleUpdateCharacter(editingCharacterDetail.id, {
-                      imageUrl: uploadResult.data.url,
-                    });
+              console.log('客户端fetch响应状态:', response.status, response.statusText);
+              
+              if (response.ok) {
+                const blob = await response.blob();
+                console.log('Blob大小:', blob.size, 'bytes');
+                console.log('Blob类型:', blob.type);
+                
+                const file = new File([blob], 'character-image.jpg', { type: blob.type || 'image/jpeg' });
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                const uploadResponse = await fetch('/api/scenes/upload-image', {
+                  method: 'POST',
+                  body: formData,
+                });
+                
+                console.log('客户端上传API响应状态:', uploadResponse.status, uploadResponse.statusText);
+                
+                if (uploadResponse.ok) {
+                  const uploadResult = await uploadResponse.json();
+                  console.log('客户端上传API响应数据:', uploadResult);
+                  
+                  if (uploadResult.success && uploadResult.data?.url) {
+                    console.log('✅ 客户端上传成功:', uploadResult.data.url);
+                    // 更新角色图片
+                    if (editingCharacterDetail) {
+                      handleUpdateCharacter(editingCharacterDetail.id, {
+                        imageUrl: uploadResult.data.url,
+                      });
+                    }
+                    return uploadResult.data.url;
                   }
-                  return uploadResult.data.url;
+                } else {
+                  const errorText = await uploadResponse.text().catch(() => '无法读取错误响应');
+                  console.error('客户端上传API失败:', {
+                    status: uploadResponse.status,
+                    statusText: uploadResponse.statusText,
+                    errorText: errorText.substring(0, 500),
+                  });
                 }
+              } else {
+                const errorText = await response.text().catch(() => '无法读取错误响应');
+                console.error('客户端fetch失败:', {
+                  status: response.status,
+                  statusText: response.statusText,
+                  errorText: errorText.substring(0, 500),
+                });
+              }
+            } catch (fetchError) {
+              console.error('客户端fetch异常:', fetchError);
+              if (fetchError instanceof Error) {
+                console.error('fetch错误消息:', fetchError.message);
+                console.error('fetch错误堆栈:', fetchError.stack);
               }
             }
           } catch (error) {
-            console.error('Error uploading image from URL:', error);
+            console.error('=== 上传图片时发生异常 ===');
+            console.error('错误类型:', error instanceof Error ? error.constructor.name : typeof error);
+            console.error('错误消息:', error instanceof Error ? error.message : String(error));
+            console.error('错误堆栈:', error instanceof Error ? error.stack : 'N/A');
+            console.error('原始URL:', url);
+            
+            // 如果上传失败，返回原始URL（可能是临时URL，但至少可以显示）
+            console.warn('⚠️ 上传失败，返回原始URL（临时）:', url);
+            return url;
           }
+          
+          console.warn('⚠️ 所有上传方法都失败，返回null');
           return null;
         }}
       />
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

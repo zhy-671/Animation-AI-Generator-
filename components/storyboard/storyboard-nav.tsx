@@ -68,19 +68,57 @@ export default function StoryboardNav({
                 Settings
               </button>
               <button
-                onClick={() => {
-                  if (projectId && statusScript && statusSettings) {
-                    router.push(`/storyboard/create`);
-                  } else if (!projectId) {
+                onClick={async () => {
+                  if (!projectId) {
                     showWarning("Please complete story creation first");
-                  } else if (!statusScript) {
-                    showWarning("Please complete the story script step first");
-                  } else {
-                    showWarning("Please complete project settings first");
+                    return;
+                  }
+                  
+                  // 检查分镜数据是否存在
+                  try {
+                    const response = await fetch(`/api/scenes?projectId=${projectId}`);
+                    if (response.ok) {
+                      const result = await response.json();
+                      if (result.success && result.data?.items) {
+                        // 检查是否有分镜数据
+                        let hasStoryboard = false;
+                        for (const item of result.data.items) {
+                          if (item.metadata?.storyboard?.shots && item.metadata.storyboard.shots.length > 0) {
+                            hasStoryboard = true;
+                            break;
+                          }
+                        }
+                        
+                        // 如果有分镜数据，或者状态允许，则允许访问
+                        if (hasStoryboard || (statusScript && statusSettings)) {
+                          router.push(`/storyboard/create`);
+                          return;
+                        }
+                      }
+                    }
+                    
+                    // 如果没有分镜数据，检查状态
+                    if (!statusScript) {
+                      showWarning("Please complete the story script step first");
+                    } else if (!statusSettings) {
+                      showWarning("Please complete project settings first");
+                    } else {
+                      router.push(`/storyboard/create`);
+                    }
+                  } catch (error) {
+                    console.error("Error checking storyboard data:", error);
+                    // 如果检查失败，根据状态决定是否允许访问
+                    if (statusScript && statusSettings) {
+                      router.push(`/storyboard/create`);
+                    } else if (!statusScript) {
+                      showWarning("Please complete the story script step first");
+                    } else {
+                      showWarning("Please complete project settings first");
+                    }
                   }
                 }}
                 className={getButtonClass("storyboard")}
-                disabled={!projectId || !statusScript || !statusSettings}
+                disabled={!projectId}
               >
                 Storyboard
               </button>

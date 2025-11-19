@@ -19,6 +19,14 @@ export default function Footer() {
               Privacy
             </Link>
             <span className="text-gray-600">•</span>
+            <Link href="/ai-disclosure" className="hover:text-white transition-colors">
+              AI Disclosure
+            </Link>
+            <span className="text-gray-600">•</span>
+            <Link href="/contact" className="hover:text-white transition-colors">
+              Contact
+            </Link>
+            <span className="text-gray-600">•</span>
             <Link href="/faq" className="hover:text-white transition-colors">
               FAQ
             </Link>

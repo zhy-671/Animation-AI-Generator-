@@ -7,18 +7,29 @@ import { createClient } from "@/lib/supabase/server";
  */
 export async function POST(request: NextRequest) {
   try {
+    // 打印 API 调用开始
+    console.log("\n" + "=".repeat(60));
+    console.log("🚀 STORY CONTENT GENERATION API CALLED");
+    console.log("=".repeat(60));
+    console.log("Timestamp:", new Date().toISOString());
+    
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {
+      console.log("❌ User not authenticated");
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
+    console.log("✅ User authenticated:", user.id);
+    
     const body = await request.json();
     const { prompt } = body;
+    
+    console.log("📝 Received prompt:", prompt?.substring(0, 100) + (prompt?.length > 100 ? "..." : ""));
 
     if (!prompt || !prompt.trim()) {
       return NextResponse.json(
@@ -174,6 +185,40 @@ Please create a complete anime story following the Master Anime Story Creator st
 
 Ensure the story is engaging, emotionally resonant, and follows proper narrative structure with clear introduction, rising action, climax, resolution, and aftermath.`;
 
+    // 构建请求参数
+    const requestBody = {
+      model: "qwen-plus",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000, // Increased to support longer stories (2500-4000 words) with full structure
+    };
+
+    // 打印请求参数（服务器端日志）
+    console.log("\n" + "=".repeat(60));
+    console.log("📤 STORY CONTENT GENERATION API REQUEST");
+    console.log("=".repeat(60));
+    console.log("API Endpoint:", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+    console.log("Request Method: POST");
+    console.log("Request Headers:", JSON.stringify({
+      Authorization: `Bearer ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)}`, // 只显示部分 API Key
+      "Content-Type": "application/json",
+    }, null, 2));
+    console.log("\nRequest Body:");
+    console.log(JSON.stringify(requestBody, null, 2));
+    console.log("\nSystem Prompt Length:", systemPrompt.length, "characters");
+    console.log("\nUser Prompt:");
+    console.log(userPrompt);
+    console.log("=".repeat(60) + "\n");
+
     // 调用 DashScope Chat Completions API（使用中国端点，与其他功能保持一致）
     // 如果您的 API 密钥是国际版的，请将下面的 URL 改为：
     // "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
@@ -185,42 +230,80 @@ Ensure the story is engaging, emotionally resonant, and follows proper narrative
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          model: "qwen-plus",
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000, // Increased to support longer stories (2500-4000 words) with full structure
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch (e) {
+        errorText = `HTTP ${response.status} ${response.statusText}`;
+      }
+      
       console.error("DashScope API error:", {
         status: response.status,
-        error: errorText,
+        error: errorText.substring(0, 500), // Limit error text length
       });
+      
       return NextResponse.json(
         {
-          error: `DashScope API error: ${response.status} - ${errorText}`,
+          error: `DashScope API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
-        { status: response.status }
+        { 
+          status: 500, // Always return 500 for API errors, not the upstream status
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      console.error("Failed to parse DashScope response as JSON:", parseError);
+      return NextResponse.json(
+        {
+          error: "Invalid response from AI service. Please try again.",
+        },
+        { 
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
+
+    // 打印返回结果（服务器端日志）
+    console.log("\n" + "=".repeat(60));
+    console.log("📥 STORY CONTENT GENERATION API RESPONSE");
+    console.log("=".repeat(60));
+    console.log("Response Status:", response.status, response.statusText);
+    console.log("\nResponse Headers:");
+    console.log(JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
+    console.log("\nResponse Body (Full):");
+    console.log(JSON.stringify(data, null, 2));
+    console.log("\nResponse Body (Summary):");
+    console.log(JSON.stringify({
+      id: data.id,
+      model: data.model,
+      object: data.object,
+      created: data.created,
+      choices_count: data.choices?.length || 0,
+      usage: data.usage,
+      content_length: data.choices?.[0]?.message?.content?.length || 0,
+      content_preview: data.choices?.[0]?.message?.content?.substring(0, 200) || "No content",
+    }, null, 2));
+    console.log("=".repeat(60) + "\n");
+
     const content = data.choices?.[0]?.message?.content || "";
 
     if (!content) {
+      console.error("No content in DashScope response. Full response:", JSON.stringify(data, null, 2));
       return NextResponse.json(
         { error: "No content in DashScope response" },
         { status: 500 }
@@ -236,13 +319,30 @@ Ensure the story is engaging, emotionally resonant, and follows proper narrative
     // 移除标题中的#号
     title = title.replace(/^#+\s*/, '').trim();
 
-    return NextResponse.json({
+    // 打印最终返回给客户端的数据（服务器端日志）
+    const finalResponse = {
       success: true,
       data: {
         title: title,
         content: content,
       },
-    });
+    };
+    console.log("\n" + "=".repeat(60));
+    console.log("✅ FINAL API RESPONSE TO CLIENT");
+    console.log("=".repeat(60));
+    console.log("Response (Content Truncated):");
+    console.log(JSON.stringify({
+      ...finalResponse,
+      data: {
+        ...finalResponse.data,
+        content: finalResponse.data.content.substring(0, 200) + "... (truncated, full length: " + content.length + " chars)",
+      },
+    }, null, 2));
+    console.log("\nContent Length:", content.length, "characters");
+    console.log("Title:", title);
+    console.log("=".repeat(60) + "\n");
+
+    return NextResponse.json(finalResponse);
   } catch (error) {
     console.error("Error generating story content:", error);
     return NextResponse.json(

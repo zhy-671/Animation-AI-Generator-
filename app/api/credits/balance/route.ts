@@ -9,10 +9,29 @@ import { createClient } from '@/lib/supabase/server'
 export async function GET() {
   try {
     // First verify user authentication
-    const supabase = await createClient()
+    let supabase;
+    try {
+      supabase = await createClient()
+    } catch (clientError) {
+      console.error('Error creating Supabase client:', clientError)
+      return NextResponse.json(
+        { error: 'Authentication service unavailable', details: 'Unable to create authentication client' },
+        { status: 503 }
+      )
+    }
+
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     
     if (authError) {
+      // Handle AuthSessionMissingError gracefully - user is not logged in
+      if (authError.name === 'AuthSessionMissingError' || authError.message?.includes('session')) {
+        console.log('No active session in balance API - user not logged in')
+        return NextResponse.json(
+          { error: 'User not authenticated', details: 'No active session' },
+          { status: 401 }
+        )
+      }
+      
       console.error('Auth error in balance API:', authError)
       return NextResponse.json(
         { error: 'Authentication failed', details: authError.message },

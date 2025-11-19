@@ -7,8 +7,6 @@ import { getImageCredits, getVideoCredits } from "@/lib/credits/rules";
 import { getUserSubscriptionPlan } from "@/lib/subscription/client";
 import { 
   getSubscriptionPlanConfig, 
-  isResolutionAllowed, 
-  isAnimationStyleAllowed,
   calculateVideoCredits,
   type SubscriptionPlan 
 } from "@/lib/subscription/rules";
@@ -141,10 +139,29 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
   useEffect(() => {
     const loadUserData = async () => {
       try {
-        // 加载订阅计划
+        // 先从 Cookie 读取订阅计划（如果存在）
+        if (typeof document !== 'undefined') {
+          const cookiePlan = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('subscription_plan='))
+            ?.split('=')[1];
+          if (cookiePlan && (cookiePlan === 'basic' || cookiePlan === 'pro' || cookiePlan === 'studio')) {
+            setSubscriptionPlan(cookiePlan as SubscriptionPlan);
+          } else if (cookiePlan === 'null') {
+            setSubscriptionPlan(null);
+          }
+        }
+        
+        // 加载订阅计划（从服务器获取最新数据）
         const planData = await getUserSubscriptionPlan();
         if (planData.plan !== undefined) {
           setSubscriptionPlan(planData.plan);
+          // 保存到 Cookie
+          if (typeof document !== 'undefined') {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+            document.cookie = `subscription_plan=${planData.plan || 'null'}; expires=${expires.toUTCString()}; path=/`;
+          }
         }
         
         // 加载积分余额
@@ -845,11 +862,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         
         setTextToVideoProgress({
           status: 'generating',
-          message: '正在提交视频生成任务...'
+          message: 'Creating your video, please wait...'
         });
         
         // 自动切换到 My Creations tab
         setActiveTab('my-creations');
+        
+        // 滚动到 My Creations 位置
+        setTimeout(() => {
+          const myCreationsTab = document.querySelector('[value="my-creations"]');
+          if (myCreationsTab) {
+            myCreationsTab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
 
         // 使用表单中选择框的默认参数
         const currentModel = formData.model || "2d"; // 默认值：2d
@@ -914,7 +939,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
 
         setTextToVideoProgress({
           status: 'polling',
-          message: '视频生成中，请稍候...',
+          message: 'Creating your video, please wait...',
           taskId: taskId
         });
 
@@ -976,24 +1001,21 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                   console.error("Failed to deduct credits:", deductResult.error);
                   // 即使扣除失败，也继续处理视频，但记录错误
                 } else {
-                  // 更新积分余额
+                  // 实时更新积分余额
                   if (deductResult.newBalance !== undefined) {
                     setCreditsBalance(deductResult.newBalance);
                   } else {
+                    // 如果API没有返回新余额，立即查询
                     const updatedBalance = await checkCreditsBalance(0);
                     if (updatedBalance.balance !== undefined) {
                       setCreditsBalance(updatedBalance.balance);
                     }
                   }
+                  // 触发Header组件刷新积分（通过事件或直接调用）
+                  window.dispatchEvent(new CustomEvent('creditsUpdated'));
                 }
                 
-                setTextToVideoProgress({
-                  status: 'polling',
-                  message: '正在上传视频到存储...',
-                  taskId: taskId
-                });
-
-                // 步骤1: 上传视频到 Supabase Storage
+                // 步骤1: 上传视频到 Supabase Storage（不显示步骤信息）
                 const uploadResponse = await fetch("/api/video/upload", {
                   method: "POST",
                   headers: {
@@ -1045,10 +1067,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
 
                 setTextToVideoProgress({
                   status: 'completed',
-                  message: '视频生成完成！',
+                  message: 'Your video is ready!',
                   videoUrl: storedVideoUrl, // 使用上传后的 URL
                   taskId: taskId
                 });
+                
+                setIsGenerating(false);
+                
+                // 再次刷新积分余额，确保显示最新值
+                const finalBalance = await checkCreditsBalance(0);
+                if (finalBalance.balance !== undefined) {
+                  setCreditsBalance(finalBalance.balance);
+                  window.dispatchEvent(new CustomEvent('creditsUpdated'));
+                }
                 
                 // 将生成的视频添加到 My Creations 列表的最前面
                 setMyVideos(prev => {
@@ -1089,7 +1120,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                 // 如果上传失败，仍然显示原始视频 URL
                 setTextToVideoProgress({
                   status: 'completed',
-                  message: '视频生成完成！（存储失败，使用临时链接）',
+                  message: 'Video created! (Using temporary link)',
                   videoUrl: videoUrl,
                   taskId: taskId
                 });
@@ -1155,7 +1186,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             console.error("Error polling video status:", error);
             setTextToVideoProgress({
               status: 'error',
-              message: error instanceof Error ? error.message : "视频生成失败",
+              message: error instanceof Error ? error.message : "Video generation failed",
               taskId: taskId
             });
             setIsGenerating(false);
@@ -1166,7 +1197,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         // 超时
         setTextToVideoProgress({
           status: 'error',
-          message: "视频生成超时，请重试",
+          message: "Video generation timed out, please try again",
           taskId: taskId
         });
         setIsGenerating(false);
@@ -1175,7 +1206,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         console.error("Error generating video:", error);
         setTextToVideoProgress({
           status: 'error',
-          message: error instanceof Error ? error.message : "视频生成失败，请重试"
+          message: error instanceof Error ? error.message : "Video generation failed, please try again"
         });
         setIsGenerating(false);
         alert(error instanceof Error ? error.message : "Video generation failed, please try again");
@@ -1443,7 +1474,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             : img
         )
       );
-      alert(error instanceof Error ? error.message : "视频生成失败，请重试");
+      alert(error instanceof Error ? error.message : "Video generation failed, please try again");
     }
   };
 
@@ -1594,14 +1625,16 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     { value: "cyberpunk", label: "Cyberpunk", description: "Cyberpunk style" },
   ];
 
-  // 根据订阅计划过滤动画风格
-  const models = allModels.filter(model => 
-    isAnimationStyleAllowed(subscriptionPlan, model.value)
-  );
+  // 移除风格限制，所有风格都可以选择
+  const models = allModels;
 
+  // 移除秒数限制，允许自定义时长
   const durations = [
     { value: "5", label: "5s" },
-    { value: "10", label: "10s", requiresSubscription: true }
+    { value: "10", label: "10s" },
+    { value: "15", label: "15s" },
+    { value: "20", label: "20s" },
+    { value: "30", label: "30s" },
   ];
 
   const allQualities = [
@@ -1610,33 +1643,29 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     { value: "1080p", label: "1080p", requiresSubscription: true }
   ];
 
-  // 根据订阅计划过滤分辨率
-  const qualities = allQualities.filter(quality => 
-    isResolutionAllowed(subscriptionPlan, quality.value as '480p' | '720p' | '1080p')
-  );
+  // 根据订阅计划过滤分辨率 - 只判断是否是高级订阅（pro 或 studio）来显示 1080p
+  const isPremiumSubscription = subscriptionPlan === 'pro' || subscriptionPlan === 'studio';
+  const qualities = allQualities.filter(quality => {
+    if (quality.value === '1080p') {
+      return isPremiumSubscription;
+    }
+    return true; // 480p 和 720p 所有人都可以使用
+  });
   
   // 检查当前选择是否被订阅计划支持
-  const isCurrentQualityAllowed = isResolutionAllowed(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p');
-  const isCurrentModelAllowed = isAnimationStyleAllowed(subscriptionPlan, formData.model);
+  const isCurrentQualityAllowed = formData.quality === '1080p' ? isPremiumSubscription : true;
   
-  // 获取需要升级的分辨率和动画风格
+  // 获取订阅计划名称
+  const planConfig = subscriptionPlan !== null ? getSubscriptionPlanConfig(subscriptionPlan) : null;
+  const planName = planConfig?.name || 'Free';
+  
+  // 获取需要升级的分辨率提示
   const getUpgradeMessage = () => {
     if (!isCurrentQualityAllowed) {
       if (subscriptionPlan === null) {
-        return `You need a subscription to use ${formData.quality} resolution. Please go to the subscription page to choose a plan.`;
+        return `You need a Pro or Studio subscription to use ${formData.quality} resolution. Please go to the subscription page to choose a plan.`;
       }
-      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-      const allowedResolutions = planConfig.videoResolutions.join(' / ');
-      return `Your current subscription plan (${planConfig.name}) only supports ${allowedResolutions} resolution. Please upgrade your plan to use ${formData.quality} resolution.`;
-    }
-    if (!isCurrentModelAllowed) {
-      if (subscriptionPlan === null) {
-        const selectedModel = allModels.find(m => m.value === formData.model);
-        return `"${selectedModel?.label || formData.model}" animation style requires a subscription. Please go to the subscription page to choose a plan.`;
-      }
-      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-      const selectedModel = allModels.find(m => m.value === formData.model);
-      return `Your current subscription plan (${planConfig.name}) does not support "${selectedModel?.label || formData.model}" animation style. Please upgrade to Pro or Studio plan to use all animation styles.`;
+      return `Your current subscription plan (${planName}) does not support ${formData.quality} resolution. Please upgrade to Pro or Studio plan to use ${formData.quality} resolution.`;
     }
     return null;
   };
@@ -2003,80 +2032,29 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.model}
                         onValueChange={(value) => {
-                          // 检查是否被订阅计划支持
-                          if (!isAnimationStyleAllowed(subscriptionPlan, value)) {
-                            if (subscriptionPlan === null) {
-                              // 用户没有订阅
-                              const selectedModel = allModels.find(m => m.value === value);
-                              alert(`"${selectedModel?.label || value}" animation style requires a subscription.\n\nClick OK to go to the subscription page.`);
-                              router.push('/pricing');
-                            } else {
-                              // 用户有订阅但计划不支持
-                              const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                              const selectedModel = allModels.find(m => m.value === value);
-                              alert(`Your current subscription plan (${planConfig.name}) does not support "${selectedModel?.label || value}" animation style.\n\nPlease upgrade to Pro or Studio plan to use all animation styles.\n\nClick OK to go to the pricing page.`);
-                              router.push('/pricing');
-                            }
-                            return;
-                          }
+                          // 移除风格限制，所有风格都可以选择
                           setFormData(prev => ({ ...prev, model: value }));
                         }}
                       >
-                        <SelectTrigger className={`w-auto min-w-fit bg-transparent border-gray-700 text-white h-10 px-3 ${!isCurrentModelAllowed ? 'border-red-500' : ''}`}>
+                        <SelectTrigger className="w-auto min-w-fit bg-transparent border-gray-700 text-white h-10 px-3">
                           <SelectValue placeholder="Pick a style or mood for your animation">
                             {(() => {
                               const selectedModel = allModels.find(m => m.value === formData.model);
                               if (!selectedModel) return formData.model;
-                              return (
-                                <span className="flex items-center gap-2">
-                                  {selectedModel.label}
-                                  {!isCurrentModelAllowed && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(Requires Subscription)</span>
-                                  )}
-                                  {!isCurrentModelAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-red-400 font-medium">(Requires Upgrade)</span>
-                                  )}
-                                </span>
-                              );
+                              return selectedModel.label;
                             })()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
-                          {allModels.map((model) => {
-                            const isAllowed = isAnimationStyleAllowed(subscriptionPlan, model.value);
-                            const isDisabled = !isAllowed;
-                            return (
-                              <SelectItem 
-                                key={model.value} 
-                                value={model.value}
-                                disabled={isDisabled}
-                                className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
-                                onSelect={(e) => {
-                                  if (isDisabled) {
-                                    e.preventDefault();
-                                    if (subscriptionPlan === null) {
-                                      alert(`"${model.label}" animation style requires a subscription.\n\nClick OK to go to the subscription page.`);
-                                      router.push('/pricing');
-                                    } else {
-                                      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                      alert(`Your current subscription plan (${planConfig.name}) does not support "${model.label}" animation style.\n\nPlease upgrade to Pro or Studio plan to use all animation styles.\n\nClick OK to go to the pricing page.`);
-                                      router.push('/pricing');
-                                    }
-                                  }
-                                }}
-                              >
-                                <span className="flex items-center gap-2">
-                                  {model.label}
-                                  {!isAllowed && subscriptionPlan === null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
-                                  )}
-                                  {!isAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
-                                  )}
-                                </span>
-                              </SelectItem>
-                            );
-                          })}
+                          {allModels.map((model) => (
+                            <SelectItem 
+                              key={model.value} 
+                              value={model.value}
+                              className="text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A] data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]"
+                            >
+                              {model.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2087,13 +2065,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.duration}
                         onValueChange={(value) => {
-                          const selectedDuration = durations.find(d => d.value === value);
-                          // 如果选择需要订阅的选项且用户没有订阅，跳转到订阅页
-                          if (selectedDuration?.requiresSubscription && subscriptionPlan === null) {
-                            alert('This feature requires a subscription.\n\nClick OK to go to the subscription page.');
-                            router.push('/pricing');
-                            return;
-                          }
+                          // 移除秒数限制，所有时长都可以选择
                           setFormData(prev => ({ ...prev, duration: value }));
                         }}
                       >
@@ -2102,23 +2074,12 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             {(() => {
                               const selectedDuration = durations.find(d => d.value === formData.duration);
                               if (!selectedDuration) return formData.duration;
-                              return (
-                                <span className="flex items-center gap-2">
-                                  {selectedDuration.label}
-                                  {selectedDuration.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(Requires Subscription)</span>
-                                  )}
-                                  {selectedDuration.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                </span>
-                              );
+                              return selectedDuration.label;
                             })()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
                           {durations.map((duration) => {
-                            const isDisabled = duration.requiresSubscription && subscriptionPlan === null;
                             const durationValue = parseInt(duration.value);
                             const resolution = formData.quality as '480p' | '720p' | '1080p';
                             const creditsForDuration = calculateVideoCredits(subscriptionPlan, resolution, durationValue);
@@ -2126,24 +2087,10 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               <SelectItem 
                                 key={duration.value} 
                                 value={duration.value}
-                                disabled={isDisabled}
-                                className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
-                                onSelect={(e) => {
-                                  if (isDisabled) {
-                                    e.preventDefault();
-                                    alert('This feature requires a subscription.\n\nClick OK to go to the subscription page.');
-                                    router.push('/pricing');
-                                  }
-                                }}
+                                className="text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A] data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]"
                               >
                                 <span className="flex items-center gap-2">
                                   {duration.label}
-                                  {duration.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
-                                  )}
-                                  {duration.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
                                 </span>
                               </SelectItem>
                             );
@@ -2158,19 +2105,13 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.quality}
                         onValueChange={(value) => {
-                          const selectedQuality = allQualities.find(q => q.value === value);
-                          // 如果选择需要订阅的选项且用户没有订阅，跳转到订阅页
-                          if (selectedQuality?.requiresSubscription && subscriptionPlan === null) {
-                            alert('This feature requires a subscription.\n\nClick OK to go to the subscription page.');
-                            router.push('/pricing');
-                            return;
-                          }
-                          // 检查是否被订阅计划支持
-                          if (!isResolutionAllowed(subscriptionPlan, value as '480p' | '720p' | '1080p')) {
-                            const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                            const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                            alert(`Your current subscription plan (${planConfig.name}) only supports ${allowedResolutions} resolution.\n\nPlease upgrade your plan to use ${value} resolution.\n\nClick OK to go to the pricing page.`);
-                            // 跳转到定价页面
+                          // 只检查 1080p 是否需要高级订阅
+                          if (value === '1080p' && !isPremiumSubscription) {
+                            if (subscriptionPlan === null) {
+                              alert('1080p resolution requires a Pro or Studio subscription.\n\nClick OK to go to the subscription page.');
+                            } else {
+                              alert(`Your current subscription plan (${planName}) does not support 1080p resolution.\n\nPlease upgrade to Pro or Studio plan to use 1080p resolution.\n\nClick OK to go to the pricing page.`);
+                            }
                             router.push('/pricing');
                             return;
                           }
@@ -2185,14 +2126,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               return (
                                 <span className="flex items-center gap-2">
                                   {selectedQuality.label}
-                                  {selectedQuality.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(Requires Subscription)</span>
+                                  {selectedQuality.value === '1080p' && !isPremiumSubscription && (
+                                    <span className="text-xs text-red-400 font-medium">(Pro/Studio only)</span>
                                   )}
-                                  {selectedQuality.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                  {!isCurrentQualityAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-red-400 font-medium">(Requires Upgrade)</span>
+                                  {selectedQuality.value === '1080p' && isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">({planName})</span>
                                   )}
                                 </span>
                               );
@@ -2201,9 +2139,8 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
                           {allQualities.map((quality) => {
-                            const requiresSub = quality.requiresSubscription && subscriptionPlan === null;
-                            const isAllowed = isResolutionAllowed(subscriptionPlan, quality.value as '480p' | '720p' | '1080p');
-                            const isDisabled = requiresSub || !isAllowed;
+                            const is1080p = quality.value === '1080p';
+                            const isDisabled = is1080p && !isPremiumSubscription;
                             
                             return (
                               <SelectItem 
@@ -2212,29 +2149,24 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                 disabled={isDisabled}
                                 className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
                                 onSelect={(e) => {
-                                  if (requiresSub) {
+                                  if (isDisabled) {
                                     e.preventDefault();
-                                    alert('This feature requires a subscription.\n\nClick OK to go to the subscription page.');
-                                    router.push('/pricing');
-                                  } else if (!isAllowed) {
-                                    e.preventDefault();
-                                    const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                    const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                                    alert(`Your current subscription plan (${planConfig.name}) only supports ${allowedResolutions} resolution.\n\nPlease upgrade your plan to use ${quality.value} resolution.\n\nClick OK to go to the pricing page.`);
+                                    if (subscriptionPlan === null) {
+                                      alert('1080p resolution requires a Pro or Studio subscription.\n\nClick OK to go to the subscription page.');
+                                    } else {
+                                      alert(`Your current subscription plan (${planName}) does not support 1080p resolution.\n\nPlease upgrade to Pro or Studio plan to use 1080p resolution.\n\nClick OK to go to the pricing page.`);
+                                    }
                                     router.push('/pricing');
                                   }
                                 }}
                               >
                                 <span className="flex items-center gap-2">
                                   {quality.label}
-                                  {requiresSub && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
+                                  {is1080p && !isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">(Pro/Studio only)</span>
                                   )}
-                                  {quality.requiresSubscription && subscriptionPlan !== null && isAllowed && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                  {!isAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
+                                  {is1080p && isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">({planName})</span>
                                   )}
                                 </span>
                               </SelectItem>
@@ -2304,13 +2236,17 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         <>
                           <Diamond className="w-7 h-7 text-gray-900" />
                           <span className="text-sm">
-                            {formData.inputType === "text" && isSceneMode ? 'Generate Story Script' : 'Generate Video'}
-                            {formData.inputType === "text" && !isSceneMode && (
+                            {isGenerating && textToVideoProgress.status !== 'idle' 
+                              ? 'Generating...' 
+                              : formData.inputType === "text" && isSceneMode 
+                                ? 'Generate Story Script' 
+                                : 'Generate Video'}
+                            {!isGenerating && formData.inputType === "text" && !isSceneMode && (
                               <span className="ml-2 text-xs opacity-90">
                                 {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "5"))}
                               </span>
                             )}
-                            {formData.inputType === "image" && (
+                            {!isGenerating && formData.inputType === "image" && (
                               <span className="ml-2 text-xs opacity-90">
                                 {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "5"))}
                               </span>
@@ -2813,31 +2749,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             </div>
           </TabsContent>
           <TabsContent value="my-creations" className="mt-8">
-            {/* 非分镜模式下的生成状态显示 */}
+            {/* 非分镜模式下的生成状态显示 - 简化显示 */}
             {formData.inputType === "text" && !isSceneMode && textToVideoProgress.status !== 'idle' && (
-              <div className="mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                {textToVideoProgress.status === 'generating' && (
-                  <div className="flex items-center gap-3">
+              <div className="mb-6 p-6 bg-gray-800/50 rounded-lg border border-gray-700">
+                {(textToVideoProgress.status === 'generating' || textToVideoProgress.status === 'polling') && (
+                  <div className="flex flex-col items-center justify-center gap-4">
                     <motion.div
                       animate={{ rotate: 360 }}
                       transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="w-5 h-5"
+                      className="w-12 h-12"
                     >
-                      <Sparkles className="w-5 h-5 text-[#FFDA2A]" />
+                      <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                     </motion.div>
-                    <span className="text-gray-300">{textToVideoProgress.message}</span>
-                  </div>
-                )}
-                {textToVideoProgress.status === 'polling' && (
-                  <div className="flex items-center gap-3">
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="w-5 h-5"
-                    >
-                      <Sparkles className="w-5 h-5 text-[#FFDA2A]" />
-                    </motion.div>
-                    <span className="text-gray-300">{textToVideoProgress.message}</span>
+                    <span className="text-white text-lg font-medium">视频制作中，请稍后...</span>
                   </div>
                 )}
                 {textToVideoProgress.status === 'completed' && textToVideoProgress.videoUrl && (

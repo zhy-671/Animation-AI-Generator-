@@ -51,23 +51,52 @@ export default function IdeaInputForm() {
     setIsGenerating(true);
 
     try {
+      // 打印客户端请求参数（浏览器控制台）
+      const requestData = {
+        prompt: ideaText.trim(),
+      };
+      console.log("📤 Client Request to /api/storyboard/generate-content:", requestData);
+      
       // 调用 API 生成故事内容（纯文本剧本）
       const response = await fetch("/api/storyboard/generate-content", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: ideaText.trim(),
-        }),
+        body: JSON.stringify(requestData),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate story content");
+        // Check if response is JSON
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate story content");
+        } else {
+          // Response is HTML (error page)
+          const errorText = await response.text();
+          console.error("API returned HTML instead of JSON:", errorText.substring(0, 200));
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        console.error("API returned non-JSON response:", errorText.substring(0, 200));
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
+      
+      // 打印客户端响应结果（浏览器控制台）
+      console.log("📥 Client Response from /api/storyboard/generate-content:", {
+        success: result.success,
+        title: result.data?.title,
+        contentLength: result.data?.content?.length,
+        contentPreview: result.data?.content?.substring(0, 200) + "...",
+      });
 
       if (result.success && result.data) {
         // Deduct credits after successful generation

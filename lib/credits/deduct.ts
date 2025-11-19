@@ -41,7 +41,16 @@ export async function deductCredits(
       };
     }
 
-    // 返回新的余额
+    // 从API响应中直接获取新余额（API返回credits字段）
+    if (result.credits !== undefined) {
+      console.log('New balance from API:', result.credits);
+      return {
+        success: true,
+        newBalance: result.credits,
+      };
+    }
+
+    // 如果API没有返回余额，再次查询
     const balanceCheck = await checkCreditsBalance(0);
     return {
       success: true,
@@ -66,6 +75,16 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
     const result = await response.json();
 
     if (!response.ok) {
+      // If user is not authenticated (401), return gracefully without error
+      // This is expected when user is not logged in
+      if (response.status === 401) {
+        console.log('User not authenticated - skipping balance check');
+        return {
+          sufficient: false,
+          balance: 0,
+        };
+      }
+      
       return {
         sufficient: false,
         error: result.error || 'Failed to check credits balance',

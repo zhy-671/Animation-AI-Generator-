@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Sparkles, Image as ImageIcon, Film, Video, Camera, MessageSquare, FileText, Clock, X, Edit2, Save, CheckCircle } from "lucide-react";
+import { ArrowLeft, Sparkles, Image as ImageIcon, Film, Video, Camera, MessageSquare, FileText, Clock, X, Edit2, Save, CheckCircle, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,10 @@ import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
+import { checkCreditsBalance, deductCredits, deductVideoCredits } from "@/lib/credits/deduct";
+import { calculateVideoCredits, type SubscriptionPlan } from "@/lib/subscription/rules";
+import { getUserSubscriptionPlan } from "@/lib/subscription/client";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 interface Shot {
   shot_number: number;
@@ -87,6 +91,13 @@ export default function StoryboardCreateForm() {
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingSceneData, setEditingSceneData] = useState<SceneItem | null>(null);
   const [isSavingScene, setIsSavingScene] = useState(false);
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   useEffect(() => {
     // 从sessionStorage获取projectId
@@ -181,14 +192,28 @@ export default function StoryboardCreateForm() {
           场次故事: metadata.场次故事 || null,
           关键画面提示: visualPrompts || metadata.关键画面提示 || null,
           // 分镜数据
-          storyboard: metadata.storyboard ? {
-            ...metadata.storyboard,
-            shots: (metadata.storyboard.shots || []).map((shot: any) => ({
-              ...shot,
-              image_url: shot.image_url || null, // 确保image_url字段存在
-              video_url: shot.video_url || null, // 确保video_url字段存在
-            })),
-          } : null,
+          storyboard: (() => {
+            const storyboardData = metadata.storyboard;
+            console.log(`加载场次 ${item.scene_number} 的分镜数据:`, {
+              hasStoryboard: !!storyboardData,
+              storyboardType: typeof storyboardData,
+              storyboardKeys: storyboardData ? Object.keys(storyboardData) : [],
+              shotsCount: storyboardData?.shots?.length || 0,
+              storyboardPreview: storyboardData ? JSON.stringify(storyboardData).substring(0, 200) : 'null',
+            });
+            
+            if (storyboardData) {
+              return {
+                ...storyboardData,
+                shots: (storyboardData.shots || []).map((shot: any) => ({
+                  ...shot,
+                  image_url: shot.image_url || null, // 确保image_url字段存在
+                  video_url: shot.video_url || null, // 确保video_url字段存在
+                })),
+              };
+            }
+            return null;
+          })(),
         };
       });
       
@@ -199,11 +224,30 @@ export default function StoryboardCreateForm() {
         scenes,
       });
       
-      // 默认选中第一个场次
-      if (scenes.length > 0) {
+      // 如果已经有选中的场次，保持选中状态；否则默认选中第一个场次
+      if (selectedSceneNumber === null && scenes.length > 0) {
         const firstSceneNumber = scenes[0].sceneNumber;
         setSelectedSceneNumber(firstSceneNumber);
+        console.log('设置默认选中场次:', firstSceneNumber);
+      } else if (selectedSceneNumber !== null) {
+        // 检查选中的场次是否仍然存在
+        const selectedSceneExists = scenes.some(s => s.sceneNumber === selectedSceneNumber);
+        if (!selectedSceneExists && scenes.length > 0) {
+          setSelectedSceneNumber(scenes[0].sceneNumber);
+          console.log('选中的场次不存在，切换到第一个场次:', scenes[0].sceneNumber);
+        } else {
+          console.log('保持当前选中场次:', selectedSceneNumber);
+        }
       }
+      
+      // 打印加载后的分镜数据统计
+      const scenesWithStoryboard = scenes.filter(s => s.storyboard && s.storyboard.shots && s.storyboard.shots.length > 0);
+      console.log('加载场次数据完成:', {
+        totalScenes: scenes.length,
+        scenesWithStoryboard: scenesWithStoryboard.length,
+        selectedSceneNumber: selectedSceneNumber,
+        selectedSceneHasStoryboard: scenes.find(s => s.sceneNumber === selectedSceneNumber)?.storyboard ? true : false,
+      });
       
       // 初始化所有图片状态
       const initialStatuses = new Map<string, { status: 'pending' | 'generating' | 'completed' | 'failed', imageUrl: string | null }>();
@@ -472,6 +516,24 @@ export default function StoryboardCreateForm() {
   ) || null;
   
   const selectedSceneItems = selectedScene ? [selectedScene] : [];
+  
+  // 调试：打印当前选中场次的分镜信息
+  useEffect(() => {
+    if (selectedScene) {
+      console.log('当前选中场次的分镜信息:', {
+        sceneNumber: selectedScene.sceneNumber,
+        sceneId: selectedScene.id,
+        hasStoryboard: !!selectedScene.storyboard,
+        hasShots: !!selectedScene.storyboard?.shots,
+        shotsCount: selectedScene.storyboard?.shots?.length || 0,
+        shotsIsArray: Array.isArray(selectedScene.storyboard?.shots),
+        storyboardKeys: selectedScene.storyboard ? Object.keys(selectedScene.storyboard) : [],
+        firstShot: selectedScene.storyboard?.shots?.[0] ? Object.keys(selectedScene.storyboard.shots[0]) : [],
+      });
+    } else {
+      console.log('当前没有选中场次，selectedSceneNumber:', selectedSceneNumber, 'scenes数量:', sceneData?.scenes.length);
+    }
+  }, [selectedScene, selectedSceneNumber, sceneData]);
 
   // 开始编辑场次
   const handleStartEdit = (scene: SceneItem) => {
@@ -608,6 +670,34 @@ export default function StoryboardCreateForm() {
       return;
     }
 
+    // 检查积分余额（需要3积分）
+    const creditsCheck = await checkCreditsBalance(3);
+    if (!creditsCheck.sufficient) {
+      setInsufficientCreditsData({
+        required: 3,
+        current: creditsCheck.balance || 0,
+        action: "generate storyboard"
+      });
+      setShowInsufficientCreditsDialog(true);
+      return;
+    }
+
+    // 扣除积分
+    const deductResult = await deductCredits(
+      3,
+      "Generate storyboard",
+      { type: "storyboard_generation", project_id: projectId, scene_id: scene.id }
+    );
+
+    if (!deductResult.success) {
+      console.error("Failed to deduct credits:", deductResult.error);
+      showError("Failed to deduct credits. Please try again.");
+      return;
+    }
+
+    // 触发积分更新事件，刷新头部余额显示
+    window.dispatchEvent(new Event("credits-updated"));
+
     setIsGeneratingStoryboard(true);
     setGeneratingStoryboardSceneId(scene.id);
 
@@ -635,7 +725,38 @@ export default function StoryboardCreateForm() {
 
       // 重新加载场次数据以显示生成的分镜
       if (projectId) {
+        console.log('生成分镜成功，开始重新加载场次数据...');
+        console.log('API返回的分镜数据:', {
+          success: result.success,
+          hasData: !!result.data,
+          hasStoryboard: !!result.data?.storyboard,
+          shotsCount: result.data?.storyboard?.shots?.length || 0,
+          storyboardPreview: result.data?.storyboard ? JSON.stringify(result.data.storyboard).substring(0, 500) : 'null',
+        });
+        
         await loadScenesFromDatabase(projectId);
+        console.log('场次数据重新加载完成');
+        
+        // 确保选中生成分镜的场次，以便立即显示分镜
+        // 延迟一下，确保 sceneData 状态已更新
+        setTimeout(() => {
+          // 直接选中生成分镜的场次
+          setSelectedSceneNumber(scene.sceneNumber);
+          console.log('已选中生成分镜的场次:', scene.sceneNumber);
+          
+          // 再次检查数据（延迟检查，确保状态已更新）
+          setTimeout(() => {
+            if (sceneData) {
+              const updatedScene = sceneData.scenes.find(s => s.sceneNumber === scene.sceneNumber);
+              console.log('延迟检查分镜数据:', {
+                sceneNumber: scene.sceneNumber,
+                hasStoryboard: !!updatedScene?.storyboard,
+                shotsCount: updatedScene?.storyboard?.shots?.length || 0,
+                selectedSceneNumber: selectedSceneNumber,
+              });
+            }
+          }, 200);
+        }, 300);
       }
 
       showSuccess("Storyboard generated successfully!");
@@ -704,12 +825,34 @@ export default function StoryboardCreateForm() {
 
             const statusResult = await statusResponse.json();
             if (!statusResult.success) {
-              throw new Error(statusResult.error || "查询图片状态失败");
+              throw new Error(statusResult.error || "Failed to query image status");
             }
 
-            const { status, imageUrl, imageUrls } = statusResult.data;
+            const { status, imageUrl, imageUrls, message } = statusResult.data;
 
             if (status === "SUCCEEDED") {
+              // 图片生成成功，扣除积分
+              // 编辑模式下扣除20积分，非编辑模式扣除5积分
+              const creditsToDeduct = updateEditingData ? 20 : 5;
+              const creditsCheck = await checkCreditsBalance(creditsToDeduct);
+              if (!creditsCheck.sufficient) {
+                throw new Error("Insufficient credits. Image generated but credits cannot be deducted.");
+              }
+
+              const deductResult = await deductCredits(
+                creditsToDeduct,
+                updateEditingData ? "Generate shot images (edit mode)" : "Generate shot image",
+                { type: "shot_image_generation", project_id: projectId, scene_id: sceneId, shot_number: shot.shot_number, edit_mode: updateEditingData }
+              );
+
+              if (!deductResult.success) {
+                console.error("Failed to deduct credits:", deductResult.error);
+                throw new Error("Image generated but failed to deduct credits. Please contact support.");
+              }
+
+              // 触发积分更新事件，刷新头部余额显示
+              window.dispatchEvent(new Event("credits-updated"));
+
               // 返回所有图片URLs（最多4张）
               if (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0) {
                 return imageUrls;
@@ -720,7 +863,11 @@ export default function StoryboardCreateForm() {
                 throw new Error("Image generation succeeded but no image URL returned");
               }
             } else if (status === "FAILED") {
-              throw new Error("Image generation failed");
+              // 使用 API 返回的详细错误信息（如果有）
+              const errorMessage = message 
+                ? `Image generation failed: ${message}` 
+                : "Image generation failed. Please try again later";
+              throw new Error(errorMessage);
             } else {
               // 继续轮询
               attempts++;
@@ -743,9 +890,11 @@ export default function StoryboardCreateForm() {
         
         // 如果是在编辑模式下，显示生成的图片供选择
         if (updateEditingData) {
+          console.log("编辑模式下图片生成成功，设置图片数组:", imageUrls);
           setGeneratedShotImages(imageUrls);
           setSelectedShotImageIndex(0); // 默认选中第一张
           setGeneratingShotImageId(null);
+          console.log("已设置 generatedShotImages，长度:", imageUrls.length);
           return; // 不自动保存，等待用户选择后点击保存
         }
         
@@ -867,7 +1016,11 @@ export default function StoryboardCreateForm() {
       }
     } catch (error) {
       console.error("Error generating shot image:", error);
-      showError(error instanceof Error ? error.message : "Failed to generate storyboard image");
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : "Image generation failed. Please try again later";
+      showError(errorMessage);
+      // 图片生成失败，不扣除积分（积分只在成功时扣除）
     } finally {
       setGeneratingShotImageId(null);
     }
@@ -931,11 +1084,61 @@ export default function StoryboardCreateForm() {
     const shot = videoGenerationModal.shot;
     const sceneItemId = videoGenerationModal.sceneItemId;
     const shotId = `${sceneItemId}-${shot.shot_number}`;
-    
-    // 不关闭模态框，保持打开状态以显示生成进度
-    setGeneratingVideoShotId(shotId);
 
     try {
+      // 获取订阅计划
+      const planData = await getUserSubscriptionPlan();
+      const subscriptionPlan: SubscriptionPlan = planData.plan || null;
+
+      // 转换分辨率为小写格式（480P -> 480p）
+      const resolutionLower = videoResolution.toLowerCase() as '480p' | '720p' | '1080p';
+      const duration = videoDuration;
+
+      // 计算视频积分（根据订阅计划和积分规则）
+      // 注意：根据积分规则，没有订阅计划的用户统一按720p费率扣除
+      const requiredCredits = subscriptionPlan 
+        ? calculateVideoCredits(subscriptionPlan, resolutionLower, duration)
+        : calculateVideoCredits(null, '720p', duration);
+
+      // 检查积分余额
+      const creditsCheck = await checkCreditsBalance(requiredCredits);
+      if (!creditsCheck.sufficient) {
+        setInsufficientCreditsData({
+          required: requiredCredits,
+          current: creditsCheck.balance || 0,
+          action: `generate ${duration}s ${videoResolution} video`
+        });
+        setShowInsufficientCreditsDialog(true);
+        setGeneratingVideoShotId(null);
+        return;
+      }
+
+      // 扣除积分
+      const deductResult = await deductVideoCredits(
+        resolutionLower,
+        duration,
+        { 
+          type: "shot_video_generation", 
+          project_id: projectId, 
+          scene_id: sceneItemId, 
+          shot_number: shot.shot_number 
+        },
+        subscriptionPlan
+      );
+
+      if (!deductResult.success) {
+        console.error("Failed to deduct credits:", deductResult.error);
+        showError("Failed to deduct credits. Please try again.");
+        setGeneratingVideoShotId(null);
+        return;
+      }
+
+      // 触发积分更新事件，刷新头部余额显示
+      window.dispatchEvent(new Event("credits-updated"));
+    
+      // 不关闭模态框，保持打开状态以显示生成进度
+      setGeneratingVideoShotId(shotId);
+
       // 获取项目设置中的视觉风格
       const projectResponse = await fetch(`/api/storyboard/projects/${projectId}`);
       if (!projectResponse.ok) {
@@ -959,7 +1162,6 @@ export default function StoryboardCreateForm() {
 
       const dashScopeModel = "wan2.5-i2v-preview";
       const dashScopeResolution = videoResolution;
-      const duration = videoDuration;
 
       // 优先使用分镜中的 video_prompt，如果用户在弹窗中修改了描述则使用修改后的描述
       let finalDescription = videoDescription.trim();
@@ -1220,11 +1422,11 @@ export default function StoryboardCreateForm() {
       setGeneratedShotImages([]);
       setSelectedShotImageIndex(null);
       
-      // 显示保存成功弹窗
-      setShowSaveSuccess(true);
-      setTimeout(() => {
-        setShowSaveSuccess(false);
-      }, 2000); // 2秒后自动关闭
+      // 不再显示保存成功弹窗
+      // setShowSaveSuccess(true);
+      // setTimeout(() => {
+      //   setShowSaveSuccess(false);
+      // }, 2000); // 2秒后自动关闭
       
       setEditingShotId(null);
       setEditingShotData(null);
@@ -1777,7 +1979,7 @@ export default function StoryboardCreateForm() {
                       {[0, 1, 2, 3].map((index) => {
                         // 如果有生成的图片，显示生成的图片；否则如果有已保存的图片且是第一个位置，显示已保存的图片；否则显示占位符
                         const displayImage = generatedShotImages.length > 0 
-                          ? generatedShotImages[index] 
+                          ? (generatedShotImages[index] || null)
                           : (index === 0 && editingShotData.image_url) 
                             ? editingShotData.image_url 
                             : null;
@@ -1852,12 +2054,14 @@ export default function StoryboardCreateForm() {
                           >
                             <Sparkles className="w-4 h-4" />
                           </motion.div>
-                          Generating...
+                          <span>Generating...</span>
                         </> 
                       ) : (
                         <>
                           <ImageIcon className="w-4 h-4 mr-2" />
-                          {editingShotData.image_url ? "Regenerate" : "Generate Storyboard Image"}
+                          <span>{editingShotData.image_url ? "Regenerate" : "Generate Image"}</span>
+                          <Diamond className="w-4 h-4 ml-2" />
+                          <span className="text-xs ml-1">20</span>
                         </>
                       )}
                     </Button>
@@ -2239,6 +2443,8 @@ export default function StoryboardCreateForm() {
                             >
                               <Sparkles className="w-4 h-4 mr-2" />
                               Generate Storyboard
+                              <Diamond className="w-4 h-4 ml-2" />
+                              <span className="text-xs ml-1">3</span>
                             </Button>
                           )}
                         </div>
@@ -2247,7 +2453,34 @@ export default function StoryboardCreateForm() {
                       /* 查看模式 */
                       <div className="space-y-6">
                         {/* 如果有分镜，只显示分镜列表，隐藏所有场次信息 */}
-                        {selectedScene.storyboard && selectedScene.storyboard.shots ? (
+                        {selectedScene && (() => {
+                          const hasStoryboard = !!selectedScene.storyboard;
+                          const hasShots = !!selectedScene.storyboard?.shots;
+                          const shotsCount = selectedScene.storyboard?.shots?.length || 0;
+                          
+                          if (hasStoryboard) {
+                            console.log('分镜显示检查:', {
+                              sceneId: selectedScene.id,
+                              sceneNumber: selectedScene.sceneNumber,
+                              hasStoryboard,
+                              hasShots,
+                              shotsCount,
+                              storyboardType: typeof selectedScene.storyboard,
+                              storyboardKeys: selectedScene.storyboard ? Object.keys(selectedScene.storyboard) : [],
+                              shotsIsArray: Array.isArray(selectedScene.storyboard?.shots),
+                              firstShot: selectedScene.storyboard?.shots?.[0] ? Object.keys(selectedScene.storyboard.shots[0]) : [],
+                              fullStoryboardPreview: selectedScene.storyboard ? JSON.stringify(selectedScene.storyboard).substring(0, 500) : 'null',
+                            });
+                          } else {
+                            console.log('分镜显示检查 - 没有分镜数据:', {
+                              sceneId: selectedScene.id,
+                              sceneNumber: selectedScene.sceneNumber,
+                              hasStoryboard: false,
+                            });
+                          }
+                          
+                          return hasStoryboard && hasShots && shotsCount > 0;
+                        })() ? (
                           <div className="space-y-6 pt-6">
                             {/* 场景标题和摘要 */}
                             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -2514,7 +2747,9 @@ export default function StoryboardCreateForm() {
                                               ) : (
                                                 <>
                                                   <ImageIcon className="w-3 h-3 mr-1" />
-                                                  <span>Generate Storyboard Image</span>
+                                                  <span>Generate Image</span>
+                                                  <Diamond className="w-3 h-3 ml-2" />
+                                                  <span className="text-xs ml-1">5</span>
                                                 </>
                                               )}
                                             </Button>
@@ -2659,6 +2894,8 @@ export default function StoryboardCreateForm() {
                                   <>
                                     <Sparkles className="w-4 h-4 mr-2" />
                                     Generate Storyboard
+                                    <Diamond className="w-4 h-4 ml-2" />
+                                    <span className="text-xs ml-1">3</span>
                                   </>
                                 )}
                               </Button>
@@ -2680,6 +2917,17 @@ export default function StoryboardCreateForm() {
         </motion.div>
         </div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

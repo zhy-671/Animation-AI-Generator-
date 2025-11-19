@@ -111,6 +111,7 @@ export async function PATCH(request: NextRequest) {
     console.log("原有角色数据:", JSON.stringify(existingCharacter, null, 2));
     console.log("传入的更新数据:", JSON.stringify(character_data, null, 2));
     console.log("合并后的角色数据:", JSON.stringify(characters[characterIndex], null, 2));
+    console.log("合并后的角色 image_url:", characters[characterIndex].image_url);
 
     // 更新 anim_story_outlines 表的 characters 字段
     const { error: updateError } = await supabase

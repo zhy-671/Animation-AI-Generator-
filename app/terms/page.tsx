@@ -323,8 +323,8 @@ export default function TermsPage() {
               </p>
               <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                 <p className="font-semibold text-gray-900 dark:text-white">Animation AI Generator</p>
-                <p>Email: legal@animationaigenerator.com</p>
-                <p>Website: https://animationaigenerator.com</p>
+                <p>Email: <a href="mailto:andy@adflurrytech.com" className="text-[#FFDA2A] hover:underline">andy@adflurrytech.com</a></p>
+                <p>Website: <a href="https://animationaigenerator.com" className="text-[#FFDA2A] hover:underline">https://animationaigenerator.com</a></p>
               </div>
             </CardContent>
           </Card>

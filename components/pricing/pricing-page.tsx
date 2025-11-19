@@ -280,8 +280,32 @@ export default function PricingPage() {
       const paymentStatus = params.get('payment_status');
       
       if (paymentStatus === 'success') {
-        // 支付成功，刷新积分余额
+        // 支付成功，刷新积分余额和订阅计划
         refreshCreditsBalance();
+        
+        // 刷新订阅计划并保存到 Cookie
+        const refreshSubscriptionPlan = async () => {
+          try {
+            const response = await fetch('/api/subscription/plan');
+            if (response.ok) {
+              const data = await response.json();
+              if (data.plan) {
+                // 保存到 Cookie
+                const expires = new Date();
+                expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+                document.cookie = `subscription_plan=${data.plan}; expires=${expires.toUTCString()}; path=/`;
+                
+                // 触发页面刷新以更新订阅计划显示
+                window.location.reload();
+              }
+            }
+          } catch (error) {
+            console.error('Error refreshing subscription plan:', error);
+          }
+        };
+        
+        refreshSubscriptionPlan();
+        
         // 清除URL参数
         window.history.replaceState({}, '', '/pricing');
       } else if (paymentStatus === 'failed') {

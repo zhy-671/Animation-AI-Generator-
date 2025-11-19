@@ -4,6 +4,58 @@ import { wanXImageClient } from "@/lib/dashscope/wanx-image";
 import { tosClient } from "@/lib/volcano/storage";
 
 /**
+ * 将宽高比（如 "16:9"）转换为 API 需要的尺寸格式（如 "1920*1080"）
+ */
+function convertAspectRatioToSize(aspectRatio: string): string {
+  // 如果已经是 width*height 格式，直接返回
+  if (aspectRatio.includes('*')) {
+    return aspectRatio;
+  }
+
+  // 解析宽高比
+  const parts = aspectRatio.split(':');
+  if (parts.length !== 2) {
+    // 如果格式不正确，默认使用 16:9
+    return "1920*1080";
+  }
+
+  const widthRatio = parseFloat(parts[0]);
+  const heightRatio = parseFloat(parts[1]);
+
+  if (isNaN(widthRatio) || isNaN(heightRatio) || widthRatio <= 0 || heightRatio <= 0) {
+    // 如果解析失败，默认使用 16:9
+    return "1920*1080";
+  }
+
+  // 根据宽高比计算合适的尺寸
+  // 使用常见的分辨率，保持宽高比
+  if (widthRatio / heightRatio === 16 / 9) {
+    // 16:9 -> 1920*1080
+    return "1920*1080";
+  } else if (widthRatio / heightRatio === 4 / 3) {
+    // 4:3 -> 1024*768
+    return "1024*768";
+  } else if (widthRatio / heightRatio === 1) {
+    // 1:1 -> 1024*1024
+    return "1024*1024";
+  } else if (widthRatio / heightRatio === 9 / 16) {
+    // 9:16 (竖屏) -> 576*1024
+    return "576*1024";
+  } else if (widthRatio / heightRatio === 21 / 9) {
+    // 21:9 (超宽屏) -> 2560*1080
+    return "2560*1080";
+  } else {
+    // 其他比例，使用通用计算方式
+    // 以高度为基准，计算宽度
+    const baseHeight = 1024;
+    const calculatedWidth = Math.round((widthRatio / heightRatio) * baseHeight);
+    // 确保宽度是偶数（某些API要求）
+    const finalWidth = calculatedWidth % 2 === 0 ? calculatedWidth : calculatedWidth + 1;
+    return `${finalWidth}*${baseHeight}`;
+  }
+}
+
+/**
  * POST /api/storyboard/generate-shot-image
  * 生成分镜图片，使用第一个角色的参考图，其他角色的外貌和衣着信息添加到提示词中
  */
@@ -45,9 +97,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 直接使用 art_setting 的值作为 size
+    // 将 art_setting 的宽高比转换为 API 需要的 width*height 格式
     const artSetting = project?.art_setting || "16:9";
-    const imageSize = artSetting; // 直接使用 art_setting 的值
+    const imageSize = convertAspectRatioToSize(artSetting);
 
     // 2. 从 anim_story_outlines 获取角色列表
     // 注意：RLS策略会自动确保用户只能访问自己的项目数据，不需要手动添加user_id条件

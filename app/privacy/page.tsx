@@ -110,12 +110,15 @@ export default function PrivacyPage() {
               </p>
               <ul className="list-disc list-inside space-y-2 ml-4">
                 <li>Cloud storage providers (e.g., Volcano TOS, Alibaba Cloud)</li>
-                <li>AI model providers (e.g., DashScope, Volcano Engine)</li>
-                <li>Payment processors</li>
+                <li>AI model providers (e.g., Alibaba Cloud DashScope with Qwen2, WanX, and Hailuo Video models, ByteDance Volcano Engine)</li>
+                <li>Payment processors (e.g., Creem)</li>
                 <li>Analytics providers</li>
                 <li>Email service providers</li>
                 <li>Customer support platforms</li>
               </ul>
+              <p className="mt-2">
+                For more information about the AI services we use, please see our <a href="/ai-disclosure" className="text-[#FFDA2A] hover:underline">AI Technology Disclosure</a>.
+              </p>
               <p>
                 <strong className="text-gray-900 dark:text-white">4.2 Legal Requirements:</strong> We may disclose your information if required by law, court order, or government regulation, or if we believe disclosure is necessary to:
               </p>
@@ -340,8 +343,8 @@ export default function PrivacyPage() {
               </p>
               <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                 <p className="font-semibold text-gray-900 dark:text-white">Animation AI Generator</p>
-                <p>Email: privacy@animationaigenerator.com</p>
-                <p>Website: https://animationaigenerator.com</p>
+                <p>Email: <a href="mailto:andy@adflurrytech.com" className="text-[#FFDA2A] hover:underline">andy@adflurrytech.com</a></p>
+                <p>Website: <a href="https://animationaigenerator.com" className="text-[#FFDA2A] hover:underline">https://animationaigenerator.com</a></p>
               </div>
             </CardContent>
           </Card>
@@ -357,10 +360,10 @@ export default function PrivacyPage() {
               </p>
               <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                 <p className="font-semibold text-gray-900 dark:text-white">Animation AI Generator</p>
-                <p>Email: privacy@animationaigenerator.com</p>
-                <p>Website: https://animationaigenerator.com</p>
+                <p>Email: <a href="mailto:andy@adflurrytech.com" className="text-[#FFDA2A] hover:underline">andy@adflurrytech.com</a></p>
+                <p>Website: <a href="https://animationaigenerator.com" className="text-[#FFDA2A] hover:underline">https://animationaigenerator.com</a></p>
                 <p className="mt-2 text-sm">
-                  For data protection inquiries: dpo@animationaigenerator.com
+                  For data protection inquiries: <a href="mailto:andy@adflurrytech.com" className="text-[#FFDA2A] hover:underline">andy@adflurrytech.com</a>
                 </p>
               </div>
             </CardContent>

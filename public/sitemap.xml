@@ -58,12 +58,33 @@
     <priority>0.7</priority>
   </url>
   
-  <!-- FAQ Page -->
+  <!-- Legal and Support Pages -->
   <url>
-    <loc>https://animationaigenerator.com/faq</loc>
+    <loc>https://animationaigenerator.com/privacy</loc>
     <lastmod>2025-01-11</lastmod>
     <changefreq>monthly</changefreq>
-    <priority>0.7</priority>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://animationaigenerator.com/terms</loc>
+    <lastmod>2025-01-11</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://animationaigenerator.com/ai-disclosure</loc>
+    <lastmod>2025-01-11</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://animationaigenerator.com/contact</loc>
+    <lastmod>2025-01-11</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
   </url>
   
 </urlset>

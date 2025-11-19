@@ -44,6 +44,7 @@ import EnhancedVideoPlayer from "./enhanced-video-player";
 import CanvasVideoPlayer, { CanvasVideoPlayerRef } from "./canvas-video-player";
 import { getUserSubscriptionPlan } from "@/lib/subscription/client";
 import { isCompleteVideoExportAllowed, type SubscriptionPlan } from "@/lib/subscription/rules";
+import { ExportDialog } from "./export-dialog";
 
 interface Shot {
   shot_number: number;
@@ -149,6 +150,7 @@ export default function VideoEditor() {
   
   // Export dialog state
   const [showExportDialog, setShowExportDialog] = useState(false);
+  const [showExportCompleteDialog, setShowExportCompleteDialog] = useState(false);
   
   // Subscription plan state
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
@@ -1994,10 +1996,51 @@ export default function VideoEditor() {
           </DialogHeader>
           <div className="flex flex-col gap-3 py-4">
             <button
-              onClick={() => {
-                // TODO: 实现下载视频功能
-                console.log("Download videos");
-                setShowExportDialog(false);
+              onClick={async () => {
+                if (!projectId) {
+                  showError("Project ID is missing");
+                  return;
+                }
+                
+                // 获取当前场景ID（从sceneData中获取）
+                const currentSceneId = sceneData?.id;
+                if (!currentSceneId) {
+                  showError("Scene data is not loaded");
+                  return;
+                }
+                
+                try {
+                  setShowExportDialog(false);
+                  showInfo("Preparing video download...");
+                  
+                  // 调用下载API，传递sceneId参数
+                  const response = await fetch(`/api/projects/${projectId}/download-videos?sceneId=${currentSceneId}`);
+                  
+                  if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to download videos');
+                  }
+                  
+                  // 获取zip文件
+                  const blob = await response.blob();
+                  
+                  // 创建下载链接
+                  const url = window.URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  const sceneTitle = sceneData?.title || 'scene';
+                  const safeTitle = sceneTitle.replace(/[^a-zA-Z0-9]/g, '_');
+                  a.download = `${safeTitle}_videos_${Date.now()}.zip`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  window.URL.revokeObjectURL(url);
+                  
+                  showSuccess("Videos downloaded successfully!");
+                } catch (error) {
+                  console.error("Error downloading videos:", error);
+                  showError(error instanceof Error ? error.message : "Failed to download videos");
+                }
               }}
               className="w-full p-4 border border-gray-600 rounded-lg hover:border-yellow-400 hover:bg-yellow-400/10 transition-all text-left group cursor-pointer"
             >
@@ -2014,18 +2057,22 @@ export default function VideoEditor() {
             <button
               onClick={() => {
                 if (!isCompleteVideoExportAllowed(subscriptionPlan)) {
-                  showWarning("Complete video export is only available for Pro and Studio plans. Please upgrade your subscription.");
+                  showWarning("Complete video export is only available for Pro and Studio plans. Redirecting to upgrade page...");
+                  setShowExportDialog(false);
+                  // 延迟跳转，让用户看到提示信息
+                  setTimeout(() => {
+                    router.push('/pricing');
+                  }, 1500);
                   return;
                 }
-                // TODO: 实现导出完整视频功能
-                console.log("Export complete video");
+                // 打开导出对话框
                 setShowExportDialog(false);
+                setShowExportCompleteDialog(true);
               }}
-              disabled={!isCompleteVideoExportAllowed(subscriptionPlan)}
               className={`w-full p-4 border rounded-lg text-left group transition-all ${
                 isCompleteVideoExportAllowed(subscriptionPlan)
                   ? "border-gray-600 hover:border-yellow-400 hover:bg-yellow-400/10 cursor-pointer"
-                  : "border-gray-700 bg-gray-800/50 opacity-50 cursor-not-allowed"
+                  : "border-gray-700 bg-gray-800/50 opacity-50 cursor-pointer hover:border-yellow-500/50"
               }`}
             >
               <div className="flex items-start gap-3">
@@ -2051,6 +2098,35 @@ export default function VideoEditor() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Export Complete Video Dialog */}
+      {projectId && sceneData && (
+        <ExportDialog
+          open={showExportCompleteDialog}
+          onOpenChange={setShowExportCompleteDialog}
+          projectId={projectId}
+          sceneId={sceneData.id}
+          videoClips={tracks.flatMap(track => 
+            track.clips.map(clip => ({
+              url: clip.url,
+              startTime: clip.startTime,
+              duration: clip.duration,
+            }))
+          )}
+          subtitles={subtitleTrack.subtitles.map(sub => ({
+            text: sub.text,
+            startTime: sub.startTime,
+            endTime: sub.endTime,
+            x: sub.x,
+            y: sub.y,
+          }))}
+          coverImage={tracks[0]?.clips[0]?.thumbnail || sceneData.cover_image_url}
+          onExportComplete={(videoUrl) => {
+            console.log('Export completed:', videoUrl);
+            showSuccess('Video exported successfully!');
+          }}
+        />
+      )}
     </div>
   );
 }
