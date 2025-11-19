@@ -87,66 +87,186 @@ export async function POST(request: NextRequest) {
 
     // 6. 不再需要构建环境信息和详细角色信息，新格式只需要角色名称列表
 
-    // 9. 构建AI提示词（新指令）
-    const systemPrompt = `You are a professional cinematic storyboard AI. 
+    // 9. Build AI prompt (new instruction)
+    const systemPrompt = `You are a professional cinematic storyboard director specializing in animation.
 
-Your task is to convert a scene description and a list of main characters into a structured storyboard JSON.
+Your task is to convert a scene (sceneText) into a structured storyboard JSON with continuous and connected shots.
 
-Instructions:
+Each shot must naturally continue from the previous shot in terms of:
 
-1. Break the scene into 4-12 shots based on actions, emotions, and key story points.
+- character position
 
-2. For each shot, generate:
+- character emotional state
 
-   - shotNumber: sequential number
+- environment continuity
 
-   - shotDescription: concise description of what is visible (camera angle, character positions, expressions, mood, environment)
+- ongoing actions
 
-   - imagePrompt: detailed prompt for AI image generation (2D/3D anime style, cinematic lighting, weather, atmosphere)
+- spatial consistency
 
-   - videoPrompt: detailed prompt for AI video generation describing camera movement, character motion, and atmosphere
+- time flow
 
-   - narration: natural narration text summarizing story or character thoughts
+- visual momentum and narrative pacing
 
-   - dialogue: spoken lines by characters in this shot (if any)
+You must generate TWO parallel versions of each shot:
 
-3. Ensure continuity between shots, showing cause-effect and emotional flow.
+1. imageShot → still-image description (no camera terminology)
 
-4. Accurately reflect scene details: weather, lighting, indoor/outdoor, cityscape, props, clothing, facial expressions.
+2. videoShot → fully cinematic shot (with detailed camera language)
 
-5. Output: a JSON object with the following structure:
+-----------------------------------------------------
+
+SHOT REQUIREMENTS
+
+-----------------------------------------------------
+
+For every shot, provide:
+
+- shotNumber
+
+- previousShotContinuation:
+
+    A short statement describing how this shot logically continues
+
+    from the previous shot. For shot #1, return "".
+
+- imageShot.imageDescription:
+
+    A descriptive still-image composition without camera terminology.
+
+    Describe visual content only:
+
+    characters (appearance, pose, expression), environment details,
+
+    props, atmosphere, lighting, mood.
+
+    Ensure continuity from the previous shot.
+
+- videoShot.videoDescription:
+
+    A detailed cinematic description including:
+
+    • shot type (wide, medium, close-up, extreme close-up)
+
+    • framing and staging
+
+    • camera motion (pan, tilt, dolly, track, crane, orbit, push, pull)
+
+    • character movement and timing
+
+    • emotional pacing
+
+    • environmental motion (rain, cars, neon lights, fog, wind)
+
+    • transitions (cut, dissolve, match cut, continuous movement)
+
+    • MUST clearly connect to the previous shot visually or spatially
+
+- narration:
+
+    Storytelling voice describing emotion or meaning of this moment.
+
+- dialogue:
+
+    Spoken lines in this shot if any.
+
+- appearCharacters:
+
+    List of characters appearing in this shot.
+
+    Extract automatically from sceneText and track from earlier shots.
+
+-----------------------------------------------------
+
+CONTINUITY RULES
+
+-----------------------------------------------------
+
+Your storyboard must create a seamless sense of motion from shot to shot:
+
+- Maintain spatial consistency (left/right, interior/exterior, props)
+
+- Maintain character states (emotion, posture, direction of movement)
+
+- If a character starts an action in shot N, they must continue or resolve it in shot N+1
+
+- Video shots must feel like a continuous cinematic sequence
+
+- Image shots must be visually consistent across shots
+
+-----------------------------------------------------
+
+STRUCTURE
+
+-----------------------------------------------------
 
 {
-  "sceneTitle": "Scene Title Here",
+
+  "sceneTitle": "",
+
+  "charactersDetected": [],
+
   "shotList": [
+
     {
+
       "shotNumber": 1,
-      "shotDescription": "",
-      "imagePrompt": "",
-      "videoPrompt": "",
+
+      "previousShotContinuation": "",
+
+      "imageShot": {
+
+        "imageDescription": ""
+
+      },
+
+      "videoShot": {
+
+        "videoDescription": ""
+
+      },
+
       "narration": "",
-      "dialogue": ""
-    },
-    {
-      "shotNumber": 2,
-      "shotDescription": "",
-      "imagePrompt": "",
-      "videoPrompt": "",
-      "narration": "",
-      "dialogue": ""
+
+      "dialogue": "",
+
+      "appearCharacters": []
+
     }
+
   ]
+
 }
 
-Input variables:
-- sceneText: a natural language description of the scene
-- characters: an array of main characters in the scene
+-----------------------------------------------------
 
-Example usage:
-sceneText = "Old Wang parks his taxi on the side of East Third Ring Road as drizzle turns into light rain. He wipes the steering wheel, tired after working from six a.m. to ten p.m."
-characters = ["Old Wang"]
+GUIDELINES
 
-Your output should generate multiple shots, with cinematic visual description, dynamic camera movements, detailed video prompts, narration, and dialogue if present.`;
+-----------------------------------------------------
+
+- Avoid camera terms in imageDescription.
+
+- Use rich cinematic language in videoDescription.
+
+- Aim for 4–12 shots per scene.
+
+- Each shot must clearly convey what is happening.
+
+- The full set of shots should fully express the scene meaning.
+
+- Ensure high-quality animation-friendly descriptions.
+
+-----------------------------------------------------
+
+INPUT FORMAT YOU WILL RECEIVE
+
+-----------------------------------------------------
+
+- sceneText: the scene content
+
+- characters: list of main characters (optional)
+
+Your final output must be valid JSON.`;
 
     // 10. 提取场次中的角色名称列表
     let sceneCharacterNames: string[] = [];
@@ -650,19 +770,30 @@ Please output the JSON object following the exact format specified in the system
           storyboardJson.scene_title = `Scene ${sceneNumber}`;
         }
         
-        // 转换 shotList -> shots，并转换字段名
+        // Convert shotList -> shots, and map field names
+        // New format: imageShot.imageDescription -> image_prompt, videoShot.videoDescription -> video_prompt
         storyboardJson.shots = storyboardJson.shotList.map((shot: any) => {
           return {
             shot_number: shot.shotNumber || shot.shot_number || 0,
-            description: shot.shotDescription || shot.description || "",
-            image_prompt: shot.imagePrompt || shot.image_prompt || "",
-            video_prompt: shot.videoPrompt || shot.video_prompt || "",
+            description: shot.imageShot?.imageDescription || shot.shotDescription || shot.description || "",
+            image_prompt: shot.imageShot?.imageDescription || shot.imagePrompt || shot.image_prompt || "",
+            video_prompt: shot.videoShot?.videoDescription || shot.videoPrompt || shot.video_prompt || "",
             narration: shot.narration || "",
             dialogue: shot.dialogue || "",
-            // 保留原始字段以便兼容
+            characters: shot.appearCharacters?.join(', ') || shot.characters || "",
+            appearCharacters: shot.appearCharacters || (shot.characters && typeof shot.characters === 'string' ? shot.characters.split(',').map((c: string) => c.trim()) : []),
+            previousShotContinuation: shot.previousShotContinuation || "",
+            // Preserve original fields for compatibility
             ...shot,
           };
         });
+        
+        // Extract charactersDetected if available and use it for character extraction
+        if (storyboardJson.charactersDetected && Array.isArray(storyboardJson.charactersDetected) && storyboardJson.charactersDetected.length > 0) {
+          console.log("Detected characters from AI:", storyboardJson.charactersDetected);
+          // Store for later use in character extraction
+          storyboardJson._aiDetectedCharacters = storyboardJson.charactersDetected;
+        }
         
         // 生成 scene_summary（从第一个shot的narration或description）
         if (!storyboardJson.scene_summary) {
@@ -674,9 +805,10 @@ Please output the JSON object following the exact format specified in the system
           }
         }
         
-        // 删除新格式的字段
+        // Delete new format fields
         delete storyboardJson.shotList;
         delete storyboardJson.sceneTitle;
+        delete storyboardJson.charactersDetected; // Clean up after extraction
         
         console.log("转换完成，新格式字段已删除");
       } else if (storyboardJson.shots && Array.isArray(storyboardJson.shots)) {
@@ -778,9 +910,25 @@ Please output the JSON object following the exact format specified in the system
           }
         }
         
-        // 方法4: 如果数据库角色表也没有，尝试从AI生成的分镜JSON中的characters字段提取（新格式可能没有这个字段）
+        // Method 4: If still no characters found, try to extract from AI's charactersDetected field (new format)
+        if (characterNames.length === 0 && storyboardJson._aiDetectedCharacters && Array.isArray(storyboardJson._aiDetectedCharacters)) {
+          console.log("Extracting characters from AI's charactersDetected field...");
+          storyboardJson._aiDetectedCharacters.forEach((charName: any) => {
+            if (typeof charName === 'string' && charName.trim()) {
+              characterNames.push(charName.trim());
+            } else if (charName && typeof charName === 'object') {
+              const name = charName.name || charName.姓名 || '';
+              if (name) {
+                characterNames.push(String(name).trim());
+              }
+            }
+          });
+          console.log("Characters from AI's charactersDetected:", characterNames);
+        }
+        
+        // Method 5: If still no characters, try to extract from AI's characters field (old format)
         if (characterNames.length === 0 && storyboardJson.characters && Array.isArray(storyboardJson.characters)) {
-          console.log("尝试从AI生成的分镜JSON中提取角色...");
+          console.log("Extracting characters from AI's characters field (old format)...");
           storyboardJson.characters.forEach((char: any) => {
             const charName = char.name || char.姓名 || '';
             if (charName) {
@@ -789,9 +937,9 @@ Please output the JSON object following the exact format specified in the system
           });
         }
         
-        // 方法5: 从新格式的 character_continuity 字段中提取角色名称（如果存在）
+        // Method 6: Extract from character_continuity field if exists (old format)
         if (characterNames.length === 0 && storyboardJson.character_continuity) {
-          // 尝试从 character_continuity 文本中提取角色名称
+          // Try to extract character names from character_continuity text
           characters.forEach((char: any) => {
             const charName = char.name || char.姓名 || '';
             if (charName && storyboardJson.character_continuity.includes(charName)) {
@@ -806,12 +954,22 @@ Please output the JSON object following the exact format specified in the system
       console.log("最终提取的角色名称:", characterNames);
       console.log("角色字符串:", charactersString);
       
-      // 为每个shot添加characters字段，并确保image_prompt和video_prompt都存在
-      // 新格式的shot可能包含 camera_description, character_actions, emotion, environment 等字段
+      // Add characters field to each shot, and ensure image_prompt and video_prompt exist
+      // New format shot may contain appearCharacters, previousShotContinuation, imageShot, videoShot, etc.
       storyboardJson.shots = storyboardJson.shots.map((shot: any) => {
+        // Priority: use appearCharacters from AI, then shot.characters, then extracted characters
+        let shotCharacters = "";
+        if (shot.appearCharacters && Array.isArray(shot.appearCharacters) && shot.appearCharacters.length > 0) {
+          shotCharacters = shot.appearCharacters.join(', ');
+        } else if (shot.characters && typeof shot.characters === 'string') {
+          shotCharacters = shot.characters;
+        } else {
+          shotCharacters = charactersString;
+        }
+        
         const updatedShot = {
           ...shot,
-          characters: shot.characters || charactersString, // 如果AI已经生成了characters字段，使用它；否则使用从场次提取的角色
+          characters: shotCharacters,
         };
         
         // 确保image_prompt存在（新格式应该已经包含）

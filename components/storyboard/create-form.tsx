@@ -30,7 +30,8 @@ interface Shot {
   mood?: string;
   narration: string;
   dialogue: string;
-  characters?: string; // 角色字段
+  characters?: string; // 角色字段（字符串，逗号分隔）
+  appearCharacters?: string[]; // 角色数组（从AI生成的分镜中提取）
   image_url?: string; // 分镜图片URL
   video_url?: string; // 视频URL
 }
@@ -98,21 +99,55 @@ export default function StoryboardCreateForm() {
     current: number;
     action: string;
   } | null>(null);
+  
+  // 角色列表（从anim_characters表查询，页面加载时查询一次）
+  const [charactersList, setCharactersList] = useState<Array<{
+    id: string;
+    name: string;
+    image_url: string | null;
+    image_generation_prompt: string | null;
+    resolution?: string | null;
+    visual_style?: string | null;
+    art_setting?: string | null;
+  }>>([]);
+
+  // Load characters from anim_characters table when projectId is available
+  const loadCharacters = async (projectId: string) => {
+    try {
+      const response = await fetch(`/api/storyboard/characters?projectId=${projectId}`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data?.characters) {
+          setCharactersList(result.data.characters);
+          console.log(`Loaded ${result.data.characters.length} characters from database`);
+        }
+      } else {
+        console.error("Failed to load characters:", response.statusText);
+        setCharactersList([]);
+      }
+    } catch (error) {
+      console.error("Error loading characters:", error);
+      setCharactersList([]);
+    }
+  };
 
   useEffect(() => {
-    // 从sessionStorage获取projectId
+    // Get projectId from sessionStorage
     if (typeof window !== 'undefined') {
       const pid = sessionStorage.getItem("storyboardProjectId");
       setProjectId(pid);
       
       if (pid) {
-        // 加载已保存的场次数据
+        // Load characters from anim_characters table (once on page load)
+        loadCharacters(pid);
+        
+        // Load saved scene data
         loadScenesFromDatabase(pid);
         
-        // 检查是否有故事大纲和分镜数据
+        // Check if story outline and storyboard data exist
         const checkData = async () => {
           try {
-            // 检查故事大纲
+            // Check story outline
             const projectResponse = await fetch(`/api/storyboard/projects/${pid}`);
             if (projectResponse.ok) {
               const projectResult = await projectResponse.json();
@@ -207,8 +242,18 @@ export default function StoryboardCreateForm() {
                 ...storyboardData,
                 shots: (storyboardData.shots || []).map((shot: any) => ({
                   ...shot,
-                  image_url: shot.image_url || null, // 确保image_url字段存在
-                  video_url: shot.video_url || null, // 确保video_url字段存在
+                  image_url: shot.image_url || null, // Ensure image_url field exists
+                  video_url: shot.video_url || null, // Ensure video_url field exists
+                  // Parse appearCharacters: if it's a string (comma-separated), convert to array; if it's already an array, use it
+                  appearCharacters: shot.appearCharacters 
+                    ? (Array.isArray(shot.appearCharacters) 
+                        ? shot.appearCharacters 
+                        : (typeof shot.appearCharacters === 'string' 
+                            ? shot.appearCharacters.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                            : []))
+                    : (shot.characters && typeof shot.characters === 'string'
+                        ? shot.characters.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                        : []),
                 })),
               };
             }
@@ -792,6 +837,8 @@ export default function StoryboardCreateForm() {
           shot_number: shot.shot_number,
           image_prompt: shot.image_prompt || "",
           characters: shot.characters || "",
+          appearCharacters: shot.appearCharacters || (shot.characters ? shot.characters.split(',').map((c: string) => c.trim()) : []),
+          charactersList: charactersList, // Pass cached characters list to avoid database query
         }),
       });
 

@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { scene_item_id, project_id, shot_number, image_prompt, characters } = body;
+    const { scene_item_id, project_id, shot_number, image_prompt, characters, appearCharacters, charactersList } = body;
 
     if (!project_id || !image_prompt) {
       return NextResponse.json(
@@ -101,171 +101,170 @@ export async function POST(request: NextRequest) {
     const artSetting = project?.art_setting || "16:9";
     const imageSize = convertAspectRatioToSize(artSetting);
 
-    // 2. 从 anim_story_outlines 获取角色列表
-    // 注意：RLS策略会自动确保用户只能访问自己的项目数据，不需要手动添加user_id条件
-    const { data: storyOutline, error: outlineError } = await supabase
-      .from('anim_story_outlines')
-      .select('characters')
-      .eq('project_id', project_id)
-      .maybeSingle(); // 使用 maybeSingle 而不是 single，避免找不到数据时报错
-
-    if (outlineError) {
-      console.error("Error fetching story outline:", outlineError);
-      return NextResponse.json(
-        { success: false, error: `Failed to fetch character data: ${outlineError.message}` },
-        { status: 500 }
-      );
-    }
-
-    if (!storyOutline) {
-      console.error("Story outline not found for project_id:", project_id);
-      return NextResponse.json(
-        { success: false, error: "Story outline not found. Please complete project settings first." },
-        { status: 404 }
-      );
-    }
-
-    // 3. 从 image_prompt 中提取角色名称
-    // 优先使用传入的 characters 参数，如果没有则从 image_prompt 中提取
+    // 2. Extract character names from appearCharacters, characters parameter, or image_prompt
+    // Priority: appearCharacters > characters parameter > extract from image_prompt
     let characterNames: string[] = [];
     
-    if (characters && characters.trim()) {
-      // 如果传入了 characters 参数，使用它
-      characterNames = characters.split(',').map((name: string) => name.trim()).filter((name: string) => name.length > 0);
+    // Priority 1: Use appearCharacters array if provided
+    if (appearCharacters && Array.isArray(appearCharacters) && appearCharacters.length > 0) {
+      characterNames = appearCharacters
+        .map((name: any) => {
+          if (typeof name === 'string') {
+            return name.trim();
+          } else if (name && typeof name === 'object') {
+            return (name.name || name.姓名 || '').trim();
+          }
+          return '';
+        })
+        .filter((name: string) => name.length > 0);
+      console.log("Using appearCharacters from shot:", characterNames);
     }
     
-    // 如果 characters 为空，从 image_prompt 中提取角色名称
-    if (characterNames.length === 0 && image_prompt && storyOutline.characters) {
-      // 获取数据库中所有角色的名称
-      const allCharacterNames = storyOutline.characters.map((c: any) => c.name).filter((name: string) => name) || [];
+    // Priority 2: Use characters parameter if appearCharacters is not available
+    if (characterNames.length === 0 && characters && characters.trim()) {
+      characterNames = characters.split(',').map((name: string) => name.trim()).filter((name: string) => name.length > 0);
+      console.log("Using characters parameter:", characterNames);
+    }
+    
+    // Priority 3: If both are empty, try to extract character names from image_prompt
+    if (characterNames.length === 0 && image_prompt) {
+      // First, get all characters from anim_characters table for this project
+      const { data: allCharacters, error: charsError } = await supabase
+        .from('anim_characters')
+        .select('name')
+        .eq('project_id', project_id)
+        .eq('user_id', user.id);
       
-      // 在 image_prompt 中查找匹配的角色名称（更精确的匹配）
-      const imagePromptLower = image_prompt.toLowerCase();
-      allCharacterNames.forEach((charName: string) => {
-        if (charName && charName.trim()) {
-          const charNameLower = charName.toLowerCase().trim();
-          // 检查角色名称是否在 image_prompt 中出现（支持部分匹配）
-          if (imagePromptLower.includes(charNameLower)) {
-            // 避免重复添加
-            if (!characterNames.some(name => name.toLowerCase() === charNameLower)) {
-              characterNames.push(charName); // 使用原始大小写的角色名
+      if (!charsError && allCharacters && allCharacters.length > 0) {
+        const allCharacterNames = allCharacters.map((c: any) => c.name).filter((name: string) => name) || [];
+        
+        // Check which character names appear in image_prompt
+        const imagePromptLower = image_prompt.toLowerCase();
+        allCharacterNames.forEach((charName: string) => {
+          if (charName && charName.trim()) {
+            const charNameLower = charName.toLowerCase().trim();
+            // Check if character name appears in image_prompt (supports partial matching)
+            if (imagePromptLower.includes(charNameLower)) {
+              // Avoid duplicates
+              if (!characterNames.some(name => name.toLowerCase() === charNameLower)) {
+                characterNames.push(charName); // Use original case character name
+              }
             }
           }
-        }
-      });
+        });
+        console.log("Extracted characters from image_prompt:", characterNames);
+      }
     }
 
-    // 4. 检查 image_prompt 中是否真的包含角色
+    // 3. Check if image_prompt contains characters
     const hasCharactersInPrompt = characterNames.length > 0;
 
-    // 5. 如果图片提示词中包含角色，匹配角色并获取对应的参考图和角色信息
-    // 确保每个角色对应的信息是准确的，不会混淆
-    const refImages: string[] = []; // 参考图数组（最多2张）
-    const allCharactersInfo: string[] = []; // 所有角色的提示词信息，格式：Character [角色名]: 信息
+    // 4. Build character prompts from charactersList (passed from frontend) or query from database
+    // Only append prompts for characters that exist and have image_generation_prompt
+    const refImages: string[] = []; // Reference images array (max 2)
+    const allCharactersInfo: string[] = []; // All character prompt info, format: Character [name]: image_generation_prompt
 
-    if (hasCharactersInPrompt && storyOutline.characters && Array.isArray(storyOutline.characters)) {
-      // 为每个在 image_prompt 中找到的角色，收集其对应的信息
-      characterNames.forEach((charName) => {
-        // 在数据库中查找匹配的角色（支持多种匹配方式）
-        const char = storyOutline.characters.find((c: any) => {
-          const dbName = (c.name || '').trim();
-          const searchName = charName.trim();
-          
-          // 精确匹配
-          if (dbName === searchName) return true;
-          
-          // 忽略大小写匹配
-          if (dbName.toLowerCase() === searchName.toLowerCase()) return true;
-          
-          // 忽略空格匹配
-          if (dbName.replace(/\s+/g, '') === searchName.replace(/\s+/g, '')) return true;
-          
-          // 包含匹配
-          if (dbName.toLowerCase().includes(searchName.toLowerCase()) || 
-              searchName.toLowerCase().includes(dbName.toLowerCase())) return true;
-          
-          return false;
-        });
-
-        if (char) {
-          // 收集参考图（最多2张，优先使用有图片的角色）
-          if (char.image_url && refImages.length < 2) {
-            refImages.push(char.image_url);
-          }
-          
-          // 构建该角色的信息字符串，明确标注角色名称
-          let charInfo = '';
-          
-          // 优先使用保存的图片生成提示词
-          if (char.image_generation_prompt && typeof char.image_generation_prompt === 'string' && char.image_generation_prompt.trim()) {
-            charInfo = `Character [${charName}]: ${char.image_generation_prompt}`;
-          } else {
-            // 如果没有保存的提示词，从外貌和衣着信息构建
-            const appearance = char.appearance || '';
-            const clothing_style = char.clothing_style || '';
-            
-            // 构建角色信息，明确标注角色名称
-            const infoParts: string[] = [];
-            
-            if (appearance) {
-              if (typeof appearance === 'object') {
-                infoParts.push(`Appearance: ${JSON.stringify(appearance)}`);
-              } else {
-                infoParts.push(`Appearance: ${appearance}`);
-              }
-            }
-            
-            if (clothing_style) {
-              if (typeof clothing_style === 'object') {
-                infoParts.push(`Clothing: ${JSON.stringify(clothing_style)}`);
-              } else {
-                infoParts.push(`Clothing: ${clothing_style}`);
-              }
-            }
-            
-            if (infoParts.length > 0) {
-              charInfo = `Character [${charName}]: ${infoParts.join(', ')}`;
-            } else {
-              // 如果没有任何信息，至少标注角色名称
-              charInfo = `Character [${charName}]`;
-            }
-          }
-          
-          if (charInfo) {
-            allCharactersInfo.push(charInfo);
-          }
-        }
-      });
+    if (hasCharactersInPrompt && characterNames.length > 0) {
+      let charactersData: any[] = [];
       
-      console.log("=== 角色匹配结果 ===");
-      console.log("image_prompt:", image_prompt);
-      console.log("找到的角色:", characterNames);
-      console.log("匹配到的角色数量:", allCharactersInfo.length);
-      console.log("参考图数量:", refImages.length);
+      // Priority: Use charactersList from frontend if provided (avoid database query)
+      if (charactersList && Array.isArray(charactersList) && charactersList.length > 0) {
+        console.log("Using charactersList from frontend (cached), count:", charactersList.length);
+        // Filter charactersList to only include requested character names
+        charactersData = charactersList.filter((char: any) => {
+          const charName = char.name?.trim();
+          if (!charName) return false;
+          return characterNames.some((reqName: string) => 
+            reqName.trim().toLowerCase() === charName.toLowerCase()
+          );
+        });
+        console.log("Filtered characters from frontend list:", charactersData.length);
+      } else {
+        // Fallback: Query from database if charactersList not provided
+        console.log("charactersList not provided, querying from database...");
+        const { data: dbCharacters, error: charactersError } = await supabase
+          .from('anim_characters')
+          .select('name, image_url, image_generation_prompt')
+          .eq('project_id', project_id)
+          .eq('user_id', user.id)
+          .in('name', characterNames);
+        
+        if (charactersError) {
+          console.error("Error fetching characters from anim_characters:", charactersError);
+        } else if (dbCharacters) {
+          charactersData = dbCharacters;
+        }
+      }
+      
+      if (charactersData.length > 0) {
+        // Create a map of found characters for quick lookup
+        const foundCharactersMap = new Map<string, any>();
+        charactersData.forEach((char: any) => {
+          const charName = char.name?.trim();
+          if (charName) {
+            foundCharactersMap.set(charName.toLowerCase(), char);
+          }
+        });
+        
+        // Process each character name from appearCharacters/characters parameter
+        // Only append if character exists AND has image_generation_prompt
+        characterNames.forEach((charName: string) => {
+          const charNameLower = charName.trim().toLowerCase();
+          const char = foundCharactersMap.get(charNameLower);
+          
+          if (char) {
+            // Character found
+            // Collect reference images (max 2, prioritize characters with images)
+            if (char.image_url && refImages.length < 2) {
+              refImages.push(char.image_url);
+            }
+            
+            // Only append prompt if image_generation_prompt exists
+            if (char.image_generation_prompt && typeof char.image_generation_prompt === 'string' && char.image_generation_prompt.trim()) {
+              const charInfo = `Character [${char.name.trim()}]: ${char.image_generation_prompt.trim()}`;
+              allCharactersInfo.push(charInfo);
+              console.log(`✓ Character "${char.name}" found, prompt appended`);
+            } else {
+              console.log(`⚠ Character "${char.name}" found but no image_generation_prompt, skipping`);
+            }
+          } else {
+            // Character not found, skip
+            console.log(`✗ Character "${charName}" not found, skipping`);
+          }
+        });
+      } else {
+        console.log("No characters found for the given names");
+      }
+      
+      console.log("=== Character Matching Results ===");
+      console.log("Requested characters:", characterNames);
+      console.log("Characters found:", charactersData.length);
+      console.log("Characters with prompts appended:", allCharactersInfo.length);
+      console.log("Reference images count:", refImages.length);
       allCharactersInfo.forEach((info, index) => {
-        console.log(`角色 ${index + 1} 信息:`, info);
+        console.log(`Character ${index + 1} prompt:`, info);
       });
     }
 
-    // 6. 构建增强的提示词
-    // 如果有角色信息，将角色信息添加到提示词中，明确每个角色对应的信息
+    // 5. Build enhanced prompt
+    // If there are character prompts, append them to the image prompt
     let enhancedPrompt = image_prompt;
     
     if (hasCharactersInPrompt && allCharactersInfo.length > 0) {
-      // 将角色信息添加到提示词中，每个角色的信息用分号分隔
+      // Append character information to the prompt, separated by semicolons
       const charactersInfo = allCharactersInfo.join('; ');
-      enhancedPrompt = `${image_prompt}. Character details: ${charactersInfo}`;
+      enhancedPrompt = `${image_prompt}. ${charactersInfo}`;
     }
 
-    // 8. 如果有参考图，处理预签名URL；如果没有参考图，使用文生图API（不提交角色信息）
+    // 6. Process reference images (presigned URLs if needed)
     const finalRefImages: string[] = [];
     
     if (refImages.length > 0) {
-      // 如果参考图是TOS URL，可能需要生成预签名URL
+      // If reference image is TOS URL, may need to generate presigned URL
       for (const refImage of refImages) {
         if (refImage && (refImage.includes('tos-') || refImage.includes('.volces.com'))) {
           try {
-            // 生成预签名URL，确保API可以访问
+            // Generate presigned URL to ensure API can access
             const presignedResponse = await fetch(
               `${request.nextUrl.origin}/api/scenes/presigned-image-url?imageUrl=${encodeURIComponent(refImage)}`
             );
@@ -281,7 +280,7 @@ export async function POST(request: NextRequest) {
             }
           } catch (error) {
             console.error("Error generating presigned URL:", error);
-            // 如果失败，继续使用原始URL
+            // If failed, continue using original URL
             finalRefImages.push(refImage);
           }
         } else {
@@ -290,23 +289,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 9. 根据是否有参考图选择API，使用计算出的图片尺寸
+    // 7. Choose API based on whether reference images exist, use calculated image size
     let taskId: string;
     let requestId: string;
     
     if (finalRefImages.length > 0) {
-      // 有参考图，使用图生图API
+      // Has reference images, use image-to-image API
       const result = await wanXImageClient.submitImageToImageTask({
         prompt: enhancedPrompt,
-        images: finalRefImages, // 参考图数组（最多2张）
-        n: 4, // 生成4张图片供选择
-        size: imageSize, // 使用根据比例计算出的尺寸
+        images: finalRefImages, // Reference images array (max 2)
+        n: 4, // Generate 4 images for selection
+        size: imageSize, // Use calculated size based on aspect ratio
       });
       taskId = result.taskId;
       requestId = result.requestId;
 
-      // 只打印最终提交的参数
-      console.log("=== 最终提交的参数（图生图） ===");
+      // Log final submitted parameters
+      console.log("=== Final Submitted Parameters (Image-to-Image) ===");
       console.log(JSON.stringify({
         model: "wan2.5-i2i-preview",
         prompt: enhancedPrompt,
@@ -317,17 +316,17 @@ export async function POST(request: NextRequest) {
         requestId,
       }, null, 2));
     } else {
-      // 没有参考图，使用文生图API
+      // No reference images, use text-to-image API
       const result = await wanXImageClient.submitImageTask({
         prompt: enhancedPrompt,
-        n: 4, // 生成4张图片供选择
-        size: imageSize, // 使用根据比例计算出的尺寸
+        n: 4, // Generate 4 images for selection
+        size: imageSize, // Use calculated size based on aspect ratio
       });
       taskId = result.taskId;
       requestId = result.requestId;
 
-      // 只打印最终提交的参数
-      console.log("=== 最终提交的参数（文生图） ===");
+      // Log final submitted parameters
+      console.log("=== Final Submitted Parameters (Text-to-Image) ===");
       console.log(JSON.stringify({
         model: "wan2.5-t2i-preview",
         prompt: enhancedPrompt,
