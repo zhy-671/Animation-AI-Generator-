@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { useToast } from "@/components/ui/toast-notification";
+import { Diamond } from "lucide-react";
 
 interface StoryboardNavProps {
   currentProjectId?: string | null;
@@ -54,13 +55,15 @@ export default function StoryboardNav({
               </button>
               <button
                 onClick={() => {
-                  if (projectId && statusScript) {
-                    router.push(`/storyboard/project/${projectId}/create`);
-                  } else if (!projectId) {
+                  if (!projectId) {
                     showWarning("Please complete story creation first");
-                  } else {
-                    showWarning("Please complete the story script step first");
+                    return;
                   }
+                  if (!statusScript) {
+                    showWarning("Please complete the story script step first");
+                    return;
+                  }
+                  router.push(`/storyboard/project/${projectId}/create`);
                 }}
                 className={getButtonClass("settings")}
                 disabled={!projectId || !statusScript}
@@ -68,57 +71,24 @@ export default function StoryboardNav({
                 Settings
               </button>
               <button
-                onClick={async () => {
+                onClick={() => {
                   if (!projectId) {
                     showWarning("Please complete story creation first");
                     return;
                   }
-                  
-                  // 检查分镜数据是否存在
-                  try {
-                    const response = await fetch(`/api/scenes?projectId=${projectId}`);
-                    if (response.ok) {
-                      const result = await response.json();
-                      if (result.success && result.data?.items) {
-                        // 检查是否有分镜数据
-                        let hasStoryboard = false;
-                        for (const item of result.data.items) {
-                          if (item.metadata?.storyboard?.shots && item.metadata.storyboard.shots.length > 0) {
-                            hasStoryboard = true;
-                            break;
-                          }
-                        }
-                        
-                        // 如果有分镜数据，或者状态允许，则允许访问
-                        if (hasStoryboard || (statusScript && statusSettings)) {
-                          router.push(`/storyboard/create`);
-                          return;
-                        }
-                      }
-                    }
-                    
-                    // 如果没有分镜数据，检查状态
-                    if (!statusScript) {
-                      showWarning("Please complete the story script step first");
-                    } else if (!statusSettings) {
-                      showWarning("Please complete project settings first");
-                    } else {
-                      router.push(`/storyboard/create`);
-                    }
-                  } catch (error) {
-                    console.error("Error checking storyboard data:", error);
-                    // 如果检查失败，根据状态决定是否允许访问
-                    if (statusScript && statusSettings) {
-                      router.push(`/storyboard/create`);
-                    } else if (!statusScript) {
-                      showWarning("Please complete the story script step first");
-                    } else {
-                      showWarning("Please complete project settings first");
-                    }
+                  if (!statusScript) {
+                    showWarning("Please complete the story script step first");
+                    return;
                   }
+                  if (!statusSettings) {
+                    showWarning("Please complete project settings first");
+                    return;
+                  }
+                  
+                  router.push(`/storyboard/create`);
                 }}
                 className={getButtonClass("storyboard")}
-                disabled={!projectId}
+                disabled={!projectId || !statusScript || !statusSettings}
               >
                 Storyboard
               </button>
@@ -129,48 +99,25 @@ export default function StoryboardNav({
                     return;
                   }
                   
-                  // Check if project has videos
-                  try {
-                    const response = await fetch(`/api/scenes?projectId=${projectId}`);
-                    if (response.ok) {
-                      const result = await response.json();
-                      if (result.success && result.data?.items) {
-                        // Check if there are videos
-                        let hasVideo = false;
-                        for (const item of result.data.items) {
-                          // Check videos in storyboard shots
-                          if (item.metadata?.storyboard?.shots) {
-                            const hasShotVideo = item.metadata.storyboard.shots.some((shot: any) => shot.video_url);
-                            if (hasShotVideo) {
-                              hasVideo = true;
-                              break;
-                            }
-                          }
-                          // Check scene videos
-                          if (item.video_url) {
-                            hasVideo = true;
-                            break;
-                          }
-                        }
-                        
-                        if (hasVideo) {
-                          router.push(`/storyboard/video?projectId=${projectId}`);
-                        } else {
-                          showWarning("Please generate storyboard videos first");
-                        }
-                      } else {
-                        showWarning("Please generate storyboard videos first");
-                      }
-                    } else {
-                      showWarning("Please generate storyboard videos first");
-                    }
-                  } catch (error) {
-                    console.error("Error checking videos:", error);
-                    showWarning("Failed to check videos. Please try again later");
+                  // Check if all previous steps are completed
+                  if (!statusScript) {
+                    showWarning("Please complete the story script step first");
+                    return;
                   }
+                  if (!statusSettings) {
+                    showWarning("Please complete project settings first");
+                    return;
+                  }
+                  if (!statusStoryboard) {
+                    showWarning("Please complete the storyboard step first");
+                    return;
+                  }
+                  
+                  // Navigate to video page
+                  router.push(`/storyboard/video?projectId=${projectId}`);
                 }}
                 className={getButtonClass("video")}
-                disabled={!projectId}
+                disabled={!projectId || !statusScript || !statusSettings || !statusStoryboard}
               >
                 Create Video
               </button>

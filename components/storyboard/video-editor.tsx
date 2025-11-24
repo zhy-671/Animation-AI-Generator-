@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
 import { 
@@ -25,7 +25,8 @@ import {
   Film,
   CheckCircle2,
   ZoomIn,
-  ZoomOut
+  ZoomOut,
+  Diamond
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,7 +44,7 @@ import { useToast } from "@/components/ui/toast-notification";
 import EnhancedVideoPlayer from "./enhanced-video-player";
 import CanvasVideoPlayer, { CanvasVideoPlayerRef } from "./canvas-video-player";
 import { getUserSubscriptionPlan } from "@/lib/subscription/client";
-import { isCompleteVideoExportAllowed, type SubscriptionPlan } from "@/lib/subscription/rules";
+import { isCompleteVideoExportAllowed, calculateVideoCredits, type SubscriptionPlan } from "@/lib/subscription/rules";
 import { ExportDialog } from "./export-dialog";
 
 interface Shot {
@@ -110,6 +111,49 @@ interface VoiceoverTrack {
   voiceovers: Voiceover[];
 }
 
+const wrapTextWithContext = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines = 2
+) => {
+  const sanitized = text?.trim();
+  if (!sanitized) {
+    return [];
+  }
+
+  const hasSpaces = /\s/.test(sanitized);
+  const units = hasSpaces ? sanitized.split(/\s+/) : sanitized.split("");
+  const separator = hasSpaces ? " " : "";
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (let i = 0; i < units.length; i += 1) {
+    const unit = units[i];
+    const testLine = currentLine ? `${currentLine}${separator}${unit}` : unit;
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = unit;
+
+      if (lines.length === maxLines - 1) {
+        const remaining = units.slice(i + 1).join(separator);
+        currentLine = remaining ? `${currentLine}${separator}${remaining}` : currentLine;
+        break;
+      }
+    } else {
+      currentLine = testLine;
+    }
+  }
+
+  if (currentLine) {
+    lines.push(currentLine);
+  }
+
+  return lines.slice(0, maxLines);
+};
+
 export default function VideoEditor() {
   const router = useRouter();
   const { showError, showSuccess, showInfo, showWarning } = useToast();
@@ -139,11 +183,24 @@ export default function VideoEditor() {
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
   const [showSubtitles, setShowSubtitles] = useState(true); // Subtitle display toggle
-  const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null); // Video aspect ratio
-  const [containerWidth, setContainerWidth] = useState<number>(0);
+  const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [videoContainerSize, setVideoContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const canvasPlayerRef = useRef<CanvasVideoPlayerRef>(null);
   const [useCanvasPlayer, setUseCanvasPlayer] = useState(true); // Use canvas player for dual video + subtitle rendering
+  const measurementCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const getMeasurementContext = useCallback((): CanvasRenderingContext2D | null => {
+    if (!measurementCanvasRef.current) {
+      measurementCanvasRef.current = document.createElement("canvas");
+    }
+    return measurementCanvasRef.current.getContext("2d");
+  }, []);
+  const [subtitlePreviewLayout, setSubtitlePreviewLayout] = useState<{
+    lines: string[];
+    fontSize: number;
+    lineHeight: number;
+    maxWidth: number;
+  } | null>(null);
   
   // Tab state: "subtitles" | "voiceover" | "scenes"
   const [activeTab, setActiveTab] = useState<"subtitles" | "voiceover" | "scenes">("scenes");
@@ -154,6 +211,14 @@ export default function VideoEditor() {
   
   // Subscription plan state
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
+  
+  // Project step status state
+  const [projectStepStatus, setProjectStepStatus] = useState<{
+    step_script: boolean;
+    step_settings: boolean;
+    step_storyboard: boolean;
+    step_video: boolean;
+  } | null>(null);
   
   // Timeline state
   const [timelineZoom, setTimelineZoom] = useState(1); // Zoom level for timeline
@@ -199,11 +264,11 @@ export default function VideoEditor() {
   };
   
   // Calculate if horizontal scroll is needed
-  // 大于110%则添加水平滚动条，小于等于100%则取消滚动条
+  // Add horizontal scrollbar if zoom is greater than 110%, remove if 100% or less
   const needsHorizontalScroll = timelineZoom > 1.1; // 110% = 1.1
   
   // Subtitle editing panel state
-  const [subtitleType, setSubtitleType] = useState<"narration" | "character">("narration");
+  const [subtitleType, setSubtitleType] = useState<"narration" | "character">("character");
   const [subtitleContent, setSubtitleContent] = useState<string>("");
   const [editingSubtitleId, setEditingSubtitleId] = useState<string | null>(null);
   
@@ -212,8 +277,8 @@ export default function VideoEditor() {
   const [isRegenerating, setIsRegenerating] = useState(false);
   
   // Video generation settings
-  const [videoQuality, setVideoQuality] = useState<"512P" | "768P" | "1080P">("768P");
-  const [videoDuration, setVideoDuration] = useState<5 | 10>(5);
+  const [videoQuality, setVideoQuality] = useState<"480P" | "720P" | "1080P">("720P");
+  const [videoDuration, setVideoDuration] = useState<10 | 15>(10);
   
   // Editable video description
   const [editingVideoDescription, setEditingVideoDescription] = useState<string>("");
@@ -237,14 +302,17 @@ export default function VideoEditor() {
 
   // Listen for container width changes, recalculate video height
   useEffect(() => {
-    const updateContainerWidth = () => {
+    const updateContainerSize = () => {
       if (videoContainerRef.current) {
-        setContainerWidth(videoContainerRef.current.offsetWidth);
+        setVideoContainerSize({
+          width: videoContainerRef.current.offsetWidth,
+          height: videoContainerRef.current.offsetHeight,
+        });
       }
     };
 
-    updateContainerWidth();
-    const resizeObserver = new ResizeObserver(updateContainerWidth);
+    updateContainerSize();
+    const resizeObserver = new ResizeObserver(updateContainerSize);
     if (videoContainerRef.current) {
       resizeObserver.observe(videoContainerRef.current);
     }
@@ -253,6 +321,63 @@ export default function VideoEditor() {
       resizeObserver.disconnect();
     };
   }, []);
+
+  const activeSubtitle = useMemo(() => {
+    return subtitleTrack.subtitles.find(
+      (subtitle) => currentTime >= subtitle.startTime && currentTime < subtitle.endTime
+    );
+  }, [subtitleTrack.subtitles, currentTime]);
+
+  useEffect(() => {
+    if (!showSubtitles) {
+      setSubtitlePreviewLayout(null);
+      return;
+    }
+
+    if (!activeSubtitle?.text) {
+      setSubtitlePreviewLayout(null);
+      return;
+    }
+
+    const ctx = getMeasurementContext();
+    if (!ctx) {
+      return;
+    }
+
+    const { width: containerWidth, height: containerHeight } = videoContainerSize;
+    if (!containerWidth || !containerHeight) {
+      return;
+    }
+
+    const aspectRatio =
+      videoDimensions?.width && videoDimensions.height
+        ? videoDimensions.width / videoDimensions.height
+        : containerWidth && containerHeight
+          ? containerWidth / containerHeight
+          : 16 / 9;
+
+    const isPortrait = aspectRatio < 1;
+    const effectiveWidth = containerWidth;
+    const maxWidth = effectiveWidth * (isPortrait ? 0.88 : 0.72);
+    const scaleDimension = Math.min(effectiveWidth, effectiveWidth / aspectRatio || containerHeight || effectiveWidth);
+    let fontSize = Math.max(Math.min(scaleDimension * (isPortrait ? 0.032 : 0.028), 26), 14);
+
+    ctx.font = `600 ${fontSize}px "Noto Sans", "Microsoft YaHei", "Arial", sans-serif`;
+    let lines = wrapTextWithContext(ctx, activeSubtitle.text, maxWidth, 2);
+
+    while (lines.length > 2 && fontSize > 12) {
+      fontSize -= 1;
+      ctx.font = `600 ${fontSize}px "Noto Sans", "Microsoft YaHei", "Arial", sans-serif`;
+      lines = wrapTextWithContext(ctx, activeSubtitle.text, maxWidth, 2);
+    }
+
+    setSubtitlePreviewLayout({
+      lines,
+      fontSize,
+      lineHeight: fontSize * 1.25,
+      maxWidth,
+    });
+  }, [showSubtitles, getMeasurementContext, videoContainerSize, videoDimensions, activeSubtitle]);
 
   // Load subscription plan
   useEffect(() => {
@@ -263,7 +388,6 @@ export default function VideoEditor() {
           setSubscriptionPlan(planData.plan);
         }
       } catch (error) {
-        console.error("Error loading subscription plan:", error);
       }
     };
     
@@ -278,12 +402,60 @@ export default function VideoEditor() {
     }
 
     loadProjectData();
+    loadProjectStepStatus();
     
     // Load videos only once using safe pattern
     if (!videosLoaded) {
       loadVideos();
     }
   }, [projectId, videosLoaded]);
+
+  // Load project step status (only query once on page load)
+  const loadProjectStepStatus = async () => {
+    if (!projectId) return;
+    
+    try {
+      const response = await fetch(`/api/storyboard/project-step-status?projectId=${projectId}`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          setProjectStepStatus(result.data);
+        } else {
+          // If query fails, default all steps to incomplete
+          setProjectStepStatus({
+            step_script: false,
+            step_settings: false,
+            step_storyboard: false,
+            step_video: false,
+          });
+        }
+      } else {
+        // Query failed, default all steps to incomplete
+        setProjectStepStatus({
+          step_script: false,
+          step_settings: false,
+          step_storyboard: false,
+          step_video: false,
+        });
+      }
+    } catch (error) {
+      // Query failed, default all steps to incomplete
+      setProjectStepStatus({
+        step_script: false,
+        step_settings: false,
+        step_storyboard: false,
+        step_video: false,
+      });
+    }
+  };
+
+  // Check if all previous steps are completed (script, settings, storyboard)
+  const arePreviousStepsCompleted = (): boolean => {
+    if (!projectStepStatus) return false;
+    return projectStepStatus.step_script && 
+           projectStepStatus.step_settings && 
+           projectStepStatus.step_storyboard;
+  };
 
 
   const loadProjectData = async () => {
@@ -302,7 +474,6 @@ export default function VideoEditor() {
         }
       }
     } catch (error) {
-      console.error("Error loading project:", error);
     }
   };
 
@@ -334,10 +505,6 @@ export default function VideoEditor() {
                 // Process each shot safely - use for...of loop for better error handling
                 for (const shot of shots) {
                   if (!shot?.video_url) {
-                    console.warn("Shot has no video_url:", {
-                      shot_number: shot.shot_number,
-                      shot: shot
-                    });
                     continue; // Skip shots without video_url to prevent crashes
                   }
                   
@@ -387,36 +554,20 @@ export default function VideoEditor() {
             // Initialize video playback
             clipsArrayRef.current = videoClips;
             
-            // Log video URLs for debugging
-            console.log('Video clips loaded:', videoClips.map(c => ({ id: c.id, url: c.url, hasUrl: !!c.url })));
-            
             // Check if any clips have valid URLs
             const clipsWithUrls = videoClips.filter(c => c.url && c.url.trim() !== '');
-            console.log(`Total clips: ${videoClips.length}, Clips with URLs: ${clipsWithUrls.length}`);
             
             if (clipsWithUrls.length === 0) {
-              console.warn('No video clips with valid URLs found!');
-              console.log('All clips:', videoClips);
             } else {
               // Videos loaded successfully
             }
             
-            // Extract subtitle information from storyboard data
+            // Extract subtitle information from storyboard data (only dialogue, not narration)
             const subtitles: Subtitle[] = [];
             let subtitleTime = 0;
             videoClips.forEach((clip) => {
               if (clip.shotData) {
-                // If there is narration, add to subtitle track
-                if (clip.shotData.narration && clip.shotData.narration.trim()) {
-                  subtitles.push({
-                    id: `subtitle-${clip.id}-narration`,
-                    text: clip.shotData.narration,
-                    startTime: subtitleTime,
-                    endTime: subtitleTime + clip.duration,
-                    type: "narration"
-                  });
-                }
-                // If there is dialogue, add to subtitle track
+                // Only add dialogue to subtitle track, skip narration
                 if (clip.shotData.dialogue && clip.shotData.dialogue.trim()) {
                   subtitles.push({
                     id: `subtitle-${clip.id}-dialogue`,
@@ -446,7 +597,6 @@ export default function VideoEditor() {
         }
       }
     } catch (error) {
-      console.error("Error loading videos:", error);
     } finally {
       setIsLoading(false);
     }
@@ -665,7 +815,7 @@ export default function VideoEditor() {
         
         newClips.splice(clipIndex, 1, firstPart, secondPart);
         
-        // 重新计算后续片段的时间
+        // Recalculate timing for subsequent clips
         let currentTime = secondPart.startTime + secondPart.duration;
         for (let i = clipIndex + 2; i < newClips.length; i++) {
           newClips[i].startTime = currentTime;
@@ -688,7 +838,7 @@ export default function VideoEditor() {
         const clip = track.clips[clipIndex];
         const newClips = track.clips.filter(c => c.id !== clipId);
         
-        // 重新计算后续片段的时间
+        // Recalculate timing for subsequent clips
         let currentTime = clip.startTime;
         for (let i = clipIndex; i < newClips.length; i++) {
           newClips[i].startTime = currentTime;
@@ -713,7 +863,7 @@ export default function VideoEditor() {
         const newClips = [...track.clips];
         newClips[clipIndex] = { ...clip, startTime: newStartTime };
         
-        // 重新排序并重新计算时间
+        // Re-sort and recalculate timing
         newClips.sort((a, b) => a.startTime - b.startTime);
         let currentTime = 0;
         newClips.forEach(c => {
@@ -728,7 +878,7 @@ export default function VideoEditor() {
     });
   };
 
-  // 获取当前播放的视频片段
+  // Get the currently playing video clip
   const getCurrentVideoClip = (time?: number): VideoClip | null => {
     const checkTime = time !== undefined ? time : currentTime;
     for (const track of tracks) {
@@ -747,20 +897,13 @@ export default function VideoEditor() {
   const switchToNextVideo = () => {
     const clips = clipsArrayRef.current;
     if (!clips || clips.length === 0) {
-      console.log('⚠️ No clips available for switching');
       return;
     }
     
     const currentIndex = currentClipIndexRef.current;
-    console.log('🔄 switchToNextVideo called:', {
-      currentIndex,
-      totalClips: clips.length,
-      currentClipId: clips[currentIndex]?.id
-    });
     
     if (currentIndex >= clips.length - 1) {
       // All videos finished, reset to first
-      console.log('✅ All videos finished, resetting to first');
       setIsPlaying(false);
       currentClipIndexRef.current = 0;
       setCurrentTime(0);
@@ -775,13 +918,6 @@ export default function VideoEditor() {
     const nextIndex = currentIndex + 1;
     const nextClip = clips[nextIndex];
     
-    console.log('➡️ Switching to next video:', {
-      nextIndex,
-      nextClipId: nextClip?.id,
-      nextClipUrl: nextClip?.url?.substring(0, 50) + '...',
-      nextClipStartTime: nextClip?.startTime
-    });
-    
     if (nextClip && nextClip.url) {
       // Update index first
       currentClipIndexRef.current = nextIndex;
@@ -793,12 +929,6 @@ export default function VideoEditor() {
       // Update selected clip ID to trigger video switch (for react-player)
       // This will cause EnhancedVideoPlayer to re-render with new URL via key prop
       setSelectedClipId(nextClip.id);
-      
-      console.log('✅ Updated to next clip:', {
-        selectedClipId: nextClip.id,
-        playheadPosition: nextClip.startTime,
-        isPlaying
-      });
       
       // For native video element (fallback)
       if (videoRef.current && playerType !== "react-player") {
@@ -828,14 +958,11 @@ export default function VideoEditor() {
         if (isPlaying && videoRef.current) {
           videoRef.current.play().catch((err) => {
             if (err.name !== "AbortError" && err.name !== "NotAllowedError") {
-              console.error("Error playing video:", err);
           setIsPlaying(false);
             }
         });
       }
       }
-    } else {
-      console.warn('⚠️ Next clip is invalid:', nextClip);
     }
   };
 
@@ -854,7 +981,7 @@ export default function VideoEditor() {
       }
     }
     
-    // 如果没有选中，使用第一个视频片段
+    // If no clip is selected, use the first video clip
     if (!targetClip && tracks.length > 0 && tracks[0].clips.length > 0) {
       targetClip = tracks[0].clips[0];
     }
@@ -862,7 +989,7 @@ export default function VideoEditor() {
     return targetClip?.shotData || null;
   };
   
-  // 获取当前选中的视频片段（如果没有选中，返回第一个）
+  // Get the currently selected video clip (returns first clip if none selected)
   const getCurrentSelectedClip = (): VideoClip | null => {
     if (selectedClipId) {
       for (const track of tracks) {
@@ -871,7 +998,7 @@ export default function VideoEditor() {
       }
     }
     
-    // 如果没有选中，使用第一个视频片段
+    // If no clip is selected, use the first video clip
     if (tracks.length > 0 && tracks[0].clips.length > 0) {
       return tracks[0].clips[0];
     }
@@ -903,32 +1030,47 @@ export default function VideoEditor() {
     
     setIsRegenerating(true);
     try {
-      // Use edited description if available, otherwise use original
-      const videoDescription = editingVideoDescription.trim() || 
-        selectedClip.shotData?.video_prompt || 
-        selectedClip.shotData?.image_prompt || 
-        selectedClip.shotData?.description || "";
+      // Use the description from the input field directly (what user sees is what gets submitted)
+      const videoDescription = editingVideoDescription.trim();
       
-      if (!videoDescription.trim()) {
+      if (!videoDescription) {
         showWarning("Please enter a video description");
         setIsRegenerating(false);
         return;
       }
       
-      // Call video generation API
-      const response = await fetch("/api/video/generate", {
+      // 使用Sora API生成视频
+      // 根据分辨率选择模型
+      const selectedModel = videoDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
+      
+      // 根据分辨率设置size
+      const resolutionMap: Record<string, string> = {
+        "480P": "1280x704",
+        "720P": "1280x704",
+        "1080P": "1920x1080",
+      };
+      const size = resolutionMap[videoQuality] || "1280x704";
+      
+      // 获取图片URL
+      const imageUrl = selectedClip.shotData?.image_url;
+      if (!imageUrl) {
+        showError("Image URL is required for video generation");
+        setIsRegenerating(false);
+        return;
+      }
+      
+      // Call Sora video generation API
+      const response = await fetch("/api/video/generate-sora-video2", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          scene_item_id: selectedClip.sceneItemId,
-          project_id: projectId,
-          shot_number: selectedClip.shotNumber,
-          image_prompt: selectedClip.shotData?.image_prompt || "",
           prompt: videoDescription,
-          resolution: videoQuality,
-          duration: videoDuration,
+          imageUrl: imageUrl,
+          size: size,
+          seconds: videoDuration,
+          model: selectedModel,
         }),
       });
       
@@ -945,7 +1087,6 @@ export default function VideoEditor() {
         showError("Video generation request failed");
       }
     } catch (error) {
-      console.error("Error regenerating video:", error);
       showError("Video generation error occurred");
     } finally {
       setIsRegenerating(false);
@@ -959,19 +1100,20 @@ export default function VideoEditor() {
     
     const poll = async () => {
       try {
-        const response = await fetch(`/api/video/status?taskId=${taskId}`);
+        const response = await fetch(`/api/video/status-sora-video2?taskId=${taskId}`);
         if (response.ok) {
           const result = await response.json();
           if (result.success) {
-            if (result.data.status === "SUCCEEDED" && result.data.videoUrl) {
-              // Upload video to TOS
-              const uploadResponse = await fetch("/api/video/upload", {
+            // Sora API返回的状态可能是 "completed" 或其他值，url字段包含视频URL
+            if ((result.data.status === "completed" || result.data.status === "SUCCEEDED") && result.data.url) {
+              // 使用Sora API的下载接口上传到TOS
+              const uploadResponse = await fetch("/api/video/download-sora-video2", {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  videoUrl: result.data.videoUrl,
+                  taskId: taskId,
                   projectId: projectId,
                   sceneItemId: clip.sceneItemId,
                   shotNumber: clip.shotNumber,
@@ -1021,6 +1163,50 @@ export default function VideoEditor() {
                       url: newVideoUrl,
                       thumbnail: uploadResult.data?.thumbnailUrl || currentPlayingClipRef.current.thumbnail,
                     };
+                  }
+                  
+                  // Check if there's at least one video, then update step_video and step_storyboard
+                  // Reload scene data to check for videos
+                  if (projectId) {
+                    const checkVideosResponse = await fetch(`/api/scenes?projectId=${projectId}`);
+                    if (checkVideosResponse.ok) {
+                      const checkVideosResult = await checkVideosResponse.json();
+                      if (checkVideosResult.success && checkVideosResult.data?.items) {
+                        const hasVideo = checkVideosResult.data.items.some((item: any) => 
+                          item.metadata?.storyboard?.shots?.some((shot: any) => 
+                            shot.video_url && shot.video_url.trim() !== ''
+                          )
+                        );
+                        
+                        if (hasVideo) {
+                          const statusResponse = await fetch('/api/storyboard/project-step-status', {
+                            method: 'PATCH',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              project_id: projectId,
+                              step_video: true,
+                              step_storyboard: true,
+                            }),
+                          });
+
+                          if (statusResponse.ok) {
+                            const statusResult = await statusResponse.json();
+                            if (statusResult.success && statusResult.data) {
+                              setStatusVideo(statusResult.data.step_video || false);
+                              setStatusStoryboard(statusResult.data.step_storyboard || false);
+                              // Update projectStepStatus cache
+                              setProjectStepStatus(prev => prev ? {
+                                ...prev,
+                                step_video: statusResult.data.step_video || false,
+                                step_storyboard: statusResult.data.step_storyboard || false,
+                              } : null);
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                   
                   // Update sceneData to reflect the new video URL
@@ -1079,7 +1265,6 @@ export default function VideoEditor() {
               showWarning("Video generation timed out. Please check later");
         }
       } catch (error) {
-        console.error("Error polling video status:", error);
         attempts++;
         if (attempts < maxAttempts) {
           setTimeout(poll, 15000);
@@ -1189,21 +1374,10 @@ export default function VideoEditor() {
 
       showSuccess("Video description saved successfully");
     } catch (error) {
-      console.error("Error saving video description:", error);
       showError("Failed to save video description");
     } finally {
       setIsSavingDescription(false);
     }
-  };
-
-  // Get current subtitle (based on playback time)
-  const getCurrentSubtitle = (): Subtitle | null => {
-    for (const subtitle of subtitleTrack.subtitles) {
-      if (currentTime >= subtitle.startTime && currentTime < subtitle.endTime) {
-        return subtitle;
-      }
-    }
-    return null;
   };
 
   // Add subtitle
@@ -1280,8 +1454,6 @@ export default function VideoEditor() {
     );
   }
 
-  const currentSubtitle = getCurrentSubtitle();
-
   return (
     <div className="h-screen bg-black text-white flex flex-col overflow-hidden">
       <Header />
@@ -1291,10 +1463,10 @@ export default function VideoEditor() {
         <StoryboardNav
           currentProjectId={projectId}
           sessionProjectId={projectId}
-          statusScript={statusScript}
-          statusSettings={statusSettings}
-          statusStoryboard={statusStoryboard}
-          statusVideo={statusVideo}
+          statusScript={projectStepStatus?.step_script || statusScript}
+          statusSettings={projectStepStatus?.step_settings || statusSettings}
+          statusStoryboard={projectStepStatus?.step_storyboard || statusStoryboard}
+          statusVideo={projectStepStatus?.step_video || statusVideo}
           currentPage="video"
         />
       </div>
@@ -1352,23 +1524,23 @@ export default function VideoEditor() {
                   <input
                     type="radio"
                     name="videoQuality"
-                    value="512P"
-                    checked={videoQuality === "512P"}
-                    onChange={() => setVideoQuality("512P")}
+                    value="480P"
+                    checked={videoQuality === "480P"}
+                    onChange={() => setVideoQuality("480P")}
                     className="w-4 h-4 text-[#FFDA2A]"
                   />
-                  <span className="text-sm text-gray-300">Basic (512P)</span>
+                  <span className="text-sm text-gray-300">Basic (480P)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="videoQuality"
-                    value="768P"
-                    checked={videoQuality === "768P"}
-                    onChange={() => setVideoQuality("768P")}
+                    value="720P"
+                    checked={videoQuality === "720P"}
+                    onChange={() => setVideoQuality("720P")}
                     className="w-4 h-4 text-[#FFDA2A]"
                   />
-                  <span className="text-sm text-gray-300">Standard (768P)</span>
+                  <span className="text-sm text-gray-300">Standard (720P)</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -1392,17 +1564,6 @@ export default function VideoEditor() {
                   <input
                     type="radio"
                     name="videoDuration"
-                    value="5"
-                    checked={videoDuration === 5}
-                    onChange={() => setVideoDuration(5)}
-                    className="w-4 h-4 text-[#FFDA2A]"
-                  />
-                  <span className="text-sm text-gray-300">5 seconds</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="videoDuration"
                     value="10"
                     checked={videoDuration === 10}
                     onChange={() => setVideoDuration(10)}
@@ -1410,19 +1571,83 @@ export default function VideoEditor() {
                   />
                   <span className="text-sm text-gray-300">10 seconds</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="videoDuration"
+                    value="15"
+                    checked={videoDuration === 15}
+                    onChange={() => setVideoDuration(15)}
+                    className="w-4 h-4 text-[#FFDA2A]"
+                  />
+                  <span className="text-sm text-gray-300">15 seconds</span>
+                </label>
               </div>
             </div>
+            
+            {/* Video Status */}
+            {(() => {
+              const clip = getCurrentSelectedClip();
+              const videoUrl = clip?.url;
+              return (
+                <div className="mb-6">
+                  <label className="text-sm font-medium text-white mb-3 block">Video Status</label>
+                  <div className="flex items-center gap-2">
+                    {videoUrl ? (
+                      <>
+                        <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                        <span className="text-sm text-gray-300">Video generated</span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                        <span className="text-sm text-gray-300">No video generated</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           
           {/* Regenerate button */}
           <div className="p-6 border-t border-gray-800 bg-gray-900">
-            <Button
-              onClick={handleRegenerateVideo}
-              disabled={!getCurrentSelectedClip() || isRegenerating}
-              className="w-full bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold h-12 text-base disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-            >
-              {isRegenerating ? "Regenerating..." : "Regenerate Video (10 Credits)"}
-            </Button>
+            {(() => {
+              // Convert videoQuality format (480P, 720P, 1080P) to calculateVideoCredits format (480p, 720p, 1080p)
+              const resolutionMap: Record<"480P" | "720P" | "1080P", "480p" | "720p" | "1080p"> = {
+                "480P": "480p",
+                "720P": "720p",
+                "1080P": "1080p"
+              };
+              const resolutionForCredits = resolutionMap[videoQuality];
+              const requiredCredits = calculateVideoCredits(subscriptionPlan, resolutionForCredits, videoDuration);
+              
+              return (
+                <Button
+                  onClick={handleRegenerateVideo}
+                  disabled={!getCurrentSelectedClip() || isRegenerating || !arePreviousStepsCompleted()}
+                  className="w-full bg-yellow-400 hover:bg-yellow-500 text-gray-900 font-semibold h-12 text-base disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                  title={!arePreviousStepsCompleted() ? "Please complete story script, settings, and storyboard steps first" : undefined}
+                >
+                  {isRegenerating ? (
+                    "Regenerating..."
+                  ) : (
+                    <span className="flex items-center justify-center gap-2">
+                      Regenerate Video
+                      <span className="flex items-center gap-1">
+                        <Diamond className="w-4 h-4" />
+                        <span className="text-sm font-semibold">{requiredCredits}</span>
+                      </span>
+                    </span>
+                  )}
+                </Button>
+              );
+            })()}
+            {!arePreviousStepsCompleted() && (
+              <p className="text-xs text-gray-400 mt-2 text-center">
+                Complete all previous steps first
+              </p>
+            )}
           </div>
         </div>
 
@@ -1456,9 +1681,9 @@ export default function VideoEditor() {
                     }}
                     volume={volume}
                     isMuted={isMuted}
+                    showSubtitles={showSubtitles}
                     onEnded={() => {
                       // All videos finished, reset to first
-                      console.log('✅ All videos finished, resetting to first');
                       setIsPlaying(false);
                       currentClipIndexRef.current = 0;
                       if (tracks[0]?.clips.length > 0) {
@@ -1503,22 +1728,38 @@ export default function VideoEditor() {
                       }}
                       onDuration={(duration) => {
                         // Duration is already set from clip data
-                }}
-                onEnded={() => {
-                  switchToNextVideo();
-                }}
+                      }}
+                      onEnded={() => {
+                        switchToNextVideo();
+                      }}
                       onReady={() => {
-                        console.log("Video ready");
+                      }}
+                      onVideoDimensions={({ width, height }) => {
+                        setVideoDimensions({ width, height });
                       }}
                     />
                     {/* Subtitle Overlay */}
-                    {showSubtitles && getCurrentSubtitle() && (
-                      <div className="absolute bottom-20 left-0 right-0 flex justify-center pointer-events-none">
-                        <div className="bg-black/70 text-white px-6 py-3 rounded-lg text-lg max-w-4xl text-center">
-                          {getCurrentSubtitle()?.text}
+                    {showSubtitles && subtitlePreviewLayout?.lines?.length ? (
+                      <div
+                        className="absolute left-0 right-0 flex justify-center pointer-events-none"
+                        style={{ bottom: 10 }}
+                      >
+                        <div
+                          className="text-white text-center font-semibold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)]"
+                          style={{
+                            fontSize: `${subtitlePreviewLayout.fontSize}px`,
+                            lineHeight: `${subtitlePreviewLayout.lineHeight}px`,
+                            maxWidth: `${subtitlePreviewLayout.maxWidth}px`,
+                          }}
+                        >
+                          {subtitlePreviewLayout.lines.map((line, index) => (
+                            <span key={`${line}-${index}`} className="block">
+                              {line}
+                            </span>
+                          ))}
                         </div>
-                </div>
-              )}
+                      </div>
+                    ) : null}
                   </>
                 )
               ) : (
@@ -1767,13 +2008,13 @@ export default function VideoEditor() {
                 {/* Subtitle Track */}
                 <div className="h-10 border-b border-gray-700 relative bg-gray-800" style={{ width: '100%' }}>
                   <div className="h-full relative" style={{ width: `${totalDuration * pixelsPerSecond * timelineZoom}px` }}>
-                    {/* 显示已有的字幕 */}
+                    {/* Display existing subtitles */}
                     {subtitleTrack.subtitles && [...subtitleTrack.subtitles].sort((a, b) => a.startTime - b.startTime).map((subtitle, index, sortedSubtitles) => {
-                      // 按照时间轴的实际位置显示
+                      // Display at actual timeline position
                       const left = subtitle.startTime * pixelsPerSecond * timelineZoom;
-                      // 计算宽度，确保框体首尾相邻
+                      // Calculate width to ensure boxes are adjacent
                       const nextSubtitle = sortedSubtitles[index + 1];
-                      // 如果有下一个框体，确保当前框体不超过下一个框体的开始位置
+                      // If there's a next box, ensure current box doesn't exceed next box's start position
                       const effectiveEndTime = nextSubtitle 
                         ? Math.min(subtitle.endTime, nextSubtitle.startTime)
                         : subtitle.endTime;
@@ -1794,13 +2035,13 @@ export default function VideoEditor() {
                             handleSeek(subtitle.startTime);
                           }}
                         >
-                          {/* 文字内容 */}
+                          {/* Text content */}
                           <div className="text-sm text-gray-200 leading-relaxed min-w-0 pr-6 overflow-hidden h-6 flex items-center flex-1 relative">
                             <div className="truncate w-full">
                               {subtitle.text}
                             </div>
                           </div>
-                          {/* 加号按钮 - 右上角 */}
+                          {/* Add button - top right corner */}
                           <button
                             className="absolute top-1 right-1 w-4 h-4 rounded-full bg-gray-600 hover:bg-gray-500 flex items-center justify-center flex-shrink-0 z-10"
                             onClick={(e) => {
@@ -1813,9 +2054,9 @@ export default function VideoEditor() {
                           </div>
                         );
                     })}
-                    {/* 为每个视频片段显示空框（如果没有字幕） */}
+                    {/* Display empty boxes for each video clip (if no subtitles) */}
                     {tracks[0]?.clips.map((clip) => {
-                      // 检查是否已有字幕覆盖这个时间段
+                      // Check if there's already a subtitle covering this time period
                       const hasSubtitle = subtitleTrack.subtitles?.some(
                         s => s.startTime <= clip.startTime && s.endTime >= clip.startTime + clip.duration
                       );
@@ -1832,13 +2073,13 @@ export default function VideoEditor() {
                             handleSeek(clip.startTime);
                           }}
                         >
-                          {/* 文字内容 */}
+                          {/* Text content */}
                           <div className="text-sm text-gray-200 leading-relaxed min-w-0 pr-6 overflow-hidden h-6 flex items-center flex-1">
                             <div className="truncate w-full">
-                              {/* 空内容 */}
+                              {/* Empty content */}
                             </div>
                           </div>
-                          {/* 加号按钮 - 右上角 */}
+                          {/* Add button - top right corner */}
                           <button 
                             className="absolute top-1 right-1 w-4 h-4 rounded-full bg-gray-600 hover:bg-gray-500 flex items-center justify-center flex-shrink-0 z-10"
                             onClick={(e) => {
@@ -1857,13 +2098,13 @@ export default function VideoEditor() {
                 {/* Voiceover Track */}
                 <div className="h-10 border-b border-gray-700 relative bg-gray-800" style={{ width: '100%' }}>
                   <div className="h-full relative" style={{ width: `${totalDuration * pixelsPerSecond * timelineZoom}px` }}>
-                    {/* 显示已有的配音 */}
+                    {/* Display existing voiceovers */}
                     {voiceoverTrack.voiceovers && [...voiceoverTrack.voiceovers].sort((a, b) => a.startTime - b.startTime).map((voiceover, index, sortedVoiceovers) => {
-                      // 按照时间轴的实际位置显示
+                      // Display at actual timeline position
                       const left = voiceover.startTime * pixelsPerSecond * timelineZoom;
-                      // 计算宽度，确保框体首尾相邻
+                      // Calculate width to ensure boxes are adjacent
                       const nextVoiceover = sortedVoiceovers[index + 1];
-                      // 如果有下一个框体，确保当前框体不超过下一个框体的开始位置
+                      // If there's a next box, ensure current box doesn't exceed next box's start position
                       const effectiveEndTime = nextVoiceover 
                         ? Math.min(voiceover.endTime, nextVoiceover.startTime)
                         : voiceover.endTime;
@@ -1881,13 +2122,13 @@ export default function VideoEditor() {
                           }}
                           onClick={() => handleSeek(voiceover.startTime)}
                         >
-                          {/* 文字内容 */}
+                          {/* Text content */}
                           <div className="text-sm text-gray-200 leading-relaxed min-w-0 pr-6 overflow-hidden h-6 flex items-center flex-1">
                             <div className="truncate w-full">
                               {voiceover.text}
                             </div>
                           </div>
-                          {/* 加号按钮 - 右上角 */}
+                          {/* Add button - top right corner */}
                           <button 
                             className="absolute top-1 right-1 w-4 h-4 rounded-full bg-gray-600 hover:bg-gray-500 flex items-center justify-center flex-shrink-0 z-10"
                             onClick={(e) => {
@@ -1900,9 +2141,9 @@ export default function VideoEditor() {
                           </div>
                         );
                     })}
-                    {/* 为每个视频片段显示空框（如果没有配音） */}
+                    {/* Display empty boxes for each video clip (if no voiceovers) */}
                     {tracks[0]?.clips.map((clip) => {
-                      // 检查是否已有配音覆盖这个时间段
+                      // Check if there's already a voiceover covering this time period
                       const hasVoiceover = voiceoverTrack.voiceovers?.some(
                         v => v.startTime <= clip.startTime && v.endTime >= clip.startTime + clip.duration
                       );
@@ -1917,13 +2158,13 @@ export default function VideoEditor() {
                           style={{ left: `${left}px`, width: `${width}px`, minWidth: "100px" }}
                           onClick={() => handleSeek(clip.startTime)}
                         >
-                          {/* 文字内容 */}
+                          {/* Text content */}
                           <div className="text-sm text-gray-200 leading-relaxed min-w-0 pr-6 overflow-hidden h-6 flex items-center flex-1">
                             <div className="truncate w-full">
-                              {/* 空内容 */}
+                              {/* Empty content */}
                             </div>
                           </div>
-                          {/* 加号按钮 - 右上角 */}
+                          {/* Add button - top right corner */}
                           <button 
                             className="absolute top-1 right-1 w-4 h-4 rounded-full bg-gray-600 hover:bg-gray-500 flex items-center justify-center flex-shrink-0 z-10"
                             onClick={(e) => {
@@ -2002,7 +2243,7 @@ export default function VideoEditor() {
                   return;
                 }
                 
-                // 获取当前场景ID（从sceneData中获取）
+                // Get current scene ID (from sceneData)
                 const currentSceneId = sceneData?.id;
                 if (!currentSceneId) {
                   showError("Scene data is not loaded");
@@ -2013,7 +2254,7 @@ export default function VideoEditor() {
                   setShowExportDialog(false);
                   showInfo("Preparing video download...");
                   
-                  // 调用下载API，传递sceneId参数
+                  // Call download API with sceneId parameter
                   const response = await fetch(`/api/projects/${projectId}/download-videos?sceneId=${currentSceneId}`);
                   
                   if (!response.ok) {
@@ -2021,10 +2262,10 @@ export default function VideoEditor() {
                     throw new Error(error.error || 'Failed to download videos');
                   }
                   
-                  // 获取zip文件
+                  // Get zip file
                   const blob = await response.blob();
                   
-                  // 创建下载链接
+                  // Create download link
                   const url = window.URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
@@ -2038,7 +2279,6 @@ export default function VideoEditor() {
                   
                   showSuccess("Videos downloaded successfully!");
                 } catch (error) {
-                  console.error("Error downloading videos:", error);
                   showError(error instanceof Error ? error.message : "Failed to download videos");
                 }
               }}
@@ -2059,13 +2299,13 @@ export default function VideoEditor() {
                 if (!isCompleteVideoExportAllowed(subscriptionPlan)) {
                   showWarning("Complete video export is only available for Pro and Studio plans. Redirecting to upgrade page...");
                   setShowExportDialog(false);
-                  // 延迟跳转，让用户看到提示信息
+                  // Delay redirect to let user see the message
                   setTimeout(() => {
                     router.push('/pricing');
                   }, 1500);
                   return;
                 }
-                // 打开导出对话框
+                // Open export dialog
                 setShowExportDialog(false);
                 setShowExportCompleteDialog(true);
               }}
@@ -2120,9 +2360,9 @@ export default function VideoEditor() {
             x: sub.x,
             y: sub.y,
           }))}
+          includeSubtitles={showSubtitles}
           coverImage={tracks[0]?.clips[0]?.thumbnail || sceneData.cover_image_url}
           onExportComplete={(videoUrl) => {
-            console.log('Export completed:', videoUrl);
             showSuccess('Video exported successfully!');
           }}
         />

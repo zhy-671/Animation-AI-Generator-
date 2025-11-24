@@ -6,23 +6,16 @@ import type { CreditOperationParams } from '@/lib/supabase/types'
 export async function POST(request: NextRequest) {
   try {
     const body: Partial<CreditOperationParams> = await request.json()
-    console.log('Credits operate API called:', { type: body.type, amount: body.amount });
-    
     // 获取当前用户的客户信息
     const customer = await getCurrentCustomer()
     if (!customer) {
-      console.error('Customer not found');
       return NextResponse.json(
         { error: 'Customer not found. Please ensure you are logged in.' },
         { status: 401 }
       )
     }
-
-    console.log('Current customer:', { id: customer.id, credits: customer.credits });
-
     // 验证必需字段（customerId 自动使用当前用户的）
     if (!body.amount || !body.type) {
-      console.error('Missing required fields:', { amount: body.amount, type: body.type });
       return NextResponse.json(
         { error: 'Missing required fields: amount, type' },
         { status: 400 }
@@ -31,7 +24,6 @@ export async function POST(request: NextRequest) {
 
     // 验证积分数量
     if (body.amount <= 0) {
-      console.error('Invalid amount:', body.amount);
       return NextResponse.json(
         { error: 'Amount must be greater than 0' },
         { status: 400 }
@@ -96,7 +88,6 @@ export async function POST(request: NextRequest) {
 
     // 检查积分是否足够（如果是扣除操作）
     if (body.type === 'subtract' && customer.credits < body.amount) {
-      console.error('Insufficient credits:', { current: customer.credits, required: body.amount });
       return NextResponse.json(
         { error: 'Insufficient credits', success: false },
         { status: 400 }
@@ -111,14 +102,8 @@ export async function POST(request: NextRequest) {
       description: body.description,
       metadata: body.metadata,
     }
-
-    console.log('Calling operateCredits with params:', params);
-
     // 执行积分操作
     const result = await operateCredits(params)
-
-    console.log('operateCredits result:', result);
-
     if (!result.success) {
       return NextResponse.json(
         { error: result.error || 'Failed to operate credits', success: false },
@@ -128,14 +113,11 @@ export async function POST(request: NextRequest) {
 
     // 获取更新后的积分余额
     const newBalance = await getCredits()
-    console.log('New credits balance:', newBalance);
-
     return NextResponse.json({ 
       success: true,
       credits: newBalance,
     })
   } catch (error) {
-    console.error('Error operating credits:', error)
     return NextResponse.json(
       { error: 'Internal server error', success: false },
       { status: 500 }

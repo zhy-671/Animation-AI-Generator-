@@ -15,7 +15,6 @@ export const signUpAction = async (formData: FormData) => {
     try {
       supabase = await createClient();
     } catch (clientError) {
-      console.warn("[Auth] Failed to create client with cookies, using fallback:", clientError);
       const { createServerClient } = await import("@supabase/ssr");
       supabase = createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -58,7 +57,6 @@ export const signUpAction = async (formData: FormData) => {
     });
 
     if (error) {
-      console.error(error.code + " " + error.message);
       return encodedRedirect("error", "/sign-up", error.message);
     } else {
       // If redirect_to is provided, use it; otherwise default to /dashboard
@@ -66,7 +64,6 @@ export const signUpAction = async (formData: FormData) => {
       return encodedRedirect("success", finalRedirect, "Thanks for signing up!");
     }
   } catch (error) {
-    console.error("[Auth] Unexpected error in signUpAction:", error);
     return encodedRedirect("error", "/sign-up", error instanceof Error ? error.message : "An unexpected error occurred");
   }
 };
@@ -80,7 +77,6 @@ export const signInAction = async (formData: FormData) => {
     try {
       supabase = await createClient();
     } catch (clientError) {
-      console.warn("[Auth] Failed to create client with cookies, using fallback:", clientError);
       const { createServerClient } = await import("@supabase/ssr");
       supabase = createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -105,7 +101,6 @@ export const signInAction = async (formData: FormData) => {
 
     return redirect("/dashboard");
   } catch (error) {
-    console.error("[Auth] Unexpected error in signInAction:", error);
     return encodedRedirect("error", "/login", error instanceof Error ? error.message : "An unexpected error occurred");
   }
 };
@@ -129,7 +124,6 @@ export const forgotPasswordAction = async (formData: FormData) => {
   });
 
   if (error) {
-    console.error(error.message);
     return encodedRedirect(
       "error",
       "/forgot-password",
@@ -239,7 +233,6 @@ export async function createCheckoutSession(
     const data = await response.json();
     return data.checkout_url;
   } catch (error) {
-    console.error("Error creating checkout session:", error);
     throw error;
   }
 }

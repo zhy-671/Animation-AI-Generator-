@@ -28,7 +28,6 @@ export async function GET(request: NextRequest) {
       .limit(50);
 
     if (videosError) {
-      console.error('Error fetching user videos:', videosError);
       return NextResponse.json(
         { videos: [], error: videosError.message },
         { status: 200 }
@@ -66,7 +65,6 @@ export async function GET(request: NextRequest) {
       { status: 200 }
     );
   } catch (error) {
-    console.error('Error in /api/videos/my-creations:', error);
     return NextResponse.json(
       { 
         error: 'Internal server error', 

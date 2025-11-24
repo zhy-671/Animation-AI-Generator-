@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getUserWithRetry } from "@/lib/supabase/auth-helper";
 
 /**
  * GET /api/storyboard/characters
@@ -8,7 +9,24 @@ import { createClient } from "@/lib/supabase/server";
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const { user, error: authError, isNetworkError } = await getUserWithRetry(supabase);
+
+    if (authError) {
+      if (isNetworkError) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: "Network connection timeout. Please check your internet connection and try again.",
+            isNetworkError: true
+          },
+          { status: 503 }
+        );
+      }
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
 
     if (!user) {
       return NextResponse.json(
@@ -36,7 +54,6 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: true });
 
     if (charactersError) {
-      console.error("Error fetching characters:", charactersError);
       return NextResponse.json(
         { success: false, error: `Failed to fetch characters: ${charactersError.message}` },
         { status: 500 }
@@ -51,7 +68,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error in GET /api/storyboard/characters:", error);
     return NextResponse.json(
       {
         success: false,

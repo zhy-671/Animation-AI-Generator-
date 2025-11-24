@@ -15,6 +15,10 @@ export const CREEM_CONFIG = {
   checkoutEndpoint: process.env.CREEM_CHECKOUT_ENDPOINT || '/checkouts',
   successUrl: process.env.CREEM_SUCCESS_URL || process.env.CREEM_RETURN_URL || `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/payment/success`,
   cancelUrl: process.env.CREEM_CANCEL_URL || `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/payment/cancel`,
+  // 客户支持邮箱（用于 Creem 审核和客户支持）
+  supportEmail: process.env.SUPPORT_EMAIL || 'andy@adflurrytech.com',
+  // 客户支持页面URL
+  supportUrl: process.env.SUPPORT_URL || `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/contact`,
 };
 
 // 订阅计划配置

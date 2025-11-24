@@ -73,7 +73,6 @@ export async function POST(request: NextRequest) {
       data: video,
     });
   } catch (error) {
-    console.error("Error creating/updating video:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to create/update video",
@@ -105,7 +104,6 @@ export async function DELETE(request: NextRequest) {
       success: true,
     });
   } catch (error) {
-    console.error("Error deleting video:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to delete video",

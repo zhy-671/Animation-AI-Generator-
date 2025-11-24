@@ -119,14 +119,12 @@ export async function GET(
       try {
         const response = await fetch(url);
         if (!response.ok) {
-          console.error(`Failed to download video: ${url}`);
           continue;
         }
 
         const buffer = await response.arrayBuffer();
         archive.append(Buffer.from(buffer), { name: filename });
       } catch (error) {
-        console.error(`Error downloading video ${url}:`, error);
         // 继续处理其他视频，不中断整个流程
       }
     }
@@ -152,7 +150,6 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error('Error creating video download:', error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : 'Failed to create video download',

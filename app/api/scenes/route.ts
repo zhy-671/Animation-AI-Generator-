@@ -46,7 +46,6 @@ export async function POST(request: NextRequest) {
       data: scene,
     });
   } catch (error) {
-    console.error("Error creating scene:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to create scene",
@@ -101,7 +100,6 @@ export async function GET(request: NextRequest) {
       });
     }
   } catch (error) {
-    console.error("Error getting scenes:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to get scenes",
@@ -133,7 +131,6 @@ export async function DELETE(request: NextRequest) {
       success: true,
     });
   } catch (error) {
-    console.error("Error deleting scene:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to delete scene",

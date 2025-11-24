@@ -6,6 +6,58 @@ import { createClient } from "@/lib/supabase/server";
 import { createScene } from "@/lib/supabase/scenes";
 
 /**
+ * 将宽高比（如 "16:9"）转换为 API 需要的尺寸格式（如 "1920*1080"）
+ */
+function convertAspectRatioToSize(aspectRatio: string): string {
+  // 如果已经是 width*height 格式，直接返回
+  if (aspectRatio.includes('*')) {
+    return aspectRatio;
+  }
+
+  // 解析宽高比
+  const parts = aspectRatio.split(':');
+  if (parts.length !== 2) {
+    // 如果格式不正确，默认使用 16:9
+    return "1920*1080";
+  }
+
+  const widthRatio = parseFloat(parts[0]);
+  const heightRatio = parseFloat(parts[1]);
+
+  if (isNaN(widthRatio) || isNaN(heightRatio) || widthRatio <= 0 || heightRatio <= 0) {
+    // 如果解析失败，默认使用 16:9
+    return "1920*1080";
+  }
+
+  // 根据宽高比计算合适的尺寸
+  // 使用常见的分辨率，保持宽高比
+  if (widthRatio / heightRatio === 16 / 9) {
+    // 16:9 -> 1920*1080
+    return "1920*1080";
+  } else if (widthRatio / heightRatio === 4 / 3) {
+    // 4:3 -> 1024*768
+    return "1024*768";
+  } else if (widthRatio / heightRatio === 1) {
+    // 1:1 -> 1024*1024
+    return "1024*1024";
+  } else if (widthRatio / heightRatio === 9 / 16) {
+    // 9:16 (竖屏) -> 576*1024
+    return "576*1024";
+  } else if (widthRatio / heightRatio === 21 / 9) {
+    // 21:9 (超宽屏) -> 2560*1080
+    return "2560*1080";
+  } else {
+    // 其他比例，使用通用计算方式
+    // 以高度为基准，计算宽度
+    const baseHeight = 1024;
+    const calculatedWidth = Math.round((widthRatio / heightRatio) * baseHeight);
+    // 确保宽度是偶数（某些API要求）
+    const finalWidth = calculatedWidth % 2 === 0 ? calculatedWidth : calculatedWidth + 1;
+    return `${finalWidth}*${baseHeight}`;
+  }
+}
+
+/**
  * POST /api/scenes/generate
  * 生成故事分镜
  * 使用通义千问（Qwen2）生成分镜，通义万相生成图像（依次提交和查询）
@@ -21,7 +73,10 @@ export async function POST(request: NextRequest) {
     const projectIdStr = formData.get("projectId") as string | null;
     const referenceImage = formData.get("referenceImage") as File | null;
     const readerGroup = (formData.get("readerGroup") as string) || "全年龄";
-    const style = (formData.get("style") as string) || "2d"; // 风格参数
+    
+    // 从项目设置获取风格和分辨率（优先使用项目设置）
+    let style = (formData.get("style") as string) || "2d"; // 默认风格
+    let artSetting = "16:9"; // 默认分辨率
 
     // 检查是否有已生成的故事内容，或者需要生成
     let storyboardData;
@@ -35,7 +90,6 @@ export async function POST(request: NextRequest) {
           storyboardData.style = style;
         }
       } catch (error) {
-        console.error("Error parsing story content:", error);
         return NextResponse.json(
           { error: "Invalid story content format" },
           { status: 400 }
@@ -68,7 +122,6 @@ export async function POST(request: NextRequest) {
             }
           }
         } catch (error) {
-          console.error("Error fetching project data:", error);
           // 继续使用prompt生成，不中断流程
         }
       }
@@ -91,18 +144,26 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id || 'anonymous';
 
-    // 获取主角图像URL（用于图片生成的参考图片）
+    // 获取项目设置（风格和分辨率）以及主角图像URL
     let mainCharacterImageUrl: string | null = null;
     if (projectIdStr && user) {
       try {
         const { data: projectData, error: projectError } = await supabase
           .from('anim_storyboard_projects')
-          .select('story_outline, character_design')
+          .select('story_outline, character_design, art_setting, visual_style')
           .eq('id', projectIdStr)
           .eq('user_id', user.id)
           .single();
         
         if (!projectError && projectData) {
+          // 获取项目设置（优先使用项目设置）
+          if (projectData.art_setting) {
+            artSetting = projectData.art_setting;
+          }
+          if (projectData.visual_style) {
+            style = projectData.visual_style;
+          }
+          
           // 查找主角的图像URL
           if (projectData.story_outline?.characters && Array.isArray(projectData.story_outline.characters)) {
             const mainCharacter = projectData.story_outline.characters.find((char: any) => 
@@ -124,13 +185,11 @@ export async function POST(request: NextRequest) {
                   }
                 }
               } catch (e) {
-                console.error("Error parsing character_design:", e);
               }
             }
           }
         }
       } catch (error) {
-        console.error("Error fetching main character image:", error);
         // 继续执行，不中断流程
       }
     }
@@ -218,14 +277,26 @@ export async function POST(request: NextRequest) {
               });
               
               try {
-                // 提交图像生成任务
-                const task = await wanXImageClient.submitImageTask({
+                // 将 art_setting 转换为 API 需要的尺寸格式
+                const imageSize = convertAspectRatioToSize(artSetting);
+                
+                const imageRequestPayload = {
                   prompt: scene.image_prompt,
                   style: style,
-                  size: "1280*1280",
+                  size: imageSize,
                   n: 1,
                   refImg: mainCharacterImageUrl || undefined,
+                };
+
+                console.log("[storyboard/generate] image request payload", {
+                  sceneIndex: i,
+                  sceneNumber: scene.scene_id || i + 1,
+                  sceneItemId: sceneItem?.id,
+                  payload: imageRequestPayload,
                 });
+
+                // 提交图像生成任务
+                const task = await wanXImageClient.submitImageTask(imageRequestPayload);
                 
                 // 轮询等待图片生成完成
                 let imageUrl: string | null = null;
@@ -246,16 +317,13 @@ export async function POST(request: NextRequest) {
                           .eq('id', sceneItem.id);
                         
                         if (updateError) {
-                          console.error(`Error updating scene item image for scene ${i + 1}:`, updateError);
                         }
                       }
                     } catch (uploadError) {
-                      console.error(`Error uploading image for scene ${i + 1}:`, uploadError);
                       imageUrl = status.images[0];
                     }
                   }
                 } catch (pollError) {
-                  console.error(`Error polling image status for scene ${i + 1}:`, pollError);
                 }
                 
                 // 发送完成事件
@@ -267,7 +335,6 @@ export async function POST(request: NextRequest) {
                   success: !!imageUrl,
                 });
               } catch (error) {
-                console.error(`Error submitting image task for scene ${i + 1}:`, error);
                 // 发送失败事件
                 sendEvent('image-complete', {
                   index: i,
@@ -308,14 +375,25 @@ export async function POST(request: NextRequest) {
       const scene = storyboardData.scenes[i];
       
       try {
-        // 提交图像生成任务
-        const task = await wanXImageClient.submitImageTask({
+        // 将 art_setting 转换为 API 需要的尺寸格式
+        const imageSize = convertAspectRatioToSize(artSetting);
+        
+        const imageRequestPayload = {
           prompt: scene.image_prompt,
           style: style,
-          size: "1280*1280",
+          size: imageSize,
           n: 1,
           refImg: mainCharacterImageUrl || undefined,
+        };
+
+        console.log("[storyboard/generate] image request payload", {
+          sceneIndex: i,
+          sceneNumber: scene.scene_id || i + 1,
+          sceneItemId: sceneItem?.id,
+          payload: imageRequestPayload,
         });
+        // 提交图像生成任务
+        const task = await wanXImageClient.submitImageTask(imageRequestPayload);
         
         // 轮询等待图片生成完成
         let imageUrl: string | null = null;
@@ -334,16 +412,13 @@ export async function POST(request: NextRequest) {
                   .eq('id', sceneItem.id);
                 
                 if (updateError) {
-                  console.error(`Error updating scene item image for scene ${i + 1}:`, updateError);
                 }
               }
             } catch (uploadError) {
-              console.error(`Error uploading image for scene ${i + 1}:`, uploadError);
               imageUrl = status.images[0];
             }
           }
         } catch (pollError) {
-          console.error(`Error polling image status for scene ${i + 1}:`, pollError);
         }
         
         scenesWithTasks.push({
@@ -354,7 +429,6 @@ export async function POST(request: NextRequest) {
           sceneItemId: sceneItem?.id,
         });
       } catch (error) {
-        console.error(`Error submitting image task for scene ${i + 1}:`, error);
         scenesWithTasks.push({
           ...scene,
           imageTaskId: null,
@@ -412,7 +486,6 @@ export async function POST(request: NextRequest) {
       data: result,
     });
   } catch (error) {
-    console.error("Error generating scenes:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to generate scenes",

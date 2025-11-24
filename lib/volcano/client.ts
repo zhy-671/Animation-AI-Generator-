@@ -42,11 +42,9 @@ class VolcanoClient {
     this.imageModel = process.env.VOLCANO_IMAGE_MODEL || "doubao-seedream-4.0";
     
     if (!this.apiKey) {
-      console.warn("VOLCANO_API_KEY or ARK_API_KEY is not set");
     }
     
     if (!this.storyModel) {
-      console.warn("VOLCANO_STORY_MODEL is not set, please configure it in .env.local");
     }
   }
 
@@ -152,12 +150,6 @@ ${request.style ? `动画风格要求：${request.style === "2d" ? "2D动画风�
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("Volcano API request details:", {
-          url: `${this.baseUrl}/chat/completions`,
-          model: this.storyModel,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`Volcano API error: ${response.status} - ${errorText}`);
       }
 
@@ -188,7 +180,6 @@ ${request.style ? `动画风格要求：${request.style === "2d" ? "2D动画风�
 
       return storyData;
     } catch (error) {
-      console.error("Error generating story:", error);
       throw error;
     }
   }
@@ -243,7 +234,6 @@ ${request.style ? `动画风格要求：${request.style === "2d" ? "2D动画风�
       const images = await Promise.all(imagePromises);
       return { images };
     } catch (error) {
-      console.error("Error generating images:", error);
       throw error;
     }
   }
@@ -259,7 +249,6 @@ ${request.style ? `动画风格要求：${request.style === "2d" ? "2D动画风�
       // 从 URL 下载并上传到火山存储
       return await tosClient.uploadImageFromUrl(imageUrl, filename);
     } catch (error) {
-      console.error("Error uploading image to TOS:", error);
       // 如果上传失败，返回原 URL
       return imageUrl;
     }

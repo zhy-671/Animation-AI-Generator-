@@ -16,9 +16,6 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    console.log("Querying video status for taskId:", taskId);
-
     try {
       const status = await dashScopeClient.getVideoStatus(taskId);
 
@@ -27,7 +24,6 @@ export async function GET(request: NextRequest) {
         data: status,
       });
     } catch (dashScopeError) {
-      console.error("DashScope API error:", dashScopeError);
       const errorMessage = dashScopeError instanceof Error 
         ? dashScopeError.message 
         : "Failed to get video status from DashScope";
@@ -42,7 +38,6 @@ export async function GET(request: NextRequest) {
       );
     }
   } catch (error) {
-    console.error("Error in video status route:", error);
     const errorMessage = error instanceof Error ? error.message : "Failed to get video status";
     return NextResponse.json(
       {

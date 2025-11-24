@@ -32,21 +32,9 @@ export async function POST(request: NextRequest) {
     // 生成唯一文件名
     const fileExt = imageUrl.split('.').pop()?.split('?')[0] || 'jpg';
     const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-
-    console.log('=== 开始从URL上传图片 ===');
-    console.log('imageUrl:', imageUrl);
-    console.log('fileName:', fileName);
-    console.log('user.id:', user.id);
-
     try {
       // 从URL下载图片并上传到火山存储 storybooks bucket
-      console.log('调用 tosClient.uploadImageFromUrl...');
       const url = await tosClient.uploadImageFromUrl(imageUrl, fileName);
-      
-      console.log('=== 图片上传成功 ===');
-      console.log('上传后的URL:', url);
-      console.log('fileName:', fileName);
-
       return NextResponse.json({
         success: true,
         data: {
@@ -55,16 +43,9 @@ export async function POST(request: NextRequest) {
         },
       });
     } catch (uploadError) {
-      console.error("=== 上传图片时发生错误 ===");
-      console.error("错误类型:", uploadError instanceof Error ? uploadError.constructor.name : typeof uploadError);
-      console.error("错误消息:", uploadError instanceof Error ? uploadError.message : String(uploadError));
-      console.error("错误堆栈:", uploadError instanceof Error ? uploadError.stack : 'N/A');
-      console.error("原始imageUrl:", imageUrl);
-      
       // 检查是否是网络错误或下载错误
       if (uploadError instanceof Error) {
         if (uploadError.message.includes('Failed to download')) {
-          console.error("下载失败，可能是URL无效或已过期");
           return NextResponse.json(
             {
               success: false,
@@ -76,7 +57,6 @@ export async function POST(request: NextRequest) {
           );
         }
         if (uploadError.message.includes('TOS') || uploadError.message.includes('storage') || uploadError.message.includes('upload')) {
-          console.error("存储上传失败，可能是配置问题");
           return NextResponse.json(
             {
               success: false,
@@ -88,11 +68,9 @@ export async function POST(request: NextRequest) {
           );
         }
       }
-      console.error("未知错误，重新抛出");
       throw uploadError; // 重新抛出未知错误
     }
   } catch (error) {
-    console.error("Error uploading image from URL:", error);
     return NextResponse.json(
       {
         success: false,

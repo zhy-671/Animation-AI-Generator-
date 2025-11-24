@@ -118,7 +118,6 @@ export async function operateCredits(params: CreditOperationParams): Promise<{ s
     })
 
   if (historyError) {
-    console.error('Failed to insert credits history:', historyError);
     // 如果历史记录失败，回滚积分更新（使用服务端客户端）
     await serviceClient
       .from('anim_customers')

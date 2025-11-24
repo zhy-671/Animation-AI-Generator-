@@ -15,7 +15,7 @@ export async function PATCH(
 ) {
   try {
     const body = await request.json();
-    const { imageUrl, text, scene_detail, metadata } = body;
+    const { imageUrl, sceneImageUrl, text, scene_detail, metadata } = body;
     const { itemId } = await params;
 
     if (!itemId) {
@@ -62,6 +62,14 @@ export async function PATCH(
       }
     }
 
+    if (sceneImageUrl !== undefined) {
+      if (sceneImageUrl === null) {
+        updateData.scene_image_url = null;
+      } else {
+        updateData.scene_image_url = sceneImageUrl;
+      }
+    }
+
     if (text !== undefined) {
       updateData.text = text;
     }
@@ -96,7 +104,6 @@ export async function PATCH(
       success: true,
     });
   } catch (error) {
-    console.error("Error updating scene item:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to update scene item",

@@ -76,11 +76,13 @@ export async function POST(request: NextRequest) {
 
     // 4. 解析场次元数据
     const metadata = sceneItem.metadata || {};
-    const sceneTime = metadata.场次时间 || sceneItem.metadata?.scene_time || "";
-    const sceneLocation = metadata.场次地点 || sceneItem.metadata?.scene_location || "";
+    const sceneTitle = metadata.scene_title || metadata.场次标题 || `Scene ${sceneItem.scene_number || 1}`;
+    const sceneTime = metadata.场次时间 || metadata.scene_time || "";
+    const sceneLocation = metadata.场次地点 || metadata.scene_location || "";
     const sceneDescription = sceneItem.text || "";
-    const sceneStory = metadata.场次故事 || sceneItem.metadata?.scene_story || "";
-    const mainCharacters = metadata.主要角色 || [];
+    const sceneStory = metadata.场次故事 || metadata.scene_story || "";
+    const sceneElements = metadata.scene_elements || metadata.场次元素 || [];
+    const mainCharacters = metadata.主要角色 || metadata.main_characters || [];
     const sceneNumber = sceneItem.scene_number || 1;
 
     // 5. 不再需要获取完整故事文本，新格式只需要场次内容
@@ -88,185 +90,72 @@ export async function POST(request: NextRequest) {
     // 6. 不再需要构建环境信息和详细角色信息，新格式只需要角色名称列表
 
     // 9. Build AI prompt (new instruction)
-    const systemPrompt = `You are a professional cinematic storyboard director specializing in animation.
+    const systemPrompt = `LANGUAGE REQUIREMENT: Respond only in English.
 
-Your task is to convert a scene (sceneText) into a structured storyboard JSON with continuous and connected shots.
+You are a professional cinematic storyboard director specializing in animation, continuous character motion, emotional consistency, scene continuity, and automatic costume inference.
 
-Each shot must naturally continue from the previous shot in terms of:
+Task:
 
-- character position
+Given an existing scene JSON (sceneTitle, sceneTime, sceneLocation, sceneDescription, sceneStory, sceneElements), generate a complete storyboard JSON containing **4–12 continuous shots**. Each shot must maintain:
 
-- character emotional state
+- Character positions, costumes, expressions, and interactions
+- Environmental, prop, and building continuity
+- Emotional pacing matching the scene's mood
+- Scene-specific monologue or dialogue (if present)
 
-- environment continuity
+Shot Requirements:
 
-- ongoing actions
+1. imageShot.imageDescription (English):
+- Provide a full **AI image generation prompt** for this shot
+- Include all characters, props, vehicles, buildings, environment details
+- Characters: appearance, pose, exact position, interactions
+- Environment: background, lighting, weather, textures
+- Artistic style, cinematic feel, animation-ready
+- Distance type: wide, medium, close-up
+- Ensure all elements from previous shot are inherited unless changed
 
-- spatial consistency
+2. videoShot.videoDescription (English):
+- Cinematic description including:
+  - Shot type and framing
+  - Camera movement (pan, tilt, dolly, track, push/pull, crane)
+  - Character movements, timing, and emotional pacing
+  - Environmental motion (wind, rain, fog, lights)
+  - Object/vehicle movements
+  - Audio design (environmental sounds, background music, fades, emotional cues)
+  - Scene transitions (cut, dissolve, match cut, continuous movement)
+- Ensure continuity with previous shot in positions, actions, expressions, costumes, and scene objects
 
-- time flow
+Continuity Rules:
+- Backgrounds, props, buildings, and character positions must remain consistent unless the scene explicitly changes
+- Actions started in one shot continue or resolve naturally in the next
+- Characters and props persist throughout the scene
 
-- visual momentum and narrative pacing
-
-You must generate TWO parallel versions of each shot:
-
-1. imageShot → still-image description (no camera terminology)
-
-2. videoShot → fully cinematic shot (with detailed camera language)
-
------------------------------------------------------
-
-SHOT REQUIREMENTS
-
------------------------------------------------------
-
-For every shot, provide:
-
-- shotNumber
-
-- previousShotContinuation:
-
-    A short statement describing how this shot logically continues
-
-    from the previous shot. For shot #1, return "".
-
-- imageShot.imageDescription:
-
-    A descriptive still-image composition without camera terminology.
-
-    Describe visual content only:
-
-    characters (appearance, pose, expression), environment details,
-
-    props, atmosphere, lighting, mood.
-
-    Ensure continuity from the previous shot.
-
-- videoShot.videoDescription:
-
-    A detailed cinematic description including:
-
-    • shot type (wide, medium, close-up, extreme close-up)
-
-    • framing and staging
-
-    • camera motion (pan, tilt, dolly, track, crane, orbit, push, pull)
-
-    • character movement and timing
-
-    • emotional pacing
-
-    • environmental motion (rain, cars, neon lights, fog, wind)
-
-    • transitions (cut, dissolve, match cut, continuous movement)
-
-    • MUST clearly connect to the previous shot visually or spatially
-
-- narration:
-
-    Storytelling voice describing emotion or meaning of this moment.
-
-- dialogue:
-
-    Spoken lines in this shot if any.
-
-- appearCharacters:
-
-    List of characters appearing in this shot.
-
-    Extract automatically from sceneText and track from earlier shots.
-
------------------------------------------------------
-
-CONTINUITY RULES
-
------------------------------------------------------
-
-Your storyboard must create a seamless sense of motion from shot to shot:
-
-- Maintain spatial consistency (left/right, interior/exterior, props)
-
-- Maintain character states (emotion, posture, direction of movement)
-
-- If a character starts an action in shot N, they must continue or resolve it in shot N+1
-
-- Video shots must feel like a continuous cinematic sequence
-
-- Image shots must be visually consistent across shots
-
------------------------------------------------------
-
-STRUCTURE
-
------------------------------------------------------
+JSON Output Structure:
 
 {
-
   "sceneTitle": "",
-
   "charactersDetected": [],
-
+  "locationDetected": "",
+  "fixedClothingStyle": "",
   "shotList": [
-
     {
-
       "shotNumber": 1,
-
       "previousShotContinuation": "",
-
-      "imageShot": {
-
-        "imageDescription": ""
-
-      },
-
-      "videoShot": {
-
-        "videoDescription": ""
-
-      },
-
+      "appearCharacters": [],
       "narration": "",
-
       "dialogue": "",
-
-      "appearCharacters": []
-
+      "imageShot": {
+        "imageDescription": ""  ← AI image generation prompt in English
+      },
+      "videoShot": {
+        "videoDescription": ""  ← Cinematic description including camera motion and audio
+      }
     }
-
   ]
-
 }
 
------------------------------------------------------
-
-GUIDELINES
-
------------------------------------------------------
-
-- Avoid camera terms in imageDescription.
-
-- Use rich cinematic language in videoDescription.
-
-- Aim for 4–12 shots per scene.
-
-- Each shot must clearly convey what is happening.
-
-- The full set of shots should fully express the scene meaning.
-
-- Ensure high-quality animation-friendly descriptions.
-
------------------------------------------------------
-
-INPUT FORMAT YOU WILL RECEIVE
-
------------------------------------------------------
-
-- sceneText: the scene content
-
-- characters: list of main characters (optional)
-
-Your final output must be valid JSON.`;
+Input:
+{sceneJSON}`;
 
     // 10. 提取场次中的角色名称列表
     let sceneCharacterNames: string[] = [];
@@ -288,10 +177,6 @@ Your final output must be valid JSON.`;
     // 方法2: 如果没取到，从数据库角色表中匹配出现在场次文本中的角色（只匹配出现在场次内容中的角色）
     if (sceneCharacterNames.length === 0 && characters && Array.isArray(characters)) {
       const sceneText = ((sceneDescription || '') + ' ' + (sceneStory || '')).trim();
-      console.log("场次主要角色字段为空，从场次文本中匹配角色...");
-      console.log("场次文本长度:", sceneText.length);
-      console.log("场次文本预览:", sceneText.substring(0, 200));
-      
       characters.forEach((char: any) => {
         const charName = char.name || char.姓名 || '';
         if (charName) {
@@ -299,130 +184,199 @@ Your final output must be valid JSON.`;
           // 只匹配出现在场次文本中的角色
           if (sceneText && sceneText.includes(nameStr)) {
             sceneCharacterNames.push(nameStr);
-            console.log(`  ✓ 在场次文本中匹配到角色: "${nameStr}"`);
           }
         }
       });
-      
-      if (sceneCharacterNames.length > 0) {
-        console.log("从场次文本匹配到的角色:", sceneCharacterNames);
-      } else {
-        console.log("场次文本中未匹配到任何角色");
-      }
     }
     
     // 不再使用方法3（使用所有角色），只使用该场次对应的角色
     if (sceneCharacterNames.length === 0) {
-      console.warn("⚠️ 该场次没有找到对应的角色，将使用空数组传递给AI");
     }
-    
-    console.log("最终传递给AI的场次角色名称:", sceneCharacterNames);
-
     // 11. 构建系统提示词（新格式不需要替换占位符，直接使用）
     const finalSystemPrompt = systemPrompt;
 
-    // 12. 构建用户提示词（只传入场次内容和角色）
-    const sceneStoryText = sceneStory || sceneDescription || "";
-    const userPrompt = `Generate storyboard for the following scene:
-
-sceneText: "${sceneStoryText}"
-
-characters: ${JSON.stringify(sceneCharacterNames)}
-
-Please output the JSON object following the exact format specified in the system prompt.`;
-
-    console.log("=== 生成分镜 - AI提示词 ===");
-    console.log("System Prompt length:", finalSystemPrompt.length);
-    console.log("System Prompt preview (first 1000 chars):", finalSystemPrompt.substring(0, 1000));
-    console.log("--- User Prompt 内容 ===");
-    console.log("User Prompt:", userPrompt);
-    console.log("--- 传递给AI的数据详情 ===");
-    console.log("场次内容 (sceneText):");
-    console.log("  - sceneStory:", sceneStory || '(空)');
-    console.log("  - sceneDescription:", sceneDescription || '(空)');
-    console.log("  - 最终使用的 sceneStoryText:", sceneStoryText || '(空)');
-    console.log("  - sceneStoryText 长度:", sceneStoryText.length);
-    console.log("  - sceneStoryText 完整内容:", sceneStoryText);
-    console.log("角色信息 (characters):");
-    console.log("  - sceneCharacterNames 数组:", sceneCharacterNames);
-    console.log("  - sceneCharacterNames 长度:", sceneCharacterNames.length);
-    console.log("  - sceneCharacterNames JSON:", JSON.stringify(sceneCharacterNames));
-    console.log("其他信息:");
-    console.log("  - Scene Number:", sceneNumber);
-    console.log("  - Scene Location:", sceneLocation || '(空)');
-    console.log("  - Scene Time:", sceneTime || '(空)');
-    console.log("  - Main Characters (原始):", mainCharacters);
+    // 12. 构建用户提示词（构建 sceneJSON 对象）
+    const sceneJSON = {
+      sceneTitle: sceneTitle,
+      sceneTime: sceneTime,
+      sceneLocation: sceneLocation,
+      sceneDescription: sceneDescription,
+      sceneStory: sceneStory || sceneDescription,
+      sceneElements: Array.isArray(sceneElements) ? sceneElements : []
+    };
+    
+    const userPrompt = JSON.stringify(sceneJSON, null, 2);
 
     // 7. 调用AI生成分镜
-    const apiKey = process.env.DASHSCOPE_API_KEY;
+    // ========== 原来的 DashScope API 调用（已注释） ==========
+    // const apiKey = process.env.DASHSCOPE_API_KEY;
+    // if (!apiKey) {
+    //   return NextResponse.json(
+    //     { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+    //     { status: 500 }
+    //   );
+    // }
+
+    // // 使用兼容模式端点，与 create-project 路由保持一致
+    // const response = await fetch(
+    //   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    //   {
+    //     method: "POST",
+    //     headers: {
+    //       "Content-Type": "application/json",
+    //       Authorization: `Bearer ${apiKey}`,
+    //     },
+    //     body: JSON.stringify({
+    //       model: "qwen-max",
+    //       messages: [
+    //         {
+    //           role: "system",
+    //           content: finalSystemPrompt,
+    //         },
+    //         {
+    //           role: "user",
+    //           content: userPrompt,
+    //         },
+    //       ],
+    //       temperature: 0.35,
+    //       max_tokens: 8000, // 单个场景的分镜生成
+    //     }),
+    //   }
+    // );
+
+    // if (!response.ok) {
+    //   const errorText = await response.text();
+    //   return NextResponse.json(
+    //     { success: false, error: `AI generation failed: ${response.status}` },
+    //     { status: 500 }
+    //   );
+    // }
+
+    // const aiResult = await response.json();
+    
+    // // 检查API响应
+    // // 检查是否有错误
+    // if (aiResult.code || aiResult.message) {
+    //   return NextResponse.json(
+    //     { 
+    //       success: false, 
+    //       error: `AI API error: ${aiResult.message || aiResult.code || 'Unknown error'}` 
+    //     },
+    //     { status: 500 }
+    //   );
+    // }
+    
+    // // 兼容模式端点返回格式: choices[0].message.content
+    // const content = aiResult.choices?.[0]?.message?.content || "";
+
+    // ========== 新的豆包 API 调用 ==========
+    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
+    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+        { success: false, error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
         { status: 500 }
       );
     }
 
-    // 使用兼容模式端点，与 create-project 路由保持一致
+    // 构建请求参数（使用 doubao API 格式）
+    const requestBody = {
+      model: "doubao-seed-1-6-251015",
+      messages: [
+        {
+          role: "system",
+          content: finalSystemPrompt,
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0.35,
+      max_tokens: 8000, // 单个场景的分镜生成
+    };
+
+    // 调用 doubao Chat Completions API
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: "qwen-max",
-          messages: [
-            {
-              role: "system",
-              content: finalSystemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000, // 单个场景的分镜生成
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("DashScope API error:", errorText);
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch (e) {
+        errorText = `HTTP ${response.status} ${response.statusText}`;
+      }
+      
+      // 如果是 401 错误，提供更详细的错误信息
+      if (response.status === 401) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "API key authentication failed. Please check your VOLCANO_API_KEY or ARK_API_KEY environment variable.",
+            details: errorText,
+          },
+          { status: 401 }
+        );
+      }
+      
       return NextResponse.json(
-        { success: false, error: `AI generation failed: ${response.status}` },
-        { status: 500 }
+        {
+          success: false,
+          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
+        },
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
     }
 
-    const aiResult = await response.json();
+    let aiResult;
+    try {
+      aiResult = await response.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid response from AI service. Please try again.",
+        },
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
     
     // 检查API响应
-    console.log("=== DashScope API 响应 ===");
-    console.log("aiResult keys:", Object.keys(aiResult));
-    console.log("完整的 aiResult:", JSON.stringify(aiResult, null, 2));
-    
     // 检查是否有错误
     if (aiResult.code || aiResult.message) {
-      console.error("DashScope API returned error:", aiResult);
       return NextResponse.json(
         { 
           success: false, 
-          error: `AI API error: ${aiResult.message || aiResult.code || 'Unknown error'}` 
+          error: `Doubao API error: ${aiResult.message || aiResult.code || 'Unknown error'}` 
         },
         { status: 500 }
       );
     }
     
-    // 兼容模式端点返回格式: choices[0].message.content
+    // doubao API 返回格式与 OpenAI 兼容: choices[0].message.content
     const content = aiResult.choices?.[0]?.message?.content || "";
     
     if (!content || content.trim().length === 0) {
-      console.error("AI返回内容为空");
-      console.error("完整的API响应:", JSON.stringify(aiResult, null, 2));
       return NextResponse.json(
         { 
           success: false, 
@@ -593,10 +547,6 @@ Please output the JSON object following the exact format specified in the system
 
     // 解析AI返回的JSON（多阶段尝试）
     try {
-      console.log("提取的内容长度:", content.length);
-      console.log("AI返回内容预览:", content.substring(0, 500));
-      console.log("AI返回内容结尾:", content.substring(Math.max(0, content.length - 500)));
-
       // 第一阶段：基本清理
       let jsonStr = content.trim();
       
@@ -611,18 +561,24 @@ Please output the JSON object following the exact format specified in the system
       jsonStr = jsonStr.replace(/^Scene\s+\d+\s*:\s*/i, '');
       
       // 尝试找到 JSON 数组或对象的开始和结束
-      // 先检查是否是数组格式
-      const arrayStart = jsonStr.indexOf('[');
-      const arrayEnd = jsonStr.lastIndexOf(']');
+      // 优先提取最外层的对象（因为AI返回的是对象格式，包含 sceneTitle, shotList 等）
       const objectStart = jsonStr.indexOf('{');
       const objectEnd = jsonStr.lastIndexOf('}');
+      const arrayStart = jsonStr.indexOf('[');
+      const arrayEnd = jsonStr.lastIndexOf(']');
       
-      // 优先处理数组格式（新格式）
-      if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+      // 优先处理对象格式（最外层对象）
+      if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+        // 检查是否是最外层对象（对象开始位置应该早于或等于数组开始位置）
+        if (arrayStart === -1 || objectStart <= arrayStart) {
+          jsonStr = jsonStr.substring(objectStart, objectEnd + 1);
+        } else {
+          // 如果数组在最外层，则提取数组
+          jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1);
+        }
+      } else if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+        // 如果没有对象，但有数组，则提取数组
         jsonStr = jsonStr.substring(arrayStart, arrayEnd + 1);
-      } else if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
-        // 兼容旧格式（单个对象）
-        jsonStr = jsonStr.substring(objectStart, objectEnd + 1);
       } else if (objectStart !== -1) {
         // 如果只有开始，尝试修复
         jsonStr = jsonStr.substring(objectStart);
@@ -638,88 +594,50 @@ Please output the JSON object following the exact format specified in the system
       // 第二阶段：尝试直接解析
       try {
         storyboardJson = JSON.parse(jsonStr);
-        console.log("Successfully parsed JSON on first attempt");
-        console.log("解析后的 storyboardJson 类型:", typeof storyboardJson);
-        console.log("解析后的 storyboardJson 是否为数组:", Array.isArray(storyboardJson));
-        console.log("解析后的 storyboardJson keys:", storyboardJson ? Object.keys(storyboardJson) : 'null');
-        console.log("解析后的 storyboardJson 完整结构预览:", JSON.stringify(storyboardJson).substring(0, 1000));
-        
         // 检查是否是数组格式（AI可能直接返回shotList数组）
         if (Array.isArray(storyboardJson)) {
-          console.log("⚠️ 检测到数组格式，转换为对象格式...");
           // 如果返回的是数组，转换为对象格式
           storyboardJson = {
             sceneTitle: `Scene ${sceneNumber}`,
             shotList: storyboardJson,
           };
-          console.log("转换后的 storyboardJson keys:", Object.keys(storyboardJson));
-          console.log("转换后的 shotList 长度:", storyboardJson.shotList?.length || 0);
         }
-        
-        console.log("解析后的 storyboardJson.shots 类型:", typeof storyboardJson?.shots);
-        console.log("解析后的 storyboardJson.shotList 类型:", typeof storyboardJson?.shotList);
-        console.log("解析后的 storyboardJson.shots 是否为数组:", Array.isArray(storyboardJson?.shots));
-        console.log("解析后的 storyboardJson.shotList 是否为数组:", Array.isArray(storyboardJson?.shotList));
-        console.log("解析后的 storyboardJson.shots 长度:", storyboardJson?.shots?.length);
-        console.log("解析后的 storyboardJson.shotList 长度:", storyboardJson?.shotList?.length);
-        
         if (storyboardJson?.shots?.[0]) {
-          console.log("第一个 shot (shots) 的字段:", Object.keys(storyboardJson.shots[0]));
         } else if (storyboardJson?.shotList?.[0]) {
-          console.log("第一个 shot (shotList) 的字段:", Object.keys(storyboardJson.shotList[0]));
-          console.log("第一个 shot 的 shotNumber:", storyboardJson.shotList[0].shotNumber);
-          console.log("第一个 shot 的 imagePrompt:", !!storyboardJson.shotList[0].imagePrompt);
-          console.log("第一个 shot 的 videoPrompt:", !!storyboardJson.shotList[0].videoPrompt);
         } else {
-          console.error("❌ storyboardJson.shots[0] 和 storyboardJson.shotList[0] 都不存在！");
-          console.error("storyboardJson 的值:", storyboardJson);
         }
       } catch (firstError: any) {
-        console.error("First parse attempt failed:", firstError.message);
-        
         // 第三阶段：移除注释后解析
         try {
           let cleanedJson = removeCommentsInValues(jsonStr);
           storyboardJson = JSON.parse(cleanedJson);
-          console.log("Successfully parsed after removing comments");
         } catch (secondError: any) {
-          console.error("Second parse attempt failed:", secondError.message);
-          
           // 第四阶段：清理字符串后解析
           try {
             let cleanedJson = cleanJsonString(jsonStr);
             storyboardJson = JSON.parse(cleanedJson);
-            console.log("Successfully parsed after cleaning string");
           } catch (thirdError: any) {
-            console.error("Third parse attempt failed:", thirdError.message);
-            
             // 第五阶段：修复 JSON 错误后解析
             try {
               let cleanedJson = fixJsonErrors(jsonStr);
               storyboardJson = JSON.parse(cleanedJson);
-              console.log("Successfully parsed after fixing JSON errors");
             } catch (fourthError: any) {
-              console.error("Fourth parse attempt failed:", fourthError.message);
-              console.error("JSON string length:", jsonStr.length);
-              console.error("JSON string preview:", jsonStr.substring(0, 1000));
-              console.error("JSON string ending:", jsonStr.substring(Math.max(0, jsonStr.length - 1000)));
-              
               // 最后尝试：移除所有可能的非 JSON 内容
               try {
-                // 尝试提取完整的 JSON 数组或对象
-                const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+                // 尝试提取完整的 JSON 对象或数组（优先对象）
+                // 使用非贪婪匹配，找到最外层的对象/数组
                 const objectMatch = jsonStr.match(/\{[\s\S]*\}/);
-                if (arrayMatch) {
-                  storyboardJson = JSON.parse(arrayMatch[0]);
-                  console.log("Successfully parsed using regex extraction (array)");
-                } else if (objectMatch) {
+                const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+                
+                // 优先处理对象格式
+                if (objectMatch) {
                   storyboardJson = JSON.parse(objectMatch[0]);
-                  console.log("Successfully parsed using regex extraction (object)");
+                } else if (arrayMatch) {
+                  storyboardJson = JSON.parse(arrayMatch[0]);
                 } else {
                   throw new Error("Could not extract valid JSON");
                 }
               } catch (finalError: any) {
-                console.error("All parse attempts failed:", finalError.message);
                 return NextResponse.json(
                   { 
                     success: false, 
@@ -733,7 +651,6 @@ Please output the JSON object following the exact format specified in the system
         }
       }
     } catch (parseError: any) {
-      console.error("Failed to parse AI response:", parseError);
       return NextResponse.json(
         { 
           success: false, 
@@ -744,25 +661,11 @@ Please output the JSON object following the exact format specified in the system
     }
 
     // 11. 转换新格式到兼容格式
-    // 新格式: { sceneTitle, shotList: [{ shotNumber, shotDescription, imagePrompt, videoPrompt, narration, dialogue }] }
+    // 新格式: { title, summary, shots: [{ id, scene, time, camera, environment, characters[], objects[], videoShot }] }
     // 兼容格式: { scene_title, scene_summary, shots: [{ shot_number, description, image_prompt, video_prompt, narration, dialogue }] }
-    console.log("=== 转换新格式到兼容格式 ===");
-    console.log("转换前的 storyboardJson:", {
-      type: typeof storyboardJson,
-      isNull: storyboardJson === null,
-      keys: storyboardJson ? Object.keys(storyboardJson) : [],
-      hasShotList: !!storyboardJson?.shotList,
-      hasShots: !!storyboardJson?.shots,
-      shotListType: typeof storyboardJson?.shotList,
-      shotListIsArray: Array.isArray(storyboardJson?.shotList),
-      shotListLength: storyboardJson?.shotList?.length,
-    });
-    
     if (storyboardJson) {
       // 检查是否是新格式（有 shotList）
       if (storyboardJson.shotList && Array.isArray(storyboardJson.shotList)) {
-        console.log("检测到新格式（shotList），开始转换...");
-        
         // 转换 sceneTitle -> scene_title
         if (storyboardJson.sceneTitle) {
           storyboardJson.scene_title = storyboardJson.sceneTitle;
@@ -772,12 +675,13 @@ Please output the JSON object following the exact format specified in the system
         
         // Convert shotList -> shots, and map field names
         // New format: imageShot.imageDescription -> image_prompt, videoShot.videoDescription -> video_prompt
+        // Also support direct fields: imageDescription -> image_prompt, videoDescription -> video_prompt
         storyboardJson.shots = storyboardJson.shotList.map((shot: any) => {
           return {
             shot_number: shot.shotNumber || shot.shot_number || 0,
-            description: shot.imageShot?.imageDescription || shot.shotDescription || shot.description || "",
-            image_prompt: shot.imageShot?.imageDescription || shot.imagePrompt || shot.image_prompt || "",
-            video_prompt: shot.videoShot?.videoDescription || shot.videoPrompt || shot.video_prompt || "",
+            description: shot.imageShot?.imageDescription || shot.imageDescription || shot.shotDescription || shot.description || "",
+            image_prompt: shot.imageShot?.imageDescription || shot.imageDescription || shot.imagePrompt || shot.image_prompt || "",
+            video_prompt: shot.videoShot?.videoDescription || shot.videoDescription || shot.videoPrompt || shot.video_prompt || "",
             narration: shot.narration || "",
             dialogue: shot.dialogue || "",
             characters: shot.appearCharacters?.join(', ') || shot.characters || "",
@@ -790,9 +694,17 @@ Please output the JSON object following the exact format specified in the system
         
         // Extract charactersDetected if available and use it for character extraction
         if (storyboardJson.charactersDetected && Array.isArray(storyboardJson.charactersDetected) && storyboardJson.charactersDetected.length > 0) {
-          console.log("Detected characters from AI:", storyboardJson.charactersDetected);
           // Store for later use in character extraction
           storyboardJson._aiDetectedCharacters = storyboardJson.charactersDetected;
+        }
+        
+        // Extract and preserve new fields: locationDetected and fixedClothingStyle
+        if (storyboardJson.locationDetected) {
+          storyboardJson.location_detected = storyboardJson.locationDetected;
+        }
+        
+        if (storyboardJson.fixedClothingStyle) {
+          storyboardJson.fixed_clothing_style = storyboardJson.fixedClothingStyle;
         }
         
         // 生成 scene_summary（从第一个shot的narration或description）
@@ -805,51 +717,147 @@ Please output the JSON object following the exact format specified in the system
           }
         }
         
-        // Delete new format fields
+        // Delete new format fields (but preserve location_detected and fixed_clothing_style)
         delete storyboardJson.shotList;
         delete storyboardJson.sceneTitle;
         delete storyboardJson.charactersDetected; // Clean up after extraction
-        
-        console.log("转换完成，新格式字段已删除");
+        delete storyboardJson.locationDetected; // Clean up after extraction (using location_detected)
+        delete storyboardJson.fixedClothingStyle; // Clean up after extraction (using fixed_clothing_style)
       } else if (storyboardJson.shots && Array.isArray(storyboardJson.shots)) {
-        // 旧格式，确保有 scene_title 和 scene_summary
-        console.log("检测到旧格式（shots），确保兼容字段存在...");
-        if (storyboardJson.scene_content && !storyboardJson.scene_summary) {
-          storyboardJson.scene_summary = storyboardJson.scene_content;
-        }
-        if (!storyboardJson.scene_title) {
-          const sceneTitleSource = storyboardJson.scene_content || storyboardJson.scene_summary || "";
-          storyboardJson.scene_title = sceneTitleSource.substring(0, 50).trim() || `Scene ${sceneNumber}`;
+        const firstShot = storyboardJson.shots[0];
+        const looksLikeNewShotSchema =
+          !!firstShot &&
+          (
+            (typeof firstShot.camera === 'object' && firstShot.camera !== null) ||
+            (typeof firstShot.videoShot === 'string') ||
+            (Array.isArray(firstShot.characters) && firstShot.characters.length > 0 && typeof firstShot.characters[0] === 'object') ||
+            (typeof firstShot.environment === 'string' && !('image_prompt' in firstShot))
+          );
+        
+        if (looksLikeNewShotSchema || storyboardJson.title || storyboardJson.summary) {
+          const convertedShots = storyboardJson.shots.map((shot: any, index: number) => {
+            const characterDetails = Array.isArray(shot.characters) ? shot.characters : [];
+            const objectDetails = Array.isArray(shot.objects) ? shot.objects : [];
+            
+            const appearCharacters = characterDetails
+              .map((char: any) => (char && typeof char === 'object' && char.name ? String(char.name).trim() : ''))
+              .filter((name: string) => !!name);
+            
+            const characterSummary = characterDetails
+              .map((char: any) => {
+                if (!char || typeof char !== 'object') return '';
+                const parts: string[] = [];
+                if (char.name) parts.push(`${char.name}`);
+                const detailBits: string[] = [];
+                if (char.position) detailBits.push(`position ${char.position}`);
+                if (char.action) detailBits.push(`action ${char.action}`);
+                if (char.orientation) detailBits.push(`facing ${char.orientation}`);
+                if (char.expression) detailBits.push(`expression ${char.expression}`);
+                if (detailBits.length > 0) {
+                  parts.push(`(${detailBits.join(', ')})`);
+                }
+                return parts.join(' ');
+              })
+              .filter(Boolean)
+              .join(' ');
+            
+            const objectsSummary = objectDetails
+              .map((obj: any) => {
+                if (!obj || typeof obj !== 'object') return '';
+                const objParts: string[] = [];
+                if (obj.name) objParts.push(`${obj.name}`);
+                const stateBits: string[] = [];
+                if (obj.position) stateBits.push(`position ${obj.position}`);
+                if (obj.state) stateBits.push(`state ${obj.state}`);
+                if (stateBits.length > 0) {
+                  objParts.push(`(${stateBits.join(', ')})`);
+                }
+                return objParts.join(' ');
+              })
+              .filter(Boolean)
+              .join(' ');
+            
+            const descriptionParts: string[] = [];
+            if (shot.scene) descriptionParts.push(`Scene: ${shot.scene}`);
+            if (shot.time) descriptionParts.push(`Time: ${shot.time}`);
+            if (shot.environment) descriptionParts.push(`Environment: ${shot.environment}`);
+            if (characterSummary) descriptionParts.push(`Characters: ${characterSummary}`);
+            if (objectsSummary) descriptionParts.push(`Objects: ${objectsSummary}`);
+            if (shot.camera) {
+              const cameraBits: string[] = [];
+              if (shot.camera.shotType) cameraBits.push(`type ${shot.camera.shotType}`);
+              if (shot.camera.angle) cameraBits.push(`angle ${shot.camera.angle}`);
+              if (shot.camera.movement) cameraBits.push(`movement ${shot.camera.movement}`);
+              if (cameraBits.length > 0) {
+                descriptionParts.push(`Camera: ${cameraBits.join(', ')}`);
+              }
+            }
+            const descriptionText = descriptionParts.join(' ').trim();
+            const videoShotText = typeof shot.videoShot === 'string'
+              ? shot.videoShot
+              : shot.videoShot?.videoDescription || shot.videoDescription || '';
+            const imageShotText = shot.imageShot?.imageDescription || shot.imageDescription || descriptionText || '';
+            
+            return {
+              ...shot,
+              shot_number: shot.id ?? shot.shot_number ?? index + 1,
+              description: descriptionText || imageShotText || videoShotText || '',
+              image_prompt: imageShotText || descriptionText || videoShotText || '',
+              video_prompt: videoShotText,
+              narration: shot.narration || '',
+              dialogue: shot.dialogue || '',
+              characters: appearCharacters.join(', '),
+              appearCharacters,
+              previousShotContinuation: shot.previousShotContinuation || '',
+              character_layout: characterDetails,
+              object_layout: objectDetails,
+            };
+          });
+          
+          storyboardJson.shots = convertedShots;
+          const resolvedSceneTitle = String(storyboardJson.title || storyboardJson.scene_title || `Scene ${sceneNumber}`).trim() || `Scene ${sceneNumber}`;
+          storyboardJson.scene_title = resolvedSceneTitle;
+          const resolvedSummarySource = storyboardJson.summary || storyboardJson.scene_summary || resolvedSceneTitle;
+          storyboardJson.scene_summary = String(resolvedSummarySource || resolvedSceneTitle).trim() || resolvedSceneTitle;
+          
+          const detectedCharacters = new Set<string>();
+          convertedShots.forEach((shot: any) => {
+            if (Array.isArray(shot.appearCharacters)) {
+              shot.appearCharacters.forEach((name: string) => {
+                if (name) detectedCharacters.add(name);
+              });
+            }
+          });
+          if (detectedCharacters.size > 0) {
+            storyboardJson._aiDetectedCharacters = Array.from(detectedCharacters);
+          }
+          
+          if (!storyboardJson.summary) {
+            storyboardJson.summary = storyboardJson.scene_summary;
+          }
+          
+          if (!storyboardJson.location_detected) {
+            const firstScene = firstShot?.scene;
+            if (typeof firstScene === 'string' && firstScene.trim()) {
+              storyboardJson.location_detected = firstScene.trim();
+            }
+          }
+        } else {
+          // 旧格式，确保有 scene_title 和 scene_summary
+          if (storyboardJson.scene_content && !storyboardJson.scene_summary) {
+            storyboardJson.scene_summary = storyboardJson.scene_content;
+          }
+          if (!storyboardJson.scene_title) {
+            const sceneTitleSource = storyboardJson.scene_content || storyboardJson.scene_summary || "";
+            storyboardJson.scene_title = sceneTitleSource.substring(0, 50).trim() || `Scene ${sceneNumber}`;
+          }
         }
       }
-      
-      console.log("转换后的 storyboardJson:", {
-        hasShots: !!storyboardJson.shots,
-        shotsType: typeof storyboardJson.shots,
-        shotsIsArray: Array.isArray(storyboardJson.shots),
-        shotsLength: storyboardJson.shots?.length,
-        scene_title: storyboardJson.scene_title,
-        scene_summary: storyboardJson.scene_summary ? storyboardJson.scene_summary.substring(0, 100) : null,
-      });
     } else {
-      console.error("storyboardJson 为 null 或 undefined，无法转换格式");
     }
 
     // 12. 为每个shot添加characters字段（从场次的"主要角色"中提取，如果没取到则从数据库角色表匹配）
-    console.log("=== 开始为shot添加characters字段 ===");
-    console.log("检查 storyboardJson:", {
-      isNull: storyboardJson === null,
-      isUndefined: storyboardJson === undefined,
-      type: typeof storyboardJson,
-      keys: storyboardJson ? Object.keys(storyboardJson) : [],
-      hasShots: !!storyboardJson?.shots,
-      shotsType: typeof storyboardJson?.shots,
-      shotsIsArray: Array.isArray(storyboardJson?.shots),
-      shotsLength: storyboardJson?.shots?.length,
-    });
-    
     if (storyboardJson && storyboardJson.shots && Array.isArray(storyboardJson.shots)) {
-      console.log("✓ storyboardJson.shots 存在且是数组，开始处理");
       // 提取角色名称列表
       let characterNames: string[] = [];
       
@@ -867,22 +875,12 @@ Please output the JSON object following the exact format specified in the system
           }
         });
       }
-      
-      console.log("从主要角色字段提取的角色名称:", characterNames);
-      
       // 方法2: 如果没取到，直接从数据库角色表中匹配出现在场次文本中的角色
       if (characterNames.length === 0) {
-        console.log("主要角色字段为空或未取到，从数据库角色表中匹配场次文本中的角色...");
-        
         // 合并场次描述和场次故事文本
         const sceneText = ((sceneDescription || '') + ' ' + (sceneStory || '')).trim();
-        console.log("场次文本长度:", sceneText.length);
-        console.log("场次文本预览:", sceneText.substring(0, 200));
-        
         // 从数据库角色表中匹配出现在场次文本中的角色
         if (characters && Array.isArray(characters) && characters.length > 0) {
-          console.log("数据库角色表中共有", characters.length, "个角色");
-          
           characters.forEach((char: any) => {
             const charName = char.name || char.姓名 || '';
             if (charName) {
@@ -890,7 +888,6 @@ Please output the JSON object following the exact format specified in the system
               // 检查角色名称是否出现在场次文本中
               if (sceneText && sceneText.includes(nameStr)) {
                 characterNames.push(nameStr);
-                console.log(`  ✓ 匹配到角色: "${nameStr}"`);
               }
             }
           });
@@ -898,7 +895,6 @@ Please output the JSON object following the exact format specified in the system
         
         // 方法3: 如果还是没找到，使用数据库中的所有角色（至少保证有角色数据）
         if (characterNames.length === 0) {
-          console.log("场次文本中未匹配到角色，使用数据库中的所有角色...");
           if (characters && Array.isArray(characters) && characters.length > 0) {
             characters.forEach((char: any) => {
               const charName = char.name || char.姓名 || '';
@@ -906,13 +902,11 @@ Please output the JSON object following the exact format specified in the system
                 characterNames.push(String(charName).trim());
               }
             });
-            console.log("使用所有角色:", characterNames);
           }
         }
         
         // Method 4: If still no characters found, try to extract from AI's charactersDetected field (new format)
         if (characterNames.length === 0 && storyboardJson._aiDetectedCharacters && Array.isArray(storyboardJson._aiDetectedCharacters)) {
-          console.log("Extracting characters from AI's charactersDetected field...");
           storyboardJson._aiDetectedCharacters.forEach((charName: any) => {
             if (typeof charName === 'string' && charName.trim()) {
               characterNames.push(charName.trim());
@@ -923,12 +917,10 @@ Please output the JSON object following the exact format specified in the system
               }
             }
           });
-          console.log("Characters from AI's charactersDetected:", characterNames);
         }
         
         // Method 5: If still no characters, try to extract from AI's characters field (old format)
         if (characterNames.length === 0 && storyboardJson.characters && Array.isArray(storyboardJson.characters)) {
-          console.log("Extracting characters from AI's characters field (old format)...");
           storyboardJson.characters.forEach((char: any) => {
             const charName = char.name || char.姓名 || '';
             if (charName) {
@@ -950,10 +942,6 @@ Please output the JSON object following the exact format specified in the system
       }
       
       const charactersString = characterNames.filter(name => name.length > 0).join(', ');
-      
-      console.log("最终提取的角色名称:", characterNames);
-      console.log("角色字符串:", charactersString);
-      
       // Add characters field to each shot, and ensure image_prompt and video_prompt exist
       // New format shot may contain appearCharacters, previousShotContinuation, imageShot, videoShot, etc.
       storyboardJson.shots = storyboardJson.shots.map((shot: any) => {
@@ -973,15 +961,25 @@ Please output the JSON object following the exact format specified in the system
         };
         
         // 确保image_prompt存在（新格式应该已经包含）
+        // 优先使用直接字段 imageDescription，然后是 imageShot.imageDescription，最后是其他字段
         if (!updatedShot.image_prompt) {
-          console.warn(`Shot ${updatedShot.shot_number} missing image_prompt, using description or camera_description as fallback`);
-          updatedShot.image_prompt = updatedShot.description || updatedShot.camera_description || "";
+          updatedShot.image_prompt = updatedShot.imageDescription 
+            || updatedShot.imageShot?.imageDescription 
+            || updatedShot.imagePrompt
+            || updatedShot.description 
+            || updatedShot.camera_description 
+            || "";
         }
         
         // 确保video_prompt存在（新格式应该已经包含）
+        // 优先使用直接字段 videoDescription，然后是 videoShot.videoDescription，最后是其他字段
         if (!updatedShot.video_prompt) {
-          console.warn(`Shot ${updatedShot.shot_number} missing video_prompt, generating from image_prompt`);
-          updatedShot.video_prompt = updatedShot.image_prompt || updatedShot.description || "";
+          updatedShot.video_prompt = updatedShot.videoDescription
+            || updatedShot.videoShot?.videoDescription
+            || updatedShot.videoPrompt
+            || updatedShot.image_prompt 
+            || updatedShot.description 
+            || "";
         }
         
         // 为了兼容性，确保有 description 字段（如果没有，从 camera_description 或其他字段生成）
@@ -1032,86 +1030,41 @@ Please output the JSON object following the exact format specified in the system
         
         return updatedShot;
       });
-      
-      console.log("已为所有shot添加characters字段，每个shot的字段:", 
-        storyboardJson.shots.map((s: any) => ({ 
-          shot_number: s.shot_number, 
-          characters: s.characters,
-          has_image_prompt: !!s.image_prompt,
-          has_video_prompt: !!s.video_prompt,
-          image_prompt_length: s.image_prompt?.length || 0,
-          video_prompt_length: s.video_prompt?.length || 0
-        }))
-      );
-      console.log("处理后的 storyboardJson.shots 长度:", storyboardJson.shots.length);
-      console.log("处理后的 storyboardJson keys:", Object.keys(storyboardJson));
     } else {
-      console.error("❌ storyboardJson.shots 不存在或不是数组，无法添加characters字段");
-      console.error("storyboardJson:", storyboardJson);
-      console.error("storyboardJson.shots:", storyboardJson?.shots);
+      // No shots to process
     }
 
     // 9. 保存分镜数据到数据库（更新 scene_item 的 metadata）
     // 确保所有shot都包含image_prompt和video_prompt
-    console.log("=== 保存分镜数据到数据库前 ===");
-    console.log("storyboardJson 检查:", {
-      isNull: storyboardJson === null,
-      isUndefined: storyboardJson === undefined,
-      type: typeof storyboardJson,
-      keys: storyboardJson ? Object.keys(storyboardJson) : [],
-      hasShots: !!storyboardJson?.shots,
-      shotsType: typeof storyboardJson?.shots,
-      shotsIsArray: Array.isArray(storyboardJson?.shots),
-      shotsLength: storyboardJson?.shots?.length,
-    });
-    
     if (storyboardJson && storyboardJson.shots && Array.isArray(storyboardJson.shots)) {
-      console.log("处理 shots 数组，数量:", storyboardJson.shots.length);
       storyboardJson.shots = storyboardJson.shots.map((shot: any, index: number) => {
         // 确保image_prompt和video_prompt都存在
+        // 优先使用直接字段 imageDescription，然后是 imageShot.imageDescription，最后是其他字段
         if (!shot.image_prompt) {
-          console.warn(`Shot ${index + 1} 缺少 image_prompt，使用 description 作为后备`);
-          shot.image_prompt = shot.description || "";
+          shot.image_prompt = shot.imageDescription 
+            || shot.imageShot?.imageDescription 
+            || shot.imagePrompt
+            || shot.description 
+            || "";
         }
+        // 优先使用直接字段 videoDescription，然后是 videoShot.videoDescription，最后是其他字段
         if (!shot.video_prompt) {
-          console.warn(`Shot ${index + 1} 缺少 video_prompt，使用 image_prompt 作为后备`);
-          shot.video_prompt = shot.image_prompt || shot.description || "";
+          shot.video_prompt = shot.videoDescription
+            || shot.videoShot?.videoDescription
+            || shot.videoPrompt
+            || shot.image_prompt 
+            || shot.description 
+            || "";
         }
         return shot;
       });
-      console.log("处理后的 shots 数组长度:", storyboardJson.shots.length);
     } else {
-      console.error("storyboardJson 或 shots 无效:", {
-        hasStoryboardJson: !!storyboardJson,
-        hasShots: !!storyboardJson?.shots,
-        shotsIsArray: Array.isArray(storyboardJson?.shots),
-      });
     }
     
     const updatedMetadata = {
       ...metadata,
       storyboard: storyboardJson, // 保存完整的分镜JSON（包含image_prompt和video_prompt字段）
     };
-    
-    console.log("=== 保存到数据库的分镜数据 ===");
-    console.log("保存前的 metadata keys:", Object.keys(metadata));
-    console.log("保存前的 metadata.storyboard:", metadata.storyboard ? '存在' : '不存在');
-    console.log("要保存的 storyboardJson keys:", storyboardJson ? Object.keys(storyboardJson) : []);
-    console.log("要保存的 storyboardJson.shots 数量:", storyboardJson?.shots?.length || 0);
-    console.log("保存后的 updatedMetadata keys:", Object.keys(updatedMetadata));
-    console.log("保存后的 updatedMetadata.storyboard keys:", updatedMetadata.storyboard ? Object.keys(updatedMetadata.storyboard) : []);
-    console.log("保存后的 updatedMetadata.storyboard.shots 数量:", updatedMetadata.storyboard?.shots?.length || 0);
-    console.log("保存到数据库的分镜数据预览:", {
-      scene_title: storyboardJson?.scene_title,
-      shots_count: storyboardJson?.shots?.length,
-      first_shot_fields: storyboardJson?.shots?.[0] ? Object.keys(storyboardJson.shots[0]) : [],
-      first_shot_has_image_prompt: !!storyboardJson?.shots?.[0]?.image_prompt,
-      first_shot_has_video_prompt: !!storyboardJson?.shots?.[0]?.video_prompt,
-      fullStoryboardKeys: storyboardJson ? Object.keys(storyboardJson) : [],
-      fullStoryboardString: storyboardJson ? JSON.stringify(storyboardJson).substring(0, 500) : 'null',
-    });
-    console.log("完整的 updatedMetadata.storyboard:", JSON.stringify(updatedMetadata.storyboard, null, 2).substring(0, 2000));
-
     const { error: updateError } = await supabase
       .from("anim_scene_items")
       .update({
@@ -1122,7 +1075,6 @@ Please output the JSON object following the exact format specified in the system
     
     // 验证保存是否成功
     if (!updateError) {
-      console.log("✅ 数据库更新成功，验证保存的数据...");
       const { data: verifyData, error: verifyError } = await supabase
         .from("anim_scene_items")
         .select("metadata")
@@ -1132,26 +1084,22 @@ Please output the JSON object following the exact format specified in the system
       if (!verifyError && verifyData) {
         const savedMetadata = verifyData.metadata || {};
         const savedStoryboard = savedMetadata.storyboard || null;
-        console.log("验证保存的数据:", {
-          hasMetadata: !!savedMetadata,
-          hasStoryboard: !!savedStoryboard,
-          storyboardKeys: savedStoryboard ? Object.keys(savedStoryboard) : [],
-          shotsCount: savedStoryboard?.shots?.length || 0,
-          shotsIsArray: Array.isArray(savedStoryboard?.shots),
-          firstShotKeys: savedStoryboard?.shots?.[0] ? Object.keys(savedStoryboard.shots[0]) : [],
-        });
-        console.log("保存的完整 storyboard 预览:", savedStoryboard ? JSON.stringify(savedStoryboard).substring(0, 1000) : 'null');
       } else {
-        console.error("验证保存数据时出错:", verifyError);
       }
     }
 
     if (updateError) {
-      console.error("Error updating scene item:", updateError);
       return NextResponse.json(
         { success: false, error: `Failed to save storyboard: ${updateError.message}` },
         { status: 500 }
       );
+    }
+
+    // 打印生成的分镜结果，方便调试
+    if (storyboardJson) {
+      console.log("[generate-storyboard] storyboard result:", JSON.stringify(storyboardJson, null, 2));
+    } else {
+      console.log("[generate-storyboard] storyboard result is empty or undefined");
     }
 
     return NextResponse.json({
@@ -1161,7 +1109,6 @@ Please output the JSON object following the exact format specified in the system
       },
     });
   } catch (error) {
-    console.error("Error generating storyboard:", error);
     return NextResponse.json(
       {
         success: false,

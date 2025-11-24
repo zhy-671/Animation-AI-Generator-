@@ -9,7 +9,6 @@ export async function GET() {
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     
     if (!supabaseUrl) {
-      console.error('NEXT_PUBLIC_SUPABASE_URL is not set');
       return NextResponse.json(
         { videos: [], error: 'Supabase URL is not configured' },
         { status: 500 }
@@ -17,17 +16,11 @@ export async function GET() {
     }
     
     if (!supabaseServiceKey) {
-      console.error('Neither SUPABASE_SERVICE_ROLE_KEY nor NEXT_PUBLIC_SUPABASE_ANON_KEY is set');
       return NextResponse.json(
         { videos: [], error: 'Supabase API key is not configured' },
         { status: 500 }
       );
     }
-    
-    console.log('Supabase URL:', supabaseUrl);
-    console.log('Using service role key:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
-    console.log('Service key length:', supabaseServiceKey.length);
-    
     const supabase = createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
@@ -37,19 +30,13 @@ export async function GET() {
     
     // 查找指定邮箱的用户
     const exampleEmail = 'gareaukeenan3155@gmail.com';
-    console.log('Looking for user with email:', exampleEmail);
-    
     // 通过 anim_customers 表查找用户ID（因为该表有 email 字段）
     const { data: customerData, error: customerError } = await supabase
       .from('anim_customers')
       .select('user_id, email')
       .eq('email', exampleEmail)
       .single();
-    
-    console.log('Customer query result:', { customerData, customerError });
-    
     if (customerError || !customerData) {
-      console.error('Error finding user by email:', customerError);
       // 检查是否是 API key 错误
       if (customerError?.message?.includes('Invalid API key') || customerError?.code === 'PGRST301') {
         return NextResponse.json(
@@ -83,8 +70,6 @@ export async function GET() {
     }
     
     const userId = customerData.user_id;
-    console.log('Found user ID:', userId);
-    
     // 查询该用户的所有已完成视频
     const { data: videos, error: videosError } = await supabase
       .from('anim_videos')
@@ -94,15 +79,7 @@ export async function GET() {
       .not('video_url', 'is', null)
       .order('created_at', { ascending: false })
       .limit(20);
-    
-    console.log('Videos query result:', { 
-      count: videos?.length || 0, 
-      videos: videos?.slice(0, 3), // 只打印前3个
-      error: videosError 
-    });
-    
     if (videosError) {
-      console.error('Error fetching videos:', videosError);
       // 检查是否是 API key 错误
       if (videosError?.message?.includes('Invalid API key') || videosError?.code === 'PGRST301') {
         return NextResponse.json(
@@ -136,7 +113,6 @@ export async function GET() {
     
     // 如果没有视频，返回空数组
     if (!videos || videos.length === 0) {
-      console.log('No videos found for user:', userId);
       return NextResponse.json(
         { videos: [], message: 'No videos found for this user' },
         {
@@ -165,9 +141,6 @@ export async function GET() {
         title: title
       };
     });
-
-    console.log('Formatted videos count:', formattedVideos.length);
-    
     return NextResponse.json(
       { videos: formattedVideos },
       {
@@ -178,7 +151,6 @@ export async function GET() {
       }
     );
   } catch (error) {
-    console.error('Error in /api/videos:', error);
     return NextResponse.json(
       { 
         error: 'Internal server error', 

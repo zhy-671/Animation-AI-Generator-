@@ -63,7 +63,6 @@ async function operateCreditsForWebhook(params: {
     });
 
   if (historyError) {
-    console.error('Failed to insert credits history:', historyError);
     // 如果历史记录失败，回滚积分更新
     await serviceClient
       .from('anim_customers')
@@ -75,14 +74,6 @@ async function operateCreditsForWebhook(params: {
       error: `Failed to record credits history: ${historyError.message}` 
     };
   }
-
-  console.log('✅ Credits history recorded:', {
-    customer_id: customer.id,
-    amount: params.amount,
-    type: params.type,
-    metadata: params.metadata,
-  });
-
   return { success: true };
 }
 
@@ -105,7 +96,6 @@ export async function POST(request: NextRequest) {
 
     // Validate body is not empty
     if (!body || body.trim().length === 0) {
-      console.error('Empty webhook body received');
       return NextResponse.json(
         { error: 'Empty request body' },
         { status: 400 }
@@ -123,7 +113,6 @@ export async function POST(request: NextRequest) {
       '';
 
     if (!CREEM_WEBHOOK_SECRET) {
-      console.error('Missing CREEM_WEBHOOK_SECRET env var. Refusing to process webhook.');
       return NextResponse.json(
         { error: 'Server misconfiguration: CREEM_WEBHOOK_SECRET is not set' },
         { status: 500 }
@@ -132,7 +121,6 @@ export async function POST(request: NextRequest) {
 
     // Verify the webhook signature
     if (!signature) {
-      console.error('Missing creem-signature header');
       return NextResponse.json(
         { error: 'Missing signature header' },
         { status: 401 }
@@ -141,21 +129,16 @@ export async function POST(request: NextRequest) {
 
     const isValid = verifyCreemWebhookSignature(body, signature, CREEM_WEBHOOK_SECRET);
     if (!isValid) {
-      console.error('Invalid webhook signature');
       return NextResponse.json(
         { error: 'Invalid signature' },
         { status: 401 }
       );
     }
-
-    console.log('Webhook signature verified successfully');
-
     // Parse JSON with error handling
     let event: CreemWebhookEvent;
     try {
       event = JSON.parse(body) as CreemWebhookEvent;
     } catch (parseError) {
-      console.error('JSON parse error:', parseError);
       const errorMsg = parseError instanceof Error ? parseError.message : 'Unknown parse error';
       return NextResponse.json(
         { 
@@ -168,7 +151,6 @@ export async function POST(request: NextRequest) {
 
     // Validate event structure
     if (!event || !event.eventType) {
-      console.error('Invalid event structure:', event);
       return NextResponse.json(
         { error: 'Invalid event structure: missing eventType' },
         { status: 400 }
@@ -176,14 +158,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Log received event for debugging
-    console.log('Received webhook event:', {
-      eventType: event.eventType,
-      eventId: event.id,
-      objectId: event.object?.id,
-      hasOrder: !!event.object?.order,
-      hasSubscription: !!event.object?.subscription,
-    });
-
     // Handle different event types with error handling
     try {
       switch (event.eventType) {
@@ -203,10 +177,8 @@ export async function POST(request: NextRequest) {
           await handleSubscriptionExpired(event);
           break;
         default:
-          console.log(`Unhandled event type: ${event.eventType}`);
       }
     } catch (handlerError) {
-      console.error(`Error handling ${event.eventType}:`, handlerError);
       throw handlerError; // Re-throw to be caught by outer catch
     }
 
@@ -216,8 +188,6 @@ export async function POST(request: NextRequest) {
       processed: true 
     });
   } catch (error) {
-    console.error('Error processing webhook:', error);
-    
     // Return more specific error information
     let errorMessage = 'Unknown error';
     if (error instanceof Error) {
@@ -291,31 +261,14 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
 
   // Only process if order status is "paid"
   if (checkout.order.status !== 'paid') {
-    console.warn(`Skipping checkout ${checkout.id}: order status is "${checkout.order.status}", expected "paid"`);
     return; // Don't throw error, just skip processing
   }
 
   // Extract metadata from all possible locations
   const metadata = extractMetadata(checkout);
-  
-  console.log('Checkout object structure:', {
-    hasCheckout: !!checkout,
-    checkoutId: checkout?.id,
-    hasOrder: !!checkout?.order,
-    orderId: checkout?.order?.id, // Creem 的真实订单 ID
-    orderStatus: checkout?.order?.status,
-    orderType: checkout?.order?.type,
-    hasSubscription: !!checkout?.subscription,
-    extractedMetadata: metadata,
-  });
-
   // Get user_id from metadata
   const userId = metadata.user_id;
-  
-  console.log('Extracted userId:', userId);
-  
   if (!userId) {
-    console.error('Missing user_id in checkout metadata');
     throw new Error('user_id is required in checkout metadata');
   }
 
@@ -331,9 +284,6 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
       throw new Error('product_type is required in checkout metadata or order.type must be "recurring" or "one-time"');
     }
   }
-
-  console.log('Product type:', productType);
-
   // Get customer_id from metadata or find by user_id
   let customerId: string;
   if (metadata.customer_id) {
@@ -366,9 +316,7 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
     
     if (data) {
       order = data;
-      console.log('✅ Found order by Creem order ID:', creemOrderId);
     } else {
-      console.log('Order not found by Creem order ID, trying metadata.order_id...');
     }
   }
 
@@ -382,7 +330,6 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
     
     if (data) {
       order = data;
-      console.log('✅ Found order by metadata.order_id:', metadata.order_id);
     }
   }
 
@@ -398,19 +345,11 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
     
     if (data) {
       order = data;
-      console.log('✅ Found order by checkout_id:', checkout.id);
     }
   }
 
   // 如果找不到订单，记录警告但继续处理（可能订单记录丢失）
   if (!order) {
-    console.warn('⚠️ Order not found in database, but continuing with credit processing', {
-      creem_order_id: creemOrderId,
-      metadata_order_id: metadata.order_id,
-      checkout_id: checkout.id,
-      user_id: userId,
-      customer_id: customerId,
-    });
   }
 
   // 更新或创建订单记录
@@ -434,24 +373,16 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
       .eq('id', order.id);
 
     if (updateError) {
-      console.error('Error updating order:', updateError);
     } else {
-      console.log('✅ Order updated successfully');
     }
   }
 
   // Handle credit purchases
   if (productType === 'credits') {
-    console.log('Processing credit purchase...');
-    
     // Get credits from metadata
     const creditsRaw = metadata.credits;
     const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
-    
-    console.log('Credit purchase details:', { creditsRaw, credits });
-
     if (!credits || credits <= 0) {
-      console.error('Invalid credits amount:', creditsRaw);
       throw new Error(`Invalid credits amount: ${creditsRaw}`);
     }
 
@@ -474,22 +405,14 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
     });
 
     if (!creditResult.success) {
-      console.error('Error adding credits:', creditResult.error);
       throw new Error(`Failed to add credits: ${creditResult.error || 'Unknown error'}`);
     }
-
-    console.log(`✅ Added ${credits} credits to customer ${customerId}`);
   }
   // Handle subscription purchases
   else if (productType === 'subscription') {
-    console.log('Processing subscription purchase...');
-
     // Get monthly credits from metadata
     const creditsRaw = metadata.credits;
     const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
-
-    console.log('Subscription checkout credits:', { creditsRaw, credits });
-
     if (credits > 0) {
       // Add monthly credits for initial subscription (使用 webhook 专用函数)
       const creditResult = await operateCreditsForWebhook({
@@ -511,33 +434,38 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
       });
 
       if (!creditResult.success) {
-        console.error('Error adding subscription credits:', creditResult.error);
         throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
       }
-
-      console.log(`✅ Added ${credits} subscription credits to customer ${customerId}`);
     }
 
     // Update subscription plan in anim_customers
     if (metadata.plan_name && checkout.subscription) {
       const expiresAt = new Date((checkout.subscription as any).current_period_end_date || new Date().setMonth(new Date().getMonth() + 1));
-      
-      const { error: updateError } = await supabase
+      const { error: updateError, data: updateData } = await supabase
         .from('anim_customers')
         .update({
           subscription_plan: metadata.plan_name,
           subscription_expires_at: expiresAt.toISOString(),
         })
-        .eq('id', customerId);
+        .eq('id', customerId)
+        .select('subscription_plan, subscription_expires_at');
 
       if (updateError) {
-        console.error('Error updating subscription plan:', updateError);
       } else {
-        console.log(`✅ Updated subscription plan to ${metadata.plan_name} for customer ${customerId}`);
+        // Verify the update
+        const { data: verifyData, error: verifyError } = await supabase
+          .from('anim_customers')
+          .select('subscription_plan, subscription_expires_at')
+          .eq('id', customerId)
+          .single();
+        
+        if (verifyError) {
+        } else {
+        }
       }
+    } else {
     }
   } else {
-    console.warn('Unknown product type:', productType);
     throw new Error(`Unknown product type: ${productType}`);
   }
 }
@@ -549,22 +477,13 @@ async function handleSubscriptionActive(event: CreemWebhookEvent) {
   // 对于 subscription 事件，event.object 就是 subscription 对象
   const subscription = event.object as any;
   const supabase = await createClient();
-
-  console.log('=== Processing subscription.active event ===');
-  console.log('Subscription ID:', subscription.id);
-  console.log('Subscription status:', subscription.status);
-
   // Get user_id from subscription metadata
   const metadata = subscription.metadata || {};
   const userId = metadata.user_id;
   
   if (!userId) {
-    console.error('Missing user_id in subscription metadata:', subscription);
     throw new Error('user_id is required in subscription metadata');
   }
-
-  console.log('User ID:', userId);
-
   // Find customer by user_id
   const { data: customer, error: customerError } = await supabase
     .from('anim_customers')
@@ -577,25 +496,32 @@ async function handleSubscriptionActive(event: CreemWebhookEvent) {
   }
 
   const customerId = customer.id;
-  console.log('Customer ID:', customerId);
-
   // Update subscription plan
   if (metadata.plan_name) {
     const expiresAt = new Date(subscription.current_period_end_date);
-    
-    const { error: updateError } = await supabase
+    const { error: updateError, data: updateData } = await supabase
       .from('anim_customers')
       .update({
         subscription_plan: metadata.plan_name,
         subscription_expires_at: expiresAt.toISOString(),
       })
-      .eq('id', customerId);
+      .eq('id', customerId)
+      .select('subscription_plan, subscription_expires_at');
 
     if (updateError) {
-      console.error('Error updating subscription plan:', updateError);
     } else {
-      console.log(`✅ Updated subscription plan to ${metadata.plan_name}`);
+      // Verify the update
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('anim_customers')
+        .select('subscription_plan, subscription_expires_at')
+        .eq('id', customerId)
+        .single();
+      
+      if (verifyError) {
+      } else {
+      }
     }
+  } else {
   }
 
   // Get monthly credits from metadata
@@ -619,11 +545,8 @@ async function handleSubscriptionActive(event: CreemWebhookEvent) {
     });
 
     if (!creditResult.success) {
-      console.error('Error adding subscription credits:', creditResult.error);
       throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
     }
-
-    console.log(`✅ Added ${credits} monthly subscription credits to customer ${customerId}`);
   }
 }
 
@@ -634,16 +557,11 @@ async function handleSubscriptionPaid(event: CreemWebhookEvent) {
   // 对于 subscription 事件，event.object 就是 subscription 对象
   const subscription = event.object as any;
   const supabase = await createClient();
-
-  console.log('=== Processing subscription.paid event ===');
-  console.log('Subscription ID:', subscription.id);
-
   // Get user_id from subscription metadata
   const metadata = subscription.metadata || {};
   const userId = metadata.user_id;
   
   if (!userId) {
-    console.error('Missing user_id in subscription metadata:', subscription);
     throw new Error('user_id is required in subscription metadata');
   }
 
@@ -659,23 +577,32 @@ async function handleSubscriptionPaid(event: CreemWebhookEvent) {
   }
 
   const customerId = customer.id;
-  console.log('Customer ID:', customerId);
-
   // Update subscription plan
   if (metadata.plan_name) {
     const expiresAt = new Date(subscription.current_period_end_date);
-    
-    const { error: updateError } = await supabase
+    const { error: updateError, data: updateData } = await supabase
       .from('anim_customers')
       .update({
         subscription_plan: metadata.plan_name,
         subscription_expires_at: expiresAt.toISOString(),
       })
-      .eq('id', customerId);
+      .eq('id', customerId)
+      .select('subscription_plan, subscription_expires_at');
 
     if (updateError) {
-      console.error('Error updating subscription plan:', updateError);
+    } else {
+      // Verify the update
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('anim_customers')
+        .select('subscription_plan, subscription_expires_at')
+        .eq('id', customerId)
+        .single();
+      
+      if (verifyError) {
+      } else {
+      }
     }
+  } else {
   }
 
   // Get monthly credits from metadata
@@ -699,11 +626,8 @@ async function handleSubscriptionPaid(event: CreemWebhookEvent) {
     });
 
     if (!creditResult.success) {
-      console.error('Error adding subscription credits:', creditResult.error);
       throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
     }
-
-    console.log(`✅ Added ${credits} monthly subscription renewal credits to customer ${customerId}`);
   }
 }
 
@@ -714,14 +638,10 @@ async function handleSubscriptionCanceled(event: CreemWebhookEvent) {
   // 对于 subscription 事件，event.object 就是 subscription 对象
   const subscription = event.object as any;
   const supabase = await createClient();
-
-  console.log('Processing canceled subscription:', subscription.id);
-
   const metadata = subscription.metadata || {};
   const userId = metadata.user_id;
   
   if (!userId) {
-    console.warn('Missing user_id in subscription metadata, skipping subscription update');
     return;
   }
 
@@ -741,8 +661,6 @@ async function handleSubscriptionCanceled(event: CreemWebhookEvent) {
         subscription_expires_at: null,
       })
       .eq('id', customer.id);
-
-    console.log(`✅ Cleared subscription for customer ${customer.id}`);
   }
 }
 
@@ -753,14 +671,10 @@ async function handleSubscriptionExpired(event: CreemWebhookEvent) {
   // 对于 subscription 事件，event.object 就是 subscription 对象
   const subscription = event.object as any;
   const supabase = await createClient();
-
-  console.log('Processing expired subscription:', subscription.id);
-
   const metadata = subscription.metadata || {};
   const userId = metadata.user_id;
   
   if (!userId) {
-    console.warn('Missing user_id in subscription metadata, skipping subscription update');
     return;
   }
 
@@ -780,7 +694,5 @@ async function handleSubscriptionExpired(event: CreemWebhookEvent) {
         subscription_expires_at: null,
       })
       .eq('id', customer.id);
-
-    console.log(`✅ Cleared expired subscription for customer ${customer.id}`);
   }
 }

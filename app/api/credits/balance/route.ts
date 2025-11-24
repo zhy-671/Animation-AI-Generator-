@@ -13,7 +13,6 @@ export async function GET() {
     try {
       supabase = await createClient()
     } catch (clientError) {
-      console.error('Error creating Supabase client:', clientError)
       return NextResponse.json(
         { error: 'Authentication service unavailable', details: 'Unable to create authentication client' },
         { status: 503 }
@@ -25,14 +24,11 @@ export async function GET() {
     if (authError) {
       // Handle AuthSessionMissingError gracefully - user is not logged in
       if (authError.name === 'AuthSessionMissingError' || authError.message?.includes('session')) {
-        console.log('No active session in balance API - user not logged in')
         return NextResponse.json(
           { error: 'User not authenticated', details: 'No active session' },
           { status: 401 }
         )
       }
-      
-      console.error('Auth error in balance API:', authError)
       return NextResponse.json(
         { error: 'Authentication failed', details: authError.message },
         { status: 401 }
@@ -40,31 +36,24 @@ export async function GET() {
     }
 
     if (!user) {
-      console.log('No user found in balance API')
       return NextResponse.json(
         { error: 'User not authenticated' },
         { status: 401 }
       )
     }
-
-    console.log('Balance API: Fetching customer for user:', user.id)
     const customer = await getCurrentCustomer()
 
     if (!customer) {
-      console.log('Balance API: Customer not found for user:', user.id)
       return NextResponse.json(
         { error: 'Customer not found' },
         { status: 404 }
       )
     }
-
-    console.log('Balance API: Returning credits for customer:', customer.id, 'credits:', customer.credits)
     return NextResponse.json({
       credits: customer.credits,
       customerId: customer.id,
     })
   } catch (error) {
-    console.error('Error getting credits balance:', error)
     return NextResponse.json(
       { error: 'Internal server error', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }

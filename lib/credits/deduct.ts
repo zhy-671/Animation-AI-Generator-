@@ -17,7 +17,6 @@ export async function deductCredits(
   metadata?: Record<string, any>
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
   try {
-    console.log('Deducting credits:', { amount, description, metadata });
     const response = await fetch('/api/credits/operate', {
       method: 'POST',
       headers: {
@@ -32,8 +31,6 @@ export async function deductCredits(
     });
 
     const result = await response.json();
-    console.log('Credits operate API response:', { status: response.status, result });
-
     if (!response.ok || !result.success) {
       return {
         success: false,
@@ -43,7 +40,6 @@ export async function deductCredits(
 
     // 从API响应中直接获取新余额（API返回credits字段）
     if (result.credits !== undefined) {
-      console.log('New balance from API:', result.credits);
       return {
         success: true,
         newBalance: result.credits,
@@ -57,7 +53,6 @@ export async function deductCredits(
       newBalance: balanceCheck.balance,
     };
   } catch (error) {
-    console.error('Error deducting credits:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to deduct credits',
@@ -78,7 +73,6 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
       // If user is not authenticated (401), return gracefully without error
       // This is expected when user is not logged in
       if (response.status === 401) {
-        console.log('User not authenticated - skipping balance check');
         return {
           sufficient: false,
           balance: 0,
@@ -97,7 +91,6 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
       balance,
     };
   } catch (error) {
-    console.error('Error checking credits balance:', error);
     return {
       sufficient: false,
       error: error instanceof Error ? error.message : 'Failed to check credits balance',
@@ -146,7 +139,6 @@ export async function addCredits(
       newBalance: balanceCheck.balance,
     };
   } catch (error) {
-    console.error('Error adding credits:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to add credits',

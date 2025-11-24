@@ -23,7 +23,6 @@ export async function createCreemOrder(
     // 检查API配置
     // 根据 Creem API 文档，只需要 API Key
     if (!CREEM_CONFIG.apiKey) {
-      console.error('Creem API key not configured');
       return {
         success: false,
         error: 'Payment service credentials not configured. Please set CREEM_API_KEY environment variable.',
@@ -34,7 +33,6 @@ export async function createCreemOrder(
     // 创建结账会话需要使用 product_id
     // 端点: POST /checkouts
     if (!metadata?.product_id) {
-      console.error('Product ID is required for Creem checkout');
       return {
         success: false,
         error: 'Product ID is required. Please configure product_id for the subscription plan or credit package.',
@@ -67,17 +65,6 @@ export async function createCreemOrder(
     const apiUrl = CREEM_CONFIG.checkoutEndpoint.startsWith('http')
       ? CREEM_CONFIG.checkoutEndpoint
       : `${CREEM_CONFIG.apiUrl}${CREEM_CONFIG.checkoutEndpoint.startsWith('/') ? '' : '/'}${CREEM_CONFIG.checkoutEndpoint}`;
-    
-    console.log('Creem API request:', {
-      url: apiUrl,
-      method: 'POST',
-      hasApiKey: !!CREEM_CONFIG.apiKey,
-      apiUrl: CREEM_CONFIG.apiUrl,
-      checkoutEndpoint: CREEM_CONFIG.checkoutEndpoint,
-      productId: metadata.product_id,
-      requestBody: requestBody,
-    });
-    
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
@@ -95,15 +82,6 @@ export async function createCreemOrder(
       } catch {
         errorData = { message: errorText || `HTTP ${response.status}: ${response.statusText}` };
       }
-      
-      console.error('Creem API error:', {
-        url: apiUrl,
-        status: response.status,
-        statusText: response.statusText,
-        error: errorData,
-        errorText: errorText.substring(0, 500), // 限制错误文本长度
-      });
-      
       // 根据不同的错误状态码提供更友好的错误信息
       let errorMessage = errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`;
       
@@ -126,13 +104,10 @@ export async function createCreemOrder(
     }
 
     const data = await response.json();
-    console.log('Creem API response:', data);
-    
     // Creem API 返回 checkout_url 或 url
     // 参考实现：检查 checkout_url 或 url
     const checkoutUrl = data?.checkout_url || data?.url;
     if (!checkoutUrl) {
-      console.error('Creem API response missing checkout_url or url:', data);
       return {
         success: false,
         error: 'Checkout URL not received from payment provider',
@@ -145,7 +120,6 @@ export async function createCreemOrder(
       creem_order_id: data.id || data.checkout_id || orderId, // Creem 可能返回 checkout_id
     };
   } catch (error) {
-    console.error('Error creating Cream order:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create payment order',
@@ -182,18 +156,15 @@ export function verifyCreemWebhookSignature(
 
   // 🔒 安全措施：必须实现签名验证
   if (!webhookSecret) {
-    console.error('CREEM_WEBHOOK_SECRET is not set! Webhook signature verification is disabled.');
     // 生产环境必须设置webhook secret
     if (process.env.NODE_ENV === 'production') {
       return false; // 生产环境必须验证签名
     }
     // 开发/测试环境：如果没有设置 secret，暂时允许通过（但记录警告）
-    console.warn('⚠️  WARNING: Webhook signature verification is disabled in non-production environment.');
     return true; // 开发环境可以跳过验证
   }
 
   if (!signature) {
-    console.error('Missing webhook signature header (x-creem-signature)');
     return false;
   }
 
@@ -207,17 +178,10 @@ export function verifyCreemWebhookSignature(
     const isValid = timingSafeEqual(signature, calculatedSignature);
     
     if (!isValid) {
-      console.error('Invalid webhook signature', {
-        receivedPrefix: signature.substring(0, 20) + '...',
-        expectedPrefix: calculatedSignature.substring(0, 20) + '...',
-        receivedLength: signature.length,
-        expectedLength: calculatedSignature.length,
-      });
     }
 
     return isValid;
   } catch (error) {
-    console.error('Error verifying webhook signature:', error);
     return false;
   }
 }
@@ -251,7 +215,6 @@ export async function getCreemOrderStatus(
       status: data.status, // 'pending' | 'completed' | 'failed' | 'cancelled'
     };
   } catch (error) {
-    console.error('Error getting Cream order status:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to get order status',

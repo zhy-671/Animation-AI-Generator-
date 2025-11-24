@@ -32,12 +32,10 @@ export default function Examples() {
       })
       .then((data) => {
         if (!mounted) return;
-        console.log('Fetched videos:', data);
         setVideos(Array.isArray(data?.videos) ? data.videos.slice(0, 8) : []);
         setLoading(false);
       })
       .catch((error) => {
-        console.error('Error fetching videos:', error);
         setVideos([]);
         setLoading(false);
       });
@@ -110,7 +108,6 @@ export default function Examples() {
                               const errorType = errorMessages[error.code] || `Error code ${error.code}`;
                               // Only log network and decode errors, ignore aborted errors
                               if (error.code === 2 || error.code === 3) {
-                                console.warn(`Video load ${errorType}:`, video.url?.substring(0, 50) || 'unknown');
                               }
                             }
                             
@@ -118,7 +115,6 @@ export default function Examples() {
                             handleVideoError(video.url);
                           }}
                           onLoadedData={() => {
-                            console.log('Video loaded:', video.url);
                           }}
                         >
                           <source src={video.url} type="video/mp4" />

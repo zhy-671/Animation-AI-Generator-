@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Upload, X, Sparkles, Diamond, Info, Plus, Trash2, ArrowLeft, Coins, Clock } from "lucide-react";
 import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import {
@@ -64,7 +65,7 @@ export default function StoryboardForm() {
     referenceImage: null,
     readerGroup: "All Ages",
     model: "2d",
-    duration: "5",
+    duration: "10",
     quality: "480p"
   });
 
@@ -96,6 +97,9 @@ export default function StoryboardForm() {
     updated_at: string;
   }>>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -114,7 +118,6 @@ export default function StoryboardForm() {
           setCreditsBalance(balanceCheck.balance);
         }
       } catch (error) {
-        console.error("Error loading user data:", error);
       }
     };
     
@@ -159,14 +162,12 @@ export default function StoryboardForm() {
                               }
                             }
                           } catch (error) {
-                            console.error("Error generating presigned URL for cover:", error);
                           }
                         }
                       }
                     }
                   }
                 } catch (error) {
-                  console.error("Error loading cover image:", error);
                 }
               } else {
                 // 如果已有封面图，检查是否是TOS URL并生成预签名URL
@@ -181,7 +182,6 @@ export default function StoryboardForm() {
                       }
                     }
                   } catch (error) {
-                    console.error("Error generating presigned URL for cover:", error);
                   }
                 }
               }
@@ -197,7 +197,6 @@ export default function StoryboardForm() {
         }
       }
     } catch (error) {
-      console.error("Error loading projects:", error);
     } finally {
       setLoadingProjects(false);
     }
@@ -214,7 +213,7 @@ export default function StoryboardForm() {
       referenceImage: null,
       readerGroup: "All Ages",
       model: "2d",
-      duration: "5",
+      duration: "10",
       quality: "480p"
     });
     setReferenceImagePreview(null);
@@ -233,7 +232,7 @@ export default function StoryboardForm() {
       referenceImage: null,
       readerGroup: "All Ages",
       model: "2d",
-      duration: "5",
+      duration: "10",
       quality: "480p"
     });
     setReferenceImagePreview(null);
@@ -291,7 +290,6 @@ export default function StoryboardForm() {
                       }
                     }
                   } catch (error) {
-                    console.error('Error generating presigned URL:', error);
                   }
                 }
               }
@@ -327,25 +325,28 @@ export default function StoryboardForm() {
         }
       }
     } catch (error) {
-      console.error("Error loading project:", error);
       alert("Failed to load project");
     }
   };
 
-  const handleDeleteProject = async (sceneId: string, e: React.MouseEvent) => {
+  const handleDeleteClick = (sceneId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this project?")) {
-      return;
-    }
+    setProjectToDelete(sceneId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!projectToDelete) return;
     
+    setIsDeleting(true);
     try {
-      const response = await fetch(`/api/scenes?sceneId=${sceneId}`, {
+      const response = await fetch(`/api/scenes?sceneId=${projectToDelete}`, {
         method: "DELETE",
       });
       
       if (response.ok) {
-        setMyProjects(prev => prev.filter(p => p.id !== sceneId));
-        if (currentSceneId === sceneId) {
+        setMyProjects(prev => prev.filter(p => p.id !== projectToDelete));
+        if (currentSceneId === projectToDelete) {
           setCurrentSceneId(null);
           setGeneratedImages([]);
           setShowCreateForm(false);
@@ -354,8 +355,10 @@ export default function StoryboardForm() {
         throw new Error("Failed to delete project");
       }
     } catch (error) {
-      console.error("Error deleting project:", error);
       alert("Failed to delete project");
+    } finally {
+      setIsDeleting(false);
+      setProjectToDelete(null);
     }
   };
 
@@ -469,7 +472,6 @@ export default function StoryboardForm() {
         }, 100);
       }
     } catch (error) {
-      console.error("Error generating storyboard:", error);
       alert(error instanceof Error ? error.message : "Failed to generate story script");
       setIsGenerating(false);
     }
@@ -552,7 +554,6 @@ export default function StoryboardForm() {
                         imageUrl: finalImageUrl,
                       }),
                     }).catch(updateError => {
-                      console.error("Error updating image URL in database:", updateError);
                     });
                   }
                   
@@ -563,7 +564,6 @@ export default function StoryboardForm() {
                 successCount++;
                 return true;
               } catch (uploadError) {
-                console.error("Error uploading image:", uploadError);
                 setGeneratedImages(prev => prev.map(img => 
                   img.id === item.id 
                     ? { 
@@ -605,7 +605,6 @@ export default function StoryboardForm() {
           
           return false;
         } catch (error) {
-          console.error("Error polling image status:", error);
           setGeneratedImages(prev => prev.map(img => 
             img.id === item.id 
               ? { 
@@ -639,7 +638,7 @@ export default function StoryboardForm() {
     }
 
     const currentQuality = formData.quality || "480p";
-    const currentDuration = parseInt(formData.duration || "5");
+    const currentDuration = parseInt(formData.duration || "10");
     const resolution = currentQuality as '480p' | '720p' | '1080p';
     const requiredCredits = calculateVideoCredits(subscriptionPlan, resolution, currentDuration);
     
@@ -676,29 +675,29 @@ export default function StoryboardForm() {
       };
       const stylePrompt = stylePrompts[currentModel] || "2D动画风格";
       
-      const dashScopeModel = "wan2.5-i2v-preview";
-      const resolutionMap: Record<string, string> = {
-        "480p": "480P",
-        "720p": "720P",
-        "1080p": "1080P",
-      };
-      const dashScopeResolution = resolutionMap[currentQuality] || "480P";
-      const duration = currentDuration;
+      // 使用Sora API生成视频
+      // 根据分辨率选择模型
+      const selectedModel = duration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
       
-      const response = await fetch("/api/video/generate", {
+      // 根据分辨率设置size
+      const resolutionMap: Record<string, string> = {
+        "480p": "1280x704",
+        "720p": "1280x704",
+        "1080p": "1920x1080",
+      };
+      const size = resolutionMap[currentQuality] || "1280x704";
+      
+      const response = await fetch("/api/video/generate-sora-video2", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: `${imageItem.text || "动画视频"}，${stylePrompt}`,
-          sceneDetail: imageItem.sceneDetail || "",
+          prompt: imageItem.text || "动画视频",
           imageUrl: imageItem.imageUrl,
-          model: dashScopeModel,
-          resolution: dashScopeResolution,
-          duration: duration,
-          promptExtend: true,
-          audio: true,
+          size: size,
+          seconds: duration,
+          model: selectedModel,
         }),
       });
 
@@ -718,7 +717,7 @@ export default function StoryboardForm() {
           try {
             await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 0 : interval));
             
-            const statusResponse = await fetch(`/api/video/status?taskId=${taskId}`);
+            const statusResponse = await fetch(`/api/video/status-sora-video2?taskId=${taskId}`);
             if (!statusResponse.ok) {
               let errorData: any = {};
               const contentType = statusResponse.headers.get("content-type");
@@ -740,10 +739,29 @@ export default function StoryboardForm() {
 
             const statusResult = await statusResponse.json();
             const status = statusResult.data;
-            const requestId = status.requestId || statusResult.request_id;
 
-            if (status.status === "SUCCEEDED" && status.output?.video_url) {
-              const videoUrl = status.output.video_url;
+            // Sora API返回的状态格式：status为"completed"或"SUCCEEDED"，url字段包含视频URL
+            if ((status.status === "completed" || status.status === "SUCCEEDED") && status.url) {
+              // 使用Sora API的下载接口上传到TOS
+              const downloadResponse = await fetch("/api/video/download-sora-video2", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  taskId: taskId,
+                  sceneItemId: imageItem.sceneItemId,
+                  shotNumber: imageItem.shotNumber,
+                }),
+              });
+              
+              if (!downloadResponse.ok) {
+                const downloadError = await downloadResponse.json();
+                throw new Error(downloadError.error || "Failed to download and upload video");
+              }
+              
+              const downloadResult = await downloadResponse.json();
+              const storedVideoUrl = downloadResult.data.videoUrl;
               
               const resolution = currentQuality as '480p' | '720p' | '1080p';
               const deductResult = await deductVideoCredits(resolution, currentDuration, {
@@ -753,7 +771,6 @@ export default function StoryboardForm() {
               }, subscriptionPlan);
               
               if (!deductResult.success) {
-                console.error("Failed to deduct credits:", deductResult.error);
               } else {
                 // 更新积分余额
                 if (deductResult.newBalance !== undefined) {
@@ -766,23 +783,13 @@ export default function StoryboardForm() {
                 }
               }
             
-              const uploadResponse = await fetch("/api/video/upload", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  videoUrl: videoUrl,
-                }),
-              });
-
-              if (!uploadResponse.ok) {
-                const uploadError = await uploadResponse.json();
-                throw new Error(uploadError.error || "Failed to upload video");
-              }
-
-              const uploadResult = await uploadResponse.json();
-              const storedVideoUrl = uploadResult.data.url;
+              // 视频已经通过download-sora-video2上传到TOS，直接保存
+              const resolutionMap: Record<string, string> = {
+                "480p": "480P",
+                "720p": "720P",
+                "1080p": "1080P",
+              };
+              const dashScopeResolution = resolutionMap[currentQuality] || "480P";
 
               await fetch("/api/video/save", {
                 method: "POST",
@@ -796,7 +803,7 @@ export default function StoryboardForm() {
                   imageUrl: imageItem.imageUrl,
                   resolution: dashScopeResolution,
                   taskId: taskId,
-                  requestId: requestId,
+                  requestId: taskId,
                   sceneItemId: imageItem.sceneItemId,
                 }),
               });
@@ -815,11 +822,10 @@ export default function StoryboardForm() {
               }
               
               return;
-            } else if (status.status === "FAILED") {
+            } else if (status.status === "FAILED" || status.status === "failed") {
               throw new Error(status.message || "Video generation failed");
             }
           } catch (error) {
-            console.error("Error polling video status:", error);
             setGeneratedImages(prev => 
               prev.map(img => 
                 img.id === imageId 
@@ -837,7 +843,6 @@ export default function StoryboardForm() {
 
       await pollStatus();
     } catch (error) {
-      console.error("Error generating video:", error);
       setGeneratedImages(prev => 
         prev.map(img => 
           img.id === imageId 
@@ -1181,8 +1186,8 @@ export default function StoryboardForm() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="5">5 seconds</SelectItem>
                       <SelectItem value="10">10 seconds</SelectItem>
+                      <SelectItem value="15">15 seconds</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1216,7 +1221,7 @@ export default function StoryboardForm() {
                   <span className="text-sm">
                     Generate Story Script
                     <span className="ml-2 text-xs opacity-90">
-                      {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "5"))}
+                      {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "10"))}
                     </span>
                   </span>
                 </>
@@ -1263,14 +1268,6 @@ export default function StoryboardForm() {
                   className="bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-[#FFDA2A]/50 transition-all cursor-pointer group relative"
                   onClick={() => handleLoadProject(project.id)}
                 >
-                  {/* 删除按钮 */}
-                  <button
-                    onClick={(e) => handleDeleteProject(project.id, e)}
-                    className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  
                   {/* 封面图 */}
                   <div className="aspect-video bg-gray-800 relative overflow-hidden">
                     {project.cover_image_url ? (
@@ -1468,6 +1465,17 @@ export default function StoryboardForm() {
           action={insufficientCreditsData.action}
         />
       )}
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Project"
+        description="Are you sure you want to delete this project? This action cannot be undone and all associated data (scenes, storyboards, characters, etc.) will be permanently removed."
+        itemName="project"
+        isLoading={isDeleting}
+      />
       </div>
     </>
   );

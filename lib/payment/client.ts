@@ -11,8 +11,6 @@ export async function createPaymentOrder(
   request: CreatePaymentOrderRequest
 ): Promise<{ success: boolean; payment_url?: string; order_id?: string; error?: string }> {
   try {
-    console.log('createPaymentOrder called with request:', request);
-    
     const response = await fetch('/api/payment/create-order', {
       method: 'POST',
       headers: {
@@ -20,12 +18,8 @@ export async function createPaymentOrder(
       },
       body: JSON.stringify(request),
     });
-
-    console.log('API response status:', response.status);
-    
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('API response error:', errorText);
       let errorData;
       try {
         errorData = JSON.parse(errorText);
@@ -39,8 +33,6 @@ export async function createPaymentOrder(
     }
 
     const result = await response.json();
-    console.log('API response data:', result);
-
     if (!result.success) {
       return {
         success: false,
@@ -61,7 +53,6 @@ export async function createPaymentOrder(
       order_id: result.data.order_id,
     };
   } catch (error) {
-    console.error('Error creating payment order:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to create payment order',
@@ -77,8 +68,6 @@ export async function subscribeToPlan(
   planName: 'basic' | 'pro' | 'studio'
 ): Promise<{ success: boolean; payment_url?: string; error?: string }> {
   try {
-    console.log('subscribeToPlan called with planName:', planName);
-
     // 直接调用 API，让服务器端处理 product_id 的获取和验证
     // 客户端无法访问服务器端环境变量，所以不在客户端检查
     const response = await fetch('/api/payment/create-subscription', {
@@ -106,8 +95,6 @@ export async function subscribeToPlan(
     }
 
     const result = await response.json();
-    console.log('create-subscription result:', result);
-
     if (!result.checkoutUrl) {
       return {
         success: false,
@@ -116,7 +103,6 @@ export async function subscribeToPlan(
     }
 
     // 跳转到支付页面
-    console.log('Redirecting to checkout URL:', result.checkoutUrl);
     window.location.href = result.checkoutUrl;
 
     return {
@@ -124,7 +110,6 @@ export async function subscribeToPlan(
       payment_url: result.checkoutUrl,
     };
   } catch (error) {
-    console.error('Error in subscribeToPlan:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to subscribe to plan',
@@ -140,8 +125,6 @@ export async function purchaseCredits(
   packageName: string
 ): Promise<{ success: boolean; payment_url?: string; error?: string }> {
   try {
-    console.log('purchaseCredits called with packageName:', packageName);
-
     // 直接调用 API，让服务器端处理 product_id 的获取和验证
     // 客户端无法访问服务器端环境变量，所以不在客户端检查
     const response = await fetch('/api/payment/create-checkout', {
@@ -169,8 +152,6 @@ export async function purchaseCredits(
     }
 
     const result = await response.json();
-    console.log('create-checkout result:', result);
-
     if (!result.checkoutUrl) {
       return {
         success: false,
@@ -179,7 +160,6 @@ export async function purchaseCredits(
     }
 
     // 跳转到支付页面
-    console.log('Redirecting to checkout URL:', result.checkoutUrl);
     window.location.href = result.checkoutUrl;
 
     return {
@@ -187,7 +167,6 @@ export async function purchaseCredits(
       payment_url: result.checkoutUrl,
     };
   } catch (error) {
-    console.error('Error in purchaseCredits:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to purchase credits',

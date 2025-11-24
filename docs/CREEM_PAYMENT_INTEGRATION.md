@@ -13,6 +13,10 @@ CREEM_API_SECRET=your_creem_api_secret
 CREEM_WEBHOOK_SECRET=your_webhook_secret
 CREEM_BASE_URL=https://api.creem.com  # 根据实际API地址修改
 NEXT_PUBLIC_APP_URL=http://localhost:3000  # 生产环境改为实际域名
+
+# 客户支持配置（用于 Creem 审核）
+SUPPORT_EMAIL=andy@adflurrytech.com  # 客户支持邮箱
+SUPPORT_URL=https://your-domain.com/contact  # 客户支持页面URL（可选）
 ```
 
 ## 数据库迁移

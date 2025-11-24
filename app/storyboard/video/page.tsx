@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import VideoEditor from "@/components/storyboard/video-editor";
 
 export const metadata: Metadata = {
-  title: "制作视频 | AI Animation Generator",
-  description: "编辑和制作您的动画视频",
+  title: "image to video | AI Animation Generator",
+  description: "Edit and produce your animated videos",
   robots: {
     index: false,
   },

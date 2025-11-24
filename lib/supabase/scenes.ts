@@ -19,6 +19,7 @@ export interface AnimSceneItem {
   text: string
   scene_detail: string | null // 画面描述
   image_url: string | null
+  scene_image_url: string | null // 场景图URL，用于在生成分镜图片时作为参考图
   video_url: string | null
   created_at: string
   updated_at: string

@@ -75,7 +75,6 @@ export async function PATCH(request: NextRequest) {
           ? JSON.parse(sceneItem.metadata) 
           : sceneItem.metadata;
       } catch (e) {
-        console.error("Failed to parse metadata:", e);
         return NextResponse.json(
           { success: false, error: "Failed to parse metadata" },
           { status: 500 }
@@ -109,12 +108,6 @@ export async function PATCH(request: NextRequest) {
       ...existingShot,
       video_prompt: video_prompt.trim(),
     };
-
-    console.log("=== 更新视频描述 ===");
-    console.log("scene_item_id:", scene_item_id);
-    console.log("shot_number:", shot_number);
-    console.log("新的 video_prompt:", video_prompt);
-
     // 更新数据库
     const { error: updateError } = await supabase
       .from("anim_scene_items")
@@ -125,7 +118,6 @@ export async function PATCH(request: NextRequest) {
       .eq("id", scene_item_id);
 
     if (updateError) {
-      console.error("Error updating shot description:", updateError);
       return NextResponse.json(
         { success: false, error: `Failed to update shot description: ${updateError.message}` },
         { status: 500 }
@@ -139,7 +131,6 @@ export async function PATCH(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error updating shot description:", error);
     return NextResponse.json(
       {
         success: false,

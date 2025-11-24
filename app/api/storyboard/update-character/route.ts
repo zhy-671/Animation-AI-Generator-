@@ -54,7 +54,6 @@ export async function PATCH(request: NextRequest) {
       .single();
 
     if (outlineError || !storyOutlineRecord) {
-      console.error("Error fetching story outline:", outlineError);
       return NextResponse.json(
         { success: false, error: "Story outline not found" },
         { status: 404 }
@@ -74,7 +73,6 @@ export async function PATCH(request: NextRequest) {
           characters = [];
         }
       } catch (e) {
-        console.error("Failed to parse characters:", e);
         return NextResponse.json(
           { success: false, error: "Failed to parse characters" },
           { status: 500 }
@@ -88,8 +86,6 @@ export async function PATCH(request: NextRequest) {
     );
 
     if (characterIndex === -1) {
-      console.error("Character not found. character_id:", character_id);
-      console.error("Available character IDs:", characters.map((c: any) => c.id));
       return NextResponse.json(
         { success: false, error: "Character not found" },
         { status: 404 }
@@ -105,14 +101,6 @@ export async function PATCH(request: NextRequest) {
       ...character_data, // 更新传入的字段
       id: character_id, // 确保ID不被覆盖
     };
-
-    console.log("=== 更新角色信息 ===");
-    console.log("character_id:", character_id);
-    console.log("原有角色数据:", JSON.stringify(existingCharacter, null, 2));
-    console.log("传入的更新数据:", JSON.stringify(character_data, null, 2));
-    console.log("合并后的角色数据:", JSON.stringify(characters[characterIndex], null, 2));
-    console.log("合并后的角色 image_url:", characters[characterIndex].image_url);
-
     // 更新 anim_story_outlines 表的 characters 字段
     const { error: updateError } = await supabase
       .from("anim_story_outlines")
@@ -123,11 +111,121 @@ export async function PATCH(request: NextRequest) {
       .eq("project_id", project_id);
 
     if (updateError) {
-      console.error("Error updating character:", updateError);
       return NextResponse.json(
         { success: false, error: `Failed to update character: ${updateError.message}` },
         { status: 500 }
       );
+    }
+
+    // 同时更新或插入到 anim_characters 表
+    const updatedCharacter = characters[characterIndex];
+    const characterName = updatedCharacter.name || character_data.name || "";
+    if (!characterName) {
+    } else {
+      // 检查 anim_characters 表中是否已存在该角色
+      // 首先尝试根据 character_id (如果存在) 查找，否则根据 name 查找
+      let existingChar: any = null;
+      
+      // 方法1: 如果 character_id 是 UUID 格式，尝试直接查找
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(character_id);
+      if (isUUID) {
+        const { data: charById, error: checkByIdError } = await supabase
+          .from("anim_characters")
+          .select("id, name")
+          .eq("id", character_id)
+          .eq("project_id", project_id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        
+        if (!checkByIdError && charById) {
+          existingChar = charById;
+        }
+      }
+      
+      // 方法2: 如果方法1没找到，根据 name 查找
+      if (!existingChar) {
+        const { data: charByName, error: checkByNameError } = await supabase
+          .from("anim_characters")
+          .select("id, name")
+          .eq("project_id", project_id)
+          .eq("user_id", user.id)
+          .eq("name", characterName)
+          .maybeSingle();
+        
+        if (checkByNameError && checkByNameError.code !== 'PGRST116') {
+        } else if (charByName) {
+          existingChar = charByName;
+        } else {
+        }
+      }
+
+      // 辅助函数：确保值是数组格式
+      const ensureArray = (value: any): string[] => {
+        if (Array.isArray(value)) {
+          return value.filter(item => item !== null && item !== undefined && item !== '');
+        }
+        if (typeof value === 'string' && value.trim() !== '') {
+          // 尝试解析 JSON 字符串
+          try {
+            const parsed = JSON.parse(value);
+            if (Array.isArray(parsed)) {
+              return parsed.filter(item => item !== null && item !== undefined && item !== '');
+            }
+          } catch (e) {
+            // 如果不是 JSON，作为单个元素返回
+            return [value.trim()];
+          }
+        }
+        return [];
+      };
+
+      // 准备要保存到 anim_characters 的数据
+      const characterRecord: any = {
+        project_id: project_id,
+        user_id: user.id,
+        name: characterName,
+        role: updatedCharacter.role || character_data.role || null,
+        age: updatedCharacter.age || character_data.age || null,
+        gender: updatedCharacter.gender || character_data.gender || null,
+        description: updatedCharacter.description || character_data.description || null,
+        appearance: updatedCharacter.appearance || character_data.appearance || {},
+        clothing_style: updatedCharacter.clothing_style || character_data.clothing_style || {},
+        personality_traits: updatedCharacter.personality_traits || character_data.personality_traits || null,
+        background: updatedCharacter.background || character_data.background || null,
+        // 确保数组字段始终是数组格式
+        skills_abilities: ensureArray(updatedCharacter.skills_abilities || character_data.skills_abilities),
+        relationships: ensureArray(updatedCharacter.relationships || character_data.relationships),
+        pose_references: ensureArray(updatedCharacter.pose_references || character_data.pose_references),
+        visual_reference_prompt: updatedCharacter.visual_reference_prompt || character_data.visual_reference_prompt || null,
+        image_url: updatedCharacter.image_url || character_data.image_url || null,
+        image_generation_prompt: updatedCharacter.image_generation_prompt || character_data.image_generation_prompt || null,
+        resolution: updatedCharacter.resolution || character_data.resolution || null,
+        visual_style: updatedCharacter.visual_style || character_data.visual_style || null,
+        art_setting: updatedCharacter.art_setting || character_data.art_setting || null,
+      };
+      // 如果已存在，更新；否则插入
+      if (existingChar) {
+        const { data: updatedData, error: upsertError } = await supabase
+          .from("anim_characters")
+          .update(characterRecord)
+          .eq("id", existingChar.id)
+          .select();
+
+        if (upsertError) {
+          // 不返回错误，因为 anim_story_outlines 已经更新成功
+        } else {
+        }
+      } else {
+        const { data: insertedData, error: insertError } = await supabase
+          .from("anim_characters")
+          .insert(characterRecord)
+          .select();
+
+        if (insertError) {
+          // 不返回错误，因为 anim_story_outlines 已经更新成功
+        } else {
+        }
+      }
     }
 
     return NextResponse.json({
@@ -137,7 +235,6 @@ export async function PATCH(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error updating character:", error);
     return NextResponse.json(
       {
         success: false,

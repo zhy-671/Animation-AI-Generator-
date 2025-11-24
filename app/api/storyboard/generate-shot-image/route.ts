@@ -72,7 +72,12 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { scene_item_id, project_id, shot_number, image_prompt, characters, appearCharacters, charactersList } = body;
+    const { scene_item_id, project_id, shot_number, image_prompt, characters, appearCharacters, charactersList, watermark = false, editMode = false } = body;
+    const normalizedShotNumber = typeof shot_number === "number"
+      ? shot_number
+      : shot_number !== undefined && shot_number !== null
+        ? Number(shot_number)
+        : null;
 
     if (!project_id || !image_prompt) {
       return NextResponse.json(
@@ -81,25 +86,53 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. 获取项目信息（包括比例字段 art_setting）
+    // 1. 获取项目信息（包括比例字段 art_setting 和风格字段 visual_style）
     const { data: project, error: projectError } = await supabase
       .from('anim_storyboard_projects')
-      .select('art_setting')
+      .select('art_setting, visual_style')
       .eq('id', project_id)
       .eq('user_id', user.id)
       .maybeSingle();
 
     if (projectError) {
-      console.error("Error fetching project:", projectError);
       return NextResponse.json(
         { success: false, error: `Failed to fetch project: ${projectError.message}` },
         { status: 500 }
       );
     }
 
+    // 获取项目设置（风格和分辨率）
+    const projectArtSetting = project?.art_setting || "16:9";
+    const projectVisualStyle = project?.visual_style || "2d";
+
+    // 获取当前场景的场景图片（scene_image_url），每个分镜都必须使用
+    let sceneReferenceImage: string | null = null;
+
+    if (scene_item_id) {
+      try {
+        const { data: sceneItemData } = await supabase
+          .from('anim_scene_items')
+          .select('scene_image_url, image_url')
+          .eq('id', scene_item_id)
+          .maybeSingle();
+
+        if (sceneItemData) {
+          // 优先级1: 场景图（scene_image_url）
+          if (sceneItemData.scene_image_url) {
+            sceneReferenceImage = sceneItemData.scene_image_url;
+          }
+          // 优先级2: image_url（旧字段，保持兼容）
+          else if (sceneItemData.image_url) {
+            sceneReferenceImage = sceneItemData.image_url;
+          }
+        }
+      } catch (error) {
+        // Ignore scene item fetch errors, continue without scene reference image
+      }
+    }
+
     // 将 art_setting 的宽高比转换为 API 需要的 width*height 格式
-    const artSetting = project?.art_setting || "16:9";
-    const imageSize = convertAspectRatioToSize(artSetting);
+    const imageSize = convertAspectRatioToSize(projectArtSetting);
 
     // 2. Extract character names from appearCharacters, characters parameter, or image_prompt
     // Priority: appearCharacters > characters parameter > extract from image_prompt
@@ -117,13 +150,11 @@ export async function POST(request: NextRequest) {
           return '';
         })
         .filter((name: string) => name.length > 0);
-      console.log("Using appearCharacters from shot:", characterNames);
     }
     
     // Priority 2: Use characters parameter if appearCharacters is not available
     if (characterNames.length === 0 && characters && characters.trim()) {
       characterNames = characters.split(',').map((name: string) => name.trim()).filter((name: string) => name.length > 0);
-      console.log("Using characters parameter:", characterNames);
     }
     
     // Priority 3: If both are empty, try to extract character names from image_prompt
@@ -152,7 +183,6 @@ export async function POST(request: NextRequest) {
             }
           }
         });
-        console.log("Extracted characters from image_prompt:", characterNames);
       }
     }
 
@@ -163,25 +193,28 @@ export async function POST(request: NextRequest) {
     // Only append prompts for characters that exist and have image_generation_prompt
     const refImages: string[] = []; // Reference images array (max 2)
     const allCharactersInfo: string[] = []; // All character prompt info, format: Character [name]: image_generation_prompt
+    let charactersData: any[] = []; // Character data for Volcano API
 
     if (hasCharactersInPrompt && characterNames.length > 0) {
-      let charactersData: any[] = [];
       
       // Priority: Use charactersList from frontend if provided (avoid database query)
       if (charactersList && Array.isArray(charactersList) && charactersList.length > 0) {
-        console.log("Using charactersList from frontend (cached), count:", charactersList.length);
         // Filter charactersList to only include requested character names
+        // Use more flexible matching to handle variations
         charactersData = charactersList.filter((char: any) => {
           const charName = char.name?.trim();
           if (!charName) return false;
-          return characterNames.some((reqName: string) => 
-            reqName.trim().toLowerCase() === charName.toLowerCase()
-          );
+          const charNameLower = charName.toLowerCase();
+          return characterNames.some((reqName: string) => {
+            const reqNameLower = reqName.trim().toLowerCase();
+            // Exact match or partial match
+            return reqNameLower === charNameLower || 
+                   reqNameLower.includes(charNameLower) || 
+                   charNameLower.includes(reqNameLower);
+          });
         });
-        console.log("Filtered characters from frontend list:", charactersData.length);
       } else {
         // Fallback: Query from database if charactersList not provided
-        console.log("charactersList not provided, querying from database...");
         const { data: dbCharacters, error: charactersError } = await supabase
           .from('anim_characters')
           .select('name, image_url, image_generation_prompt')
@@ -189,9 +222,7 @@ export async function POST(request: NextRequest) {
           .eq('user_id', user.id)
           .in('name', characterNames);
         
-        if (charactersError) {
-          console.error("Error fetching characters from anim_characters:", charactersError);
-        } else if (dbCharacters) {
+        if (!charactersError && dbCharacters) {
           charactersData = dbCharacters;
         }
       }
@@ -214,8 +245,9 @@ export async function POST(request: NextRequest) {
           
           if (char) {
             // Character found
-            // Collect reference images (max 2, prioritize characters with images)
-            if (char.image_url && refImages.length < 2) {
+            // Collect reference images (for Volcano API, collect all character images)
+            // For DashScope API, limit to max 2
+            if (char.image_url) {
               refImages.push(char.image_url);
             }
             
@@ -223,27 +255,10 @@ export async function POST(request: NextRequest) {
             if (char.image_generation_prompt && typeof char.image_generation_prompt === 'string' && char.image_generation_prompt.trim()) {
               const charInfo = `Character [${char.name.trim()}]: ${char.image_generation_prompt.trim()}`;
               allCharactersInfo.push(charInfo);
-              console.log(`✓ Character "${char.name}" found, prompt appended`);
-            } else {
-              console.log(`⚠ Character "${char.name}" found but no image_generation_prompt, skipping`);
             }
-          } else {
-            // Character not found, skip
-            console.log(`✗ Character "${charName}" not found, skipping`);
           }
         });
-      } else {
-        console.log("No characters found for the given names");
       }
-      
-      console.log("=== Character Matching Results ===");
-      console.log("Requested characters:", characterNames);
-      console.log("Characters found:", charactersData.length);
-      console.log("Characters with prompts appended:", allCharactersInfo.length);
-      console.log("Reference images count:", refImages.length);
-      allCharactersInfo.forEach((info, index) => {
-        console.log(`Character ${index + 1} prompt:`, info);
-      });
     }
 
     // 5. Build enhanced prompt
@@ -279,7 +294,6 @@ export async function POST(request: NextRequest) {
               finalRefImages.push(refImage);
             }
           } catch (error) {
-            console.error("Error generating presigned URL:", error);
             // If failed, continue using original URL
             finalRefImages.push(refImage);
           }
@@ -289,70 +303,279 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 7. Choose API based on whether reference images exist, use calculated image size
-    let taskId: string;
-    let requestId: string;
+    // 7. Always use Volcano API for image generation
+    // Build character reference prompt: "角色名称参考 图1，角色名称参考 图2" etc.
+    // 注意：提示词中的"图1"、"图2"对应的是图片数组中的第1个、第2个（索引从1开始）
+    const characterRefPrompts: string[] = [];
+    const volcanoRefImages: string[] = [];
     
-    if (finalRefImages.length > 0) {
-      // Has reference images, use image-to-image API
-      const result = await wanXImageClient.submitImageToImageTask({
-        prompt: enhancedPrompt,
-        images: finalRefImages, // Reference images array (max 2)
-        n: 4, // Generate 4 images for selection
-        size: imageSize, // Use calculated size based on aspect ratio
+    // Helper function to get presigned URL if needed
+    const getPresignedUrl = async (imageUrl: string): Promise<string> => {
+      if (!imageUrl) return imageUrl;
+      
+      // If reference image is TOS URL, may need to generate presigned URL
+      if (imageUrl.includes('tos-') || imageUrl.includes('.volces.com')) {
+        try {
+          // Generate presigned URL to ensure API can access
+          const presignedResponse = await fetch(
+            `${request.nextUrl.origin}/api/scenes/presigned-image-url?imageUrl=${encodeURIComponent(imageUrl)}`
+          );
+          if (presignedResponse.ok) {
+            const presignedResult = await presignedResponse.json();
+            if (presignedResult.success && presignedResult.data?.imageUrl) {
+              return presignedResult.data.imageUrl;
+            }
+          }
+        } catch (error) {
+          // If failed, continue using original URL
+          console.warn(`Failed to get presigned URL for ${imageUrl}:`, error);
+        }
+      }
+      return imageUrl;
+    };
+    
+    // Only build character references if characters exist and have images
+    if (hasCharactersInPrompt && characterNames.length > 0 && charactersData.length > 0) {
+      // Create a map of found characters for quick lookup
+      const foundCharactersMap = new Map<string, any>();
+      charactersData.forEach((char: any) => {
+        const charName = char.name?.trim();
+        if (charName) {
+          foundCharactersMap.set(charName.toLowerCase(), char);
+        }
       });
-      taskId = result.taskId;
-      requestId = result.requestId;
-
-      // Log final submitted parameters
-      console.log("=== Final Submitted Parameters (Image-to-Image) ===");
-      console.log(JSON.stringify({
-        model: "wan2.5-i2i-preview",
-        prompt: enhancedPrompt,
-        images: finalRefImages,
-        n: 4,
-        size: imageSize,
-        taskId,
-        requestId,
-      }, null, 2));
-    } else {
-      // No reference images, use text-to-image API
-      const result = await wanXImageClient.submitImageTask({
-        prompt: enhancedPrompt,
-        n: 4, // Generate 4 images for selection
-        size: imageSize, // Use calculated size based on aspect ratio
-      });
-      taskId = result.taskId;
-      requestId = result.requestId;
-
-      // Log final submitted parameters
-      console.log("=== Final Submitted Parameters (Text-to-Image) ===");
-      console.log(JSON.stringify({
-        model: "wan2.5-t2i-preview",
-        prompt: enhancedPrompt,
-        n: 4,
-        size: imageSize,
-        taskId,
-        requestId,
-      }, null, 2));
+      
+      // Process each requested character name
+      for (let i = 0; i < characterNames.length; i++) {
+        const charName = characterNames[i];
+        const charNameTrimmed = charName.trim();
+        const charNameLower = charNameTrimmed.toLowerCase();
+        const char = foundCharactersMap.get(charNameLower);
+        
+        if (char && char.image_url) {
+          // Get presigned URL if needed
+          const processedImageUrl = await getPresignedUrl(char.image_url);
+          // 参考图索引从1开始（对应数组中的位置）
+          const refNumber = volcanoRefImages.length + 1;
+          characterRefPrompts.push(`${char.name.trim()}角色名称参考 图${refNumber}`);
+          volcanoRefImages.push(processedImageUrl);
+        } else {
+          // Try to find by partial match or alternative lookup
+          const alternativeChar = charactersData.find((c: any) => 
+            c.name?.trim().toLowerCase() === charNameLower ||
+            c.name?.trim().toLowerCase().includes(charNameLower) ||
+            charNameLower.includes(c.name?.trim().toLowerCase())
+          );
+          if (alternativeChar && alternativeChar.image_url) {
+            // Get presigned URL if needed
+            const processedImageUrl = await getPresignedUrl(alternativeChar.image_url);
+            // 参考图索引从1开始（对应数组中的位置）
+            const refNumber = volcanoRefImages.length + 1;
+            characterRefPrompts.push(`${alternativeChar.name.trim()}角色名称参考 图${refNumber}`);
+            volcanoRefImages.push(processedImageUrl);
+          }
+        }
+      }
+    }
+    
+    // Append scene reference image for all shots (每个分镜都必须传当前场景的图片)
+    // 场景参考图在所有角色参考图后面，编号为角色数量 + 1
+    if (sceneReferenceImage) {
+      // Get presigned URL if needed
+      const processedSceneImageUrl = await getPresignedUrl(sceneReferenceImage);
+      // 参考图索引从1开始（对应数组中的位置）
+      const sceneReferenceIndex = volcanoRefImages.length + 1;
+      const sceneReferenceLabel = `场景参考${sceneReferenceIndex}`;
+      characterRefPrompts.push(sceneReferenceLabel);
+      volcanoRefImages.push(processedSceneImageUrl);
     }
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        taskId,
-        requestId,
-        hasReferenceImage: finalRefImages.length > 0,
-        referenceImageCount: finalRefImages.length,
-        charactersInfoCount: allCharactersInfo.length,
+    // 添加风格提示词
+    const stylePrompts: Record<string, string> = {
+      "2d": "2D animation style, flat animation effect",
+      "3d": "3D animation style, three-dimensional effect",
+      "anime": "Japanese anime style, anime aesthetic",
+      "clay": "clay animation style, clay material effect",
+      "comic": "American comic style, comic book aesthetic",
+      "cartoon": "cartoon animation style, cartoon effect",
+      "cyberpunk": "cyberpunk style, futuristic sci-fi",
+    };
+    
+    // 构建基础提示词（包含角色参考）
+    let basePrompt = characterRefPrompts.length > 0
+      ? `${image_prompt}，${characterRefPrompts.join('，')}`
+      : image_prompt;
+    
+    // 添加风格提示词到最终提示词
+    let volcanoPrompt = basePrompt;
+    if (projectVisualStyle && stylePrompts[projectVisualStyle]) {
+      const stylePrompt = stylePrompts[projectVisualStyle];
+      // 如果提示词中不包含风格描述，则添加
+      if (!volcanoPrompt.toLowerCase().includes(projectVisualStyle.toLowerCase())) {
+        volcanoPrompt = `${volcanoPrompt}，${stylePrompt}`;
+      }
+    }
+    
+    // 构建API请求体
+    const requestBody: any = {
+      model: "doubao-seedream-4-0-250828",
+      prompt: volcanoPrompt,
+      sequential_image_generation: "auto",
+      sequential_image_generation_options: {
+        max_images: editMode === true ? 4 : 1, // Generate 4 images in edit mode, 1 image otherwise
       },
+      response_format: "url",
+      size: imageSize.includes("*") ? imageSize.replace(/\*/g, "x") : imageSize, // Convert "1920*1080" to "1920x1080"
+      stream: false, // Set to false for storyboard generation
+      watermark: watermark === true, // Use watermark parameter, default false
+    };
+    
+    // 添加参考图数组（如果存在）
+    if (volcanoRefImages.length > 0) {
+      requestBody.image = volcanoRefImages;
+    }
+    
+    console.log("[GenerateShotImage] Prompt payload", {
+      project_id,
+      shot_number,
+      originalPrompt: image_prompt,
+      enhancedPrompt,
+      volcanoPrompt,
+      characterNames,
+      projectVisualStyle,
+      projectArtSetting,
+      editMode,
+      watermark,
+      referenceImagesCount: volcanoRefImages.length,
+      referenceImages: volcanoRefImages.map((url, index) => ({
+        index: index + 1, // 数组索引从0开始，但显示时从1开始
+        url: url.substring(0, 100) + (url.length > 100 ? '...' : ''), // 只显示前100个字符
+      })),
+      characterRefPrompts,
     });
+    
+    console.log("[GenerateShotImage] Volcano API request body", {
+      model: requestBody.model,
+      prompt: requestBody.prompt,
+      image: requestBody.image, // 完整的图片数组
+      imageCount: requestBody.image?.length || 0,
+      size: requestBody.size,
+      watermark: requestBody.watermark,
+    });
+      
+      // Call Volcano API
+      const volcanoApiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+      const volcanoBaseUrl = process.env.VOLCANO_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
+      
+      if (!volcanoApiKey) {
+        throw new Error("VOLCANO_API_KEY or ARK_API_KEY is not configured");
+      }
+      
+      const volcanoResponse = await fetch(`${volcanoBaseUrl}/images/generations`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${volcanoApiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      
+      if (!volcanoResponse.ok) {
+        const errorText = await volcanoResponse.text();
+        throw new Error(`Volcano API error: ${volcanoResponse.status} - ${errorText}`);
+      }
+      
+      const volcanoResult = await volcanoResponse.json();
+      
+      console.log("[GenerateShotImage] Volcano API response:", {
+        hasData: !!volcanoResult.data,
+        dataType: Array.isArray(volcanoResult.data) ? 'array' : typeof volcanoResult.data,
+        dataLength: Array.isArray(volcanoResult.data) ? volcanoResult.data.length : 'N/A',
+        hasUrl: !!volcanoResult.url,
+        hasImageUrl: !!volcanoResult.image_url,
+        resultKeys: Object.keys(volcanoResult),
+      });
+      
+      // Extract image URLs from response
+      // Note: The response format may vary, adjust based on actual API response
+      // In edit mode, we expect multiple images (up to 4), otherwise just 1
+      const imageDataArray = volcanoResult.data || [];
+      const imageUrls: string[] = [];
+      
+      if (Array.isArray(imageDataArray) && imageDataArray.length > 0) {
+        // Extract URLs from array of image objects
+        imageUrls.push(...imageDataArray.map((item: any) => item.url || item.image_url).filter(Boolean));
+        console.log("[GenerateShotImage] Extracted URLs from array:", imageUrls.length);
+      } else if (volcanoResult.url || volcanoResult.image_url) {
+        // Fallback: single image URL
+        imageUrls.push(volcanoResult.url || volcanoResult.image_url);
+        console.log("[GenerateShotImage] Extracted single URL from response");
+      }
+      
+      if (imageUrls.length === 0) {
+        console.error("[GenerateShotImage] No image URLs found in response:", JSON.stringify(volcanoResult, null, 2));
+        throw new Error("No image URLs returned from Volcano API. Response: " + JSON.stringify(volcanoResult));
+      }
+      
+      console.log("[GenerateShotImage] Successfully extracted image URLs:", imageUrls.length);
+      
+      // Upload all images to TOS
+      console.log("[GenerateShotImage] Starting TOS upload for", imageUrls.length, "images");
+      const uploadPromises = imageUrls.map((url, index) => {
+        const filename = `storyboard-shots/${project_id}/${shot_number}-${Date.now()}-${index}.jpg`;
+        console.log(`[GenerateShotImage] Uploading image ${index + 1}/${imageUrls.length} to TOS:`, filename);
+        return tosClient.uploadImageFromUrl(url, filename).catch((error) => {
+          console.error(`[GenerateShotImage] Failed to upload image ${index + 1} to TOS:`, error);
+          throw new Error(`Failed to upload image ${index + 1} to TOS: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      });
+      
+      // uploadImageFromUrl returns Promise<string>, not an object
+      const uploadedUrls = await Promise.all(uploadPromises);
+      console.log("[GenerateShotImage] Successfully uploaded", uploadedUrls.length, "images to TOS");
+      
+      // In edit mode, return all images. In normal mode, save first image to database
+      if (!editMode) {
+        // Save first image to database (non-edit mode)
+        const { error: updateError } = await supabase
+          .from('anim_scene_items')
+          .update({
+            image_url: uploadedUrls[0],
+          })
+          .eq('id', scene_item_id);
+        
+        if (updateError) {
+          throw new Error(`Failed to save image: ${updateError.message}`);
+        }
+      }
+      
+      // 构建返回数据
+      const responseData = {
+        imageUrl: editMode ? null : uploadedUrls[0], // In edit mode, return null for imageUrl, use imageUrls instead
+        imageUrls: editMode ? uploadedUrls : null, // In edit mode, return array of URLs
+        taskId: null, // Volcano API doesn't use taskId when watermark is false
+        requestId: volcanoResult.request_id || null,
+        isVolcanoAPI: true, // Flag to indicate this is from Volcano API
+        watermark: watermark,
+      };
+      
+      return NextResponse.json({
+        success: true,
+        data: responseData,
+      });
   } catch (error) {
-    console.error("Error generating shot image:", error);
+    console.error("[GenerateShotImage] Error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate shot image";
+    const errorStack = error instanceof Error ? error.stack : undefined;
+    console.error("[GenerateShotImage] Error details:", {
+      message: errorMessage,
+      stack: errorStack,
+    });
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Failed to generate shot image",
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? errorStack : undefined,
       },
       { status: 500 }
     );

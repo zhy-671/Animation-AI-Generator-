@@ -45,51 +45,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.DASHSCOPE_API_KEY;
+    // ========== 原来的 DashScope API 调用（已注释） ==========
+    // const apiKey = process.env.DASHSCOPE_API_KEY;
+    // if (!apiKey) {
+    //   return NextResponse.json(
+    //     { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+    //     { status: 500 }
+    //   );
+    // }
+
+    // ========== 新的豆包 API 调用 ==========
+    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
+    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+        { success: false, error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
         { status: 500 }
       );
     }
 
     // 构建提示词 - 使用国际标准的场次生成系统提示词
-    const systemPrompt = `LANGUAGE REQUIREMENT: Respond only in English. Never use Chinese or any other language in your responses.
+    const systemPrompt = `LANGUAGE REQUIREMENT: Respond only in English.
 
-You are a professional cinematic storyboard expert specializing in international animation production, scene continuity, and object consistency. You have expertise in:
-- Visual storytelling and scene construction
-- Cinematic narrative structure and pacing
-- Animation production pipeline and technical feasibility
-- Environmental, architectural, and object description for animation
-- Scene continuity and object consistency across shots
+You are a professional cinematic scene expert specializing in international/Western environments, object consistency, and animation-ready worldbuilding.
 
-Your task is to convert the provided chapter-structured content into a structured JSON representing animation-ready scenes. Each chapter corresponds to one scene, and each scene may contain 3–12 continuous shots.
+Task:
+
+Convert the provided chapter-structured novel into **animation-ready scene JSONs**, focusing on environments, props, buildings, and atmosphere. Each chapter corresponds to **one scene**. Do NOT generate shots, camera angles, or storyboards; only generate scene-level information.
 
 Scene Requirements:
+
 1. Scene-level fields:
    - scene: "{chapter_number}: {chapter_title}"
    - scene_time: "{Time, Weather, Lighting, e.g., Night, Rainy Evening}"
    - scene_location: "{Interior/Exterior + detailed environmental description including buildings, streets, nature, architecture, and visible objects}"
-   - scene_description: 1–2 sentences accurately describing the chapter's content, highlighting environment, mood, atmosphere, and visual elements
-   - scene_story: **Must be the exact, complete, unmodified original chapter text**
-   - scene_elements: Detailed description of **all visible objects, props, vehicles, furniture, animals, and buildings** mentioned or implied in the scene. Include relative positions if possible.
+   - scene_description: 1–2 sentences accurately describing the chapter's environment, mood, atmosphere, and visual elements
+   - scene_story: **The full original chapter text, unmodified**
+   - scene_elements: List all **visible objects, props, vehicles, furniture, animals, and buildings** mentioned or implied. Include relative positions if possible. These elements should be persistent across scenes unless the environment changes.
 
-2. Key visual cues (for storyboard / AI scene generation):
-   - key_visual_cues: for each shot, provide:
-     - shot_1: "{Wide/Medium/Close-up} - environment, objects, buildings, props, weather, lighting, atmosphere"
-     - shot_2: "{Medium/Close-up} - focus on particular objects, architectural details, or environmental interactions"
-     - shot_3: "{Environment/lighting/weather/buildings/props/interactive objects, scene continuity with previous shot}"
-     - ...add more shots if needed (up to 12), each shot must **inherit all environment, objects, and props from the previous shot unless the scene changes**
+Critical Instructions:
+1. Focus **only on environments, props, buildings, weather, lighting, and atmosphere**.
+2. Do **NOT include characters, dialogues, or actions**.
+3. Ensure scene_elements are **complete, specific, and animation-ready**, suitable for later splitting into shots.
+4. JSON output must be **valid and parsable**.
 
-3. Continuity Rules:
-   - Scene background, props, buildings, and environmental elements must remain fixed unless the scene changes
-   - Any objects or props introduced in one shot persist across subsequent shots
-   - Shots should form a continuous cinematic flow
-   - Avoid generic descriptions; provide specific, animation-ready, high-quality content
-   - Key visual cues must accurately reflect the chapter content
-   - If multiple shots are in the same scene, each shot's description **must carry over all previous scene elements**, only updating for new actions, objects, or environmental changes
-
-JSON Output Structure Example:
+Example JSON Output:
 
 [
   {
@@ -106,22 +106,9 @@ JSON Output Structure Example:
       "Distant lighthouse",
       "Fog and mist over the water",
       "Waves gently hitting the piers"
-    ],
-    "key_visual_cues": {
-      "shot_1": "Wide shot of the harbor, fog covering the water, ships and piers visible, lanterns flickering",
-      "shot_2": "Medium shot of stacked crates and barrels along the dock, mist swirling around them, same environment elements carried over",
-      "shot_3": "Close-up of waves lapping against wooden piers, lantern light reflecting on wet surfaces, lighthouse faintly visible, maintaining continuity of environment and props"
-    }
+    ]
   }
-]
-
-Critical Instructions:
-1. All environmental, prop, and building details must be listed in scene_elements
-2. Scene_elements must be persistent across shots for continuity in subsequent storyboard generation
-3. Key visual cues must include shot type (Wide/Medium/Close-up), objects, buildings, props, weather, and lighting
-4. Each shot must inherit all scene_elements from previous shots unless a scene change occurs
-5. Ensure output JSON is animation-ready and supports object, scene, and environmental continuity
-6. Avoid any mention of characters; focus only on environment, objects, props, buildings, weather, lighting, and atmosphere`;
+]`;
 
     // 获取项目信息
     const { data: project, error: projectError } = await supabase
@@ -173,9 +160,11 @@ Critical Instructions:
     // 从项目内容中提取每个章节的完整文本
     // 尝试多种方式匹配章节：章节号、章节标题等
     let fullChapterTexts: Record<number, string> = {};
+    // 对章节进行排序，确保按章节号顺序处理
+    const sortedChapters = [...chapters].sort((a: any, b: any) => a.chapter_number - b.chapter_number);
+    
     if (storyScript.content) {
       const content = storyScript.content;
-      const sortedChapters = chapters.sort((a: any, b: any) => a.chapter_number - b.chapter_number);
       
       sortedChapters.forEach((chapter: any, index: number) => {
         const chapterNumber = chapter.chapter_number;
@@ -247,89 +236,162 @@ Critical Instructions:
     Object.keys(fullChapterTexts).forEach(key => {
       const num = parseInt(key);
     });
-    // 打印项目内容和传递给AI的信息
-    // 构建用户提示词，直接传递完整的原始剧本内容
-    const userPrompt = `COMPLETE ORIGINAL STORY CONTENT:
+    
+    // 构建章节信息字符串，明确告诉AI有多少个章节
+    let chaptersInfo = `There are ${sortedChapters.length} chapters in total. Each chapter must generate exactly one scene.\n\n`;
+    
+    sortedChapters.forEach((chapter: any) => {
+      const chapterNumber = chapter.chapter_number;
+      const chapterTitle = chapter.chapter_title || `Chapter ${chapterNumber}`;
+      const chapterText = fullChapterTexts[chapterNumber] || chapter.chapter_summary || "";
+      
+      chaptersInfo += `Chapter ${chapterNumber}: ${chapterTitle}\n`;
+      if (chapterText) {
+        chaptersInfo += `Content: ${chapterText.substring(0, 500)}${chapterText.length > 500 ? '...' : ''}\n\n`;
+      }
+    });
+    
+    // 构建用户提示词，明确传递章节信息和完整内容
+    const userPrompt = `Input Novel Chapters Information:
 
+${chaptersInfo}
+
+Full Story Content:
+
+"""
 ${storyScript.content || ""}
+"""
 
----
+IMPORTANT: You must generate exactly ${sortedChapters.length} scenes, one for each chapter. The scene number in the "scene" field must match the chapter number (e.g., "1: Chapter Title" for Chapter 1, "2: Chapter Title" for Chapter 2, etc.).
 
-CHAPTER STRUCTURE (for reference only):
-
-${JSON.stringify(chapters.map((ch: any) => ({
-  chapter_number: ch.chapter_number,
-  chapter_title: ch.chapter_title,
-  chapter_summary: ch.chapter_summary,
-})), null, 2)}
-
----
-
-**IMPORTANT INSTRUCTIONS:**
-
-1. Analyze the COMPLETE ORIGINAL STORY CONTENT above (not just the chapter summaries).
-
-2. For each chapter in the chapter structure, generate ONE scene with:
-   - scene: {chapter_number}: {chapter_title}
-   - scene_time: Extract from the original story content
-   - scene_location: Extract from the original story content
-   - main_characters: Extract characters and their emotional states from the original story content
-   - **scene_description: CRITICAL - Generate 1-2 sentences that accurately describe and represent the chapter's actual content. You MUST analyze the complete chapter text and extract:**
-     * Key plot points and events that occur in this chapter
-     * Character actions, interactions, and developments
-     * Environmental details, atmosphere, and mood
-     * Emotional tone and narrative tension
-     * Visual elements and scenes central to the chapter
-     The description must enable understanding of what happens in this chapter and how it contributes to the story. It must reflect the chapter's actual content, not generic descriptions.
-   - **scene_story: MUST be the EXACT, COMPLETE text from the original story content for this chapter. DO NOT summarize or rewrite.**
-   - key_visual_cues: Generate visual cues based on the actual scenes and events described in the original story content
-
-3. The scene_story field MUST contain the COMPLETE, UNMODIFIED chapter text from the original story content above.
-
-4. **IMPORTANT**: The scene_description must be generated by carefully reading and analyzing the actual chapter content. It should describe what actually happens in the chapter, including specific events, character developments, and narrative progression. Do not use generic or placeholder descriptions.
-
-Please generate the complete scene list according to the instructions above. Each chapter should correspond to exactly one scene.`;
+Please generate animation-ready scene JSONs for each chapter. Focus only on environments, props, buildings, weather, lighting, and atmosphere. Do NOT include characters, dialogues, or actions. Each chapter should correspond to exactly one scene.`;
 
     // 打印传递给AI的提示词长度
-    // 调用 DashScope Chat Completions API
+    // ========== 原来的 DashScope API 调用（已注释） ==========
+    // const response = await fetch(
+    //   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    //   {
+    //     method: "POST",
+    //     headers: {
+    //       "Content-Type": "application/json",
+    //       Authorization: `Bearer ${apiKey}`,
+    //     },
+    //     body: JSON.stringify({
+    //       model: "qwen-plus",
+    //       messages: [
+    //         {
+    //           role: "system",
+    //           content: systemPrompt,
+    //         },
+    //         {
+    //           role: "user",
+    //           content: userPrompt,
+    //         },
+    //       ],
+    //       temperature: 0.7,
+    //       max_tokens: 8000,
+    //     }),
+    //   }
+    // );
+
+    // if (!response.ok) {
+    //   const errorText = await response.text();
+    //   return NextResponse.json(
+    //     {
+    //       success: false,
+    //       error: `DashScope API error: ${response.status} - ${errorText}`,
+    //     },
+    //     { status: response.status }
+    //   );
+    // }
+
+    // const data = await response.json();
+    // const rawContent = data.choices?.[0]?.message?.content || "";
+
+    // ========== 新的豆包 API 调用 ==========
+    // 构建请求参数（使用 doubao API 格式）
+    const requestBody = {
+      model: "doubao-seed-1-6-251015",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000,
+    };
+
+    // 调用 doubao Chat Completions API
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: "qwen-plus",
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
     if (!response.ok) {
-      const errorText = await response.text();
+      let errorText = "";
+      try {
+        errorText = await response.text();
+      } catch (e) {
+        errorText = `HTTP ${response.status} ${response.statusText}`;
+      }
+      
+      // 如果是 401 错误，提供更详细的错误信息
+      if (response.status === 401) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "API key authentication failed. Please check your VOLCANO_API_KEY or ARK_API_KEY environment variable.",
+            details: errorText,
+          },
+          { status: 401 }
+        );
+      }
+      
       return NextResponse.json(
         {
           success: false,
-          error: `DashScope API error: ${response.status} - ${errorText}`,
+          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
-        { status: response.status }
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
     }
 
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Invalid response from AI service. Please try again.",
+        },
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    }
+
+    // 提取返回内容（doubao API 返回格式与 OpenAI 兼容）
     const rawContent = data.choices?.[0]?.message?.content || "";
 
     if (!rawContent) {

@@ -31,15 +31,9 @@ export async function POST(request: NextRequest) {
 
     // 生成唯一文件名
     const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`;
-
-    console.log('Starting video upload:', { videoUrl, fileName });
-
     try {
       // 从 DashScope URL 下载视频并上传到火山存储 storyvideo bucket
       const url = await tosClient.uploadVideoFromUrl(videoUrl, fileName);
-      
-      console.log('Video uploaded successfully:', { url, fileName });
-
       return NextResponse.json({
         success: true,
         data: {
@@ -48,7 +42,6 @@ export async function POST(request: NextRequest) {
         },
       });
     } catch (uploadError) {
-      console.error("Error in uploadVideoFromUrl:", uploadError);
       // 检查是否是网络错误或下载错误
       if (uploadError instanceof Error) {
         if (uploadError.message.includes('Failed to download')) {
@@ -73,7 +66,6 @@ export async function POST(request: NextRequest) {
       throw uploadError; // 重新抛出未知错误
     }
   } catch (error) {
-    console.error("Error uploading video:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to upload video",

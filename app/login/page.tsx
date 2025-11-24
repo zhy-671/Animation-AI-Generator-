@@ -153,23 +153,13 @@ function LoginPageContent() {
       if (typeof window !== 'undefined') {
         sessionStorage.setItem('loginRedirectUrl', redirectUrl)
       }
-
-      console.log('Initiating Google OAuth sign in...')
-      console.log('Redirect URL:', redirectUrl)
-      console.log('Callback URL:', `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectUrl)}`)
-      
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectUrl)}`,
         },
       })
-
-      console.log('OAuth response - data:', data)
-      console.log('OAuth response - error:', error)
-
       if (error) {
-        console.error('Google OAuth error:', error)
         setError(error.message || 'Failed to initiate Google sign in. Please check your Google OAuth configuration.')
         setIsLoading(false)
         return
@@ -177,17 +167,13 @@ function LoginPageContent() {
 
       // Check if we got a URL to redirect to
       if (data?.url) {
-        console.log('Google OAuth URL received:', data.url)
-        
         // Validate that the URL is actually a Google OAuth URL
         if (data.url.includes('accounts.google.com') || data.url.includes('supabase.co')) {
-          console.log('Valid OAuth URL, redirecting...')
           // Manually redirect to the OAuth URL
           window.location.href = data.url
           return
         } else {
           // URL doesn't look like a valid OAuth URL
-          console.error('Invalid OAuth URL received:', data.url)
           setError('Invalid OAuth URL received. Please check your Google OAuth configuration in Supabase Dashboard.')
           setIsLoading(false)
           return
@@ -195,12 +181,9 @@ function LoginPageContent() {
       }
 
       // If no URL was returned, show an error
-      console.error('Google OAuth did not return a redirect URL')
-      console.error('Full response:', { data, error })
       setError('Failed to initiate Google sign in. Please check your Google OAuth configuration in Supabase Dashboard.')
       setIsLoading(false)
     } catch (err) {
-      console.error('Error in handleGoogleSignIn:', err)
       setError(err instanceof Error ? err.message : 'An unexpected error occurred')
       setIsLoading(false)
     }

@@ -17,7 +17,6 @@ export async function GET(request: NextRequest) {
       count: history.length,
     })
   } catch (error) {
-    console.error('Error getting credits history:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

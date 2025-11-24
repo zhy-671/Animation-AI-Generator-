@@ -27,7 +27,6 @@ export default function Header() {
       try {
         const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
         if (userError) {
-          console.error("Error getting user for credits refresh:", userError);
           // Retry once if it's a network error
           if (retryCount < 1 && userError.message?.includes('fetch')) {
             setTimeout(() => refreshCredits(retryCount + 1), 1000);
@@ -36,20 +35,16 @@ export default function Header() {
         }
         if (currentUser && mounted) {
           try {
-            console.log('Fetching credits balance for user:', currentUser.id);
             const balanceCheck = await checkCreditsBalance(0);
-            console.log('Credits balance response:', balanceCheck);
             if (balanceCheck.balance !== undefined && mounted) {
               setCreditsBalance(balanceCheck.balance);
             } else if (balanceCheck.error && mounted) {
-              console.error("Error in balance check response:", balanceCheck.error);
               // Retry once if it's a network error
               if (retryCount < 1 && balanceCheck.error.includes('fetch')) {
                 setTimeout(() => refreshCredits(retryCount + 1), 1000);
               }
             }
           } catch (error) {
-            console.error("Error loading credits balance:", error);
             // Retry once on error
             if (retryCount < 1 && mounted) {
               setTimeout(() => refreshCredits(retryCount + 1), 1000);
@@ -57,7 +52,6 @@ export default function Header() {
           }
         }
       } catch (error) {
-        console.error("Error in refreshCredits:", error);
         // Retry once on error
         if (retryCount < 1 && mounted) {
           setTimeout(() => refreshCredits(retryCount + 1), 1000);
@@ -71,7 +65,6 @@ export default function Header() {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (mounted) {
           if (error) {
-            console.error("Error getting user:", error);
             setUser(null);
             setCreditsBalance(null);
           } else {
@@ -86,7 +79,6 @@ export default function Header() {
           setLoading(false);
         }
       } catch (error) {
-        console.error("Error in getUser:", error);
         if (mounted) {
           setUser(null);
           setCreditsBalance(null);
@@ -104,11 +96,9 @@ export default function Header() {
         try {
           const { data: { user: currentUser } } = await supabase.auth.getUser();
           if (currentUser) {
-            console.log('Initial load: Refreshing credits after delay');
             refreshCredits();
           }
         } catch (error) {
-          console.error('Error checking user for delayed refresh:', error);
         }
       }
     }, 2000);
@@ -116,16 +106,12 @@ export default function Header() {
     // Listen for authentication state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
-      
-      console.log('Auth state changed:', event, session?.user?.id);
-      
       // 立即更新用户状态和加载状态
       setUser(session?.user ?? null);
       setLoading(false); // 确保 loading 状态被更新
       
       // If user logs in, fetch credits balance
       if (session?.user) {
-        console.log('User logged in, refreshing credits...');
         // Add a small delay to ensure session is fully established
         setTimeout(() => {
           if (mounted) {
@@ -160,7 +146,6 @@ export default function Header() {
       router.push("/");
       router.refresh();
     } catch (error) {
-      console.error("Error signing out:", error);
     }
   };
 

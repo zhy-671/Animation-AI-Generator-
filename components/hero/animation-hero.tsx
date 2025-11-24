@@ -16,7 +16,6 @@ export default function AnimationHero() {
     // 确保视频播放
     if (videoRef.current) {
       videoRef.current.play().catch((error) => {
-        console.error('Video play error:', error);
       });
     }
   }, []);
@@ -35,10 +34,8 @@ export default function AnimationHero() {
           className="absolute inset-0 w-full h-full object-cover"
           aria-hidden="true"
           onError={(e) => {
-            console.error('Video load error:', e);
           }}
           onLoadedData={() => {
-            console.log('Video loaded successfully');
           }}
         >
           <source src="/videos/The-Jungle-Book.mp4" type="video/mp4" />

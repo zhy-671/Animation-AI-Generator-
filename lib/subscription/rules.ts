@@ -153,6 +153,17 @@ export function getVideoCreditsPerSecond(plan: SubscriptionPlan, resolution: '48
     return config.creditsPerSecond['1080p'] || 24;
   }
   
+  // 没有订阅计划的情况
+  if (plan === null) {
+    // 1080p 单独计费，没有订阅计划则按照 1080p 的双倍来计算（48积分/秒）
+    if (resolution === '1080p') {
+      return (config.creditsPerSecond['1080p'] || 24) * 2; // 24 * 2 = 48
+    } else {
+      // 480p 和 720p 统一按 720p 费率（15积分/秒）
+      return config.creditsPerSecond['720p'] || 15;
+    }
+  }
+  
   // 其他情况返回原分辨率费率
   return config.creditsPerSecond[resolution] || 0;
 }
@@ -181,6 +192,15 @@ export function calculateVideoCredits(plan: SubscriptionPlan, resolution: '480p'
   } else if (plan === 'studio') {
     // Studio计划：统一按1080p费率扣除
     actualResolution = '1080p';
+  } else if (plan === null) {
+    // 没有订阅计划：
+    // - 1080p 单独计费，按照 1080p 的双倍来计算（48积分/秒）
+    // - 480p 和 720p 统一按 720p 费率扣除（15积分/秒）
+    if (resolution === '1080p') {
+      actualResolution = '1080p'; // 保持 1080p，但会在 getVideoCreditsPerSecond 中应用双倍费率
+    } else {
+      actualResolution = '720p';
+    }
   }
   
   const creditsPerSecond = getVideoCreditsPerSecond(plan, actualResolution);

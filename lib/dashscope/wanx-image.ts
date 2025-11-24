@@ -52,7 +52,6 @@ class WanXImageClient {
     this.model = process.env.WANX_IMAGE_MODEL || "wan2.5-t2i-preview"; // 默认使用 wan2.5-t2i-preview
     
     if (!this.apiKey) {
-      console.warn("DASHSCOPE_API_KEY is not set");
     }
   }
 
@@ -122,12 +121,6 @@ class WanXImageClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("WanX Image API request details:", {
-          url: `${this.baseUrl}/image-synthesis`,
-          model: this.model,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`WanX Image API error: ${response.status} - ${errorText}`);
       }
 
@@ -152,7 +145,6 @@ class WanXImageClient {
         requestId: data.request_id || "",
       };
     } catch (error) {
-      console.error("Error submitting image task:", error);
       throw error;
     }
   }
@@ -198,11 +190,6 @@ class WanXImageClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("DashScope Image-to-Image API error:", {
-          url: this.image2ImageBaseUrl,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`DashScope API error: status: ${response.status}, error: ${errorText}`);
       }
 
@@ -217,7 +204,6 @@ class WanXImageClient {
         requestId: result.request_id || "",
       };
     } catch (error) {
-      console.error("Error submitting image-to-image task:", error);
       throw error;
     }
   }
@@ -237,11 +223,6 @@ class WanXImageClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("WanX Image status API error:", {
-          url: `${this.tasksBaseUrl}/${taskId}`,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`WanX Image status API error: ${response.status} - ${errorText}`);
       }
 
@@ -271,7 +252,6 @@ class WanXImageClient {
         message: data.message || data.output?.message || data.error?.message,
       };
     } catch (error) {
-      console.error("Error getting image task status:", error);
       throw error;
     }
   }
@@ -386,7 +366,6 @@ class WanXImageClient {
         const result = await this.generateImage(requests[i]);
         allImages.push(...result.images);
       } catch (error) {
-        console.error(`Error generating image ${i + 1}/${requests.length}:`, error);
         // 如果单个图像生成失败，继续处理下一个，但记录错误
         // 可以选择跳过或抛出错误，这里选择跳过
         // throw error; // 如果需要严格模式，取消注释这行
