@@ -340,7 +340,7 @@ Please generate the storyboard following this structure. Output only the JSON ar
       // 打印提取的JSON字符串用于调试
       // 清理和修复JSON字符串中的控制字符和格式问题
       // 使用更可靠的方法：在字符串值中转义所有未转义的控制字符
-      function cleanJsonString(str: string): string {
+      const cleanJsonString = (str: string): string => {
         // 首先替换中文引号为标准引号（在字符串值内）
         // 需要小心处理，只在字符串值内替换
         let result = '';
@@ -405,7 +405,7 @@ Please generate the storyboard following this structure. Output only the JSON ar
         }
         
         return result;
-      }
+      };
 
       // 先尝试直接解析
       let parsedData: any;
@@ -435,7 +435,7 @@ Please generate the storyboard following this structure. Output only the JSON ar
           });
           
           // 使用更强大的状态机修复数组格式问题
-          function fixArrayFormatting(json: string): string {
+          const fixArrayFormatting = (json: string): string => {
             let result = '';
             let inString = false;
             let escapeNext = false;
@@ -546,7 +546,7 @@ Please generate the storyboard following this structure. Output only the JSON ar
             }
             
             return result;
-          }
+          };
           
           fixedJson = fixArrayFormatting(fixedJson);
           
@@ -640,29 +640,7 @@ Please generate the storyboard following this structure. Output only the JSON ar
             parsedData = JSON.parse(fixedJson);
           } catch (thirdError) {
             // 如果还是失败，记录完整的错误信息
-            // 尝试找到错误位置附近的上下文
             const errorMsg = thirdError instanceof Error ? thirdError.message : String(thirdError);
-            const positionMatch = errorMsg.match(/position (\d+)/);
-            if (positionMatch) {
-              const pos = parseInt(positionMatch[1]);
-              const start = Math.max(0, pos - 200);
-              const end = Math.min(fixedJson.length, pos + 200);
-              });
-              
-              // 尝试找到最近的dialogue数组
-              const dialogueRegex = /"dialogue":\s*\[/g;
-              let dialogueMatch;
-              let lastDialoguePos = -1;
-              while ((dialogueMatch = dialogueRegex.exec(fixedJson.substring(0, pos))) !== null) {
-                lastDialoguePos = dialogueMatch.index;
-              }
-              if (lastDialoguePos >= 0) {
-                const dialogueStart = lastDialoguePos;
-                const dialogueEnd = Math.min(fixedJson.length, pos + 500);
-              }
-            }
-            
-            // 打印完整的修复后的JSON（用于调试）
             throw new Error(`Failed to parse JSON from Qwen2 response after multiple attempts: ${errorMsg}`);
           }
         }

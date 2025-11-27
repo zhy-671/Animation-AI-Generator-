@@ -28,30 +28,44 @@ function convertAspectRatioToSize(aspectRatio: string): string {
   }
 
   // 根据宽高比计算合适的尺寸
-  // 使用常见的分辨率，保持宽高比
+  // 注意：API要求图片大小必须至少 921600 像素（约 960*960）
+  // 使用常见的分辨率，保持宽高比，确保满足最小像素要求
   if (widthRatio / heightRatio === 16 / 9) {
-    // 16:9 -> 1920*1080
+    // 16:9 -> 1920*1080 (2,073,600 像素，满足要求)
     return "1920*1080";
   } else if (widthRatio / heightRatio === 4 / 3) {
-    // 4:3 -> 1024*768
-    return "1024*768";
+    // 4:3 -> 1280*960 (1,228,800 像素，满足要求，之前 1024*768 太小)
+    return "1280*960";
   } else if (widthRatio / heightRatio === 1) {
-    // 1:1 -> 1024*1024
+    // 1:1 -> 1024*1024 (1,048,576 像素，满足要求)
     return "1024*1024";
   } else if (widthRatio / heightRatio === 9 / 16) {
-    // 9:16 (竖屏) -> 576*1024
-    return "576*1024";
+    // 9:16 (竖屏) -> 720*1280 (921,600 像素，刚好满足要求，之前 576*1024 太小)
+    return "720*1280";
   } else if (widthRatio / heightRatio === 21 / 9) {
-    // 21:9 (超宽屏) -> 2560*1080
+    // 21:9 (超宽屏) -> 2560*1080 (2,764,800 像素，满足要求)
     return "2560*1080";
   } else {
-    // 其他比例，使用通用计算方式
-    // 以高度为基准，计算宽度
-    const baseHeight = 1024;
-    const calculatedWidth = Math.round((widthRatio / heightRatio) * baseHeight);
-    // 确保宽度是偶数（某些API要求）
-    const finalWidth = calculatedWidth % 2 === 0 ? calculatedWidth : calculatedWidth + 1;
-    return `${finalWidth}*${baseHeight}`;
+    // 其他比例，使用通用计算方式，确保至少 921600 像素
+    const minPixels = 921600;
+    let baseHeight = 1024;
+    let calculatedWidth = Math.round((widthRatio / heightRatio) * baseHeight);
+    let totalPixels = calculatedWidth * baseHeight;
+    
+    // 如果像素数不足，按比例放大
+    if (totalPixels < minPixels) {
+      const scale = Math.sqrt(minPixels / totalPixels);
+      baseHeight = Math.round(baseHeight * scale);
+      calculatedWidth = Math.round((widthRatio / heightRatio) * baseHeight);
+      // 确保是偶数（某些API要求）
+      baseHeight = baseHeight % 2 === 0 ? baseHeight : baseHeight + 1;
+      calculatedWidth = calculatedWidth % 2 === 0 ? calculatedWidth : calculatedWidth + 1;
+    } else {
+      // 确保宽度是偶数（某些API要求）
+      calculatedWidth = calculatedWidth % 2 === 0 ? calculatedWidth : calculatedWidth + 1;
+    }
+    
+    return `${calculatedWidth}*${baseHeight}`;
   }
 }
 

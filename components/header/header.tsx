@@ -21,15 +21,26 @@ export default function Header() {
 
   useEffect(() => {
     let mounted = true;
+    let lastRefreshTime = 0;
+    const MIN_REFRESH_INTERVAL = 2000; // 最小刷新间隔 2 秒，防止短时间内重复调用
 
-    // Function to refresh credits balance
-    const refreshCredits = async (retryCount = 0) => {
+    // Function to refresh credits balance with throttling
+    const refreshCredits = async (retryCount = 0, force = false) => {
+      // 节流：如果距离上次刷新不到 2 秒，且不是强制刷新，则直接忽略本次调用
+      const now = Date.now();
+      if (!force && now - lastRefreshTime < MIN_REFRESH_INTERVAL) {
+        // 直接忽略，不执行查询
+        return;
+      }
+
+      lastRefreshTime = now;
+
       try {
         const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
         if (userError) {
           // Retry once if it's a network error
           if (retryCount < 1 && userError.message?.includes('fetch')) {
-            setTimeout(() => refreshCredits(retryCount + 1), 1000);
+            setTimeout(() => refreshCredits(retryCount + 1, true), 1000);
           }
           return;
         }
@@ -41,20 +52,20 @@ export default function Header() {
             } else if (balanceCheck.error && mounted) {
               // Retry once if it's a network error
               if (retryCount < 1 && balanceCheck.error.includes('fetch')) {
-                setTimeout(() => refreshCredits(retryCount + 1), 1000);
+                setTimeout(() => refreshCredits(retryCount + 1, true), 1000);
               }
             }
           } catch (error) {
             // Retry once on error
             if (retryCount < 1 && mounted) {
-              setTimeout(() => refreshCredits(retryCount + 1), 1000);
+              setTimeout(() => refreshCredits(retryCount + 1, true), 1000);
             }
           }
         }
       } catch (error) {
         // Retry once on error
         if (retryCount < 1 && mounted) {
-          setTimeout(() => refreshCredits(retryCount + 1), 1000);
+          setTimeout(() => refreshCredits(retryCount + 1, true), 1000);
         }
       }
     };
@@ -69,9 +80,9 @@ export default function Header() {
             setCreditsBalance(null);
           } else {
             setUser(user);
-            // If user is logged in, fetch credits balance
+            // If user is logged in, fetch credits balance (force refresh on initial load)
             if (user) {
-              await refreshCredits();
+              await refreshCredits(0, true);
             } else {
               setCreditsBalance(null);
             }
@@ -89,20 +100,6 @@ export default function Header() {
 
     getUser();
 
-    // Also try to refresh credits after a delay on initial load
-    // This helps in production where session might take time to establish
-    const initialRefreshTimer = setTimeout(async () => {
-      if (mounted) {
-        try {
-          const { data: { user: currentUser } } = await supabase.auth.getUser();
-          if (currentUser) {
-            refreshCredits();
-          }
-        } catch (error) {
-        }
-      }
-    }, 2000);
-
     // Listen for authentication state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -110,12 +107,12 @@ export default function Header() {
       setUser(session?.user ?? null);
       setLoading(false); // 确保 loading 状态被更新
       
-      // If user logs in, fetch credits balance
+      // If user logs in, fetch credits balance (force refresh on auth change)
       if (session?.user) {
         // Add a small delay to ensure session is fully established
         setTimeout(() => {
           if (mounted) {
-            refreshCredits();
+            refreshCredits(0, true);
           }
         }, 500);
       } else {
@@ -123,17 +120,33 @@ export default function Header() {
       }
     });
 
-    // Listen for credits update events
+    // Listen for credits update events (with throttling)
+    // 使用节流机制，避免短时间内重复调用
+    let creditsUpdateTimer: NodeJS.Timeout | null = null;
     const handleCreditsUpdated = async () => {
       if (!mounted) return;
-      await refreshCredits();
+      
+      // 如果已经有待执行的更新，清除它
+      if (creditsUpdateTimer) {
+        clearTimeout(creditsUpdateTimer);
+      }
+      
+      // 延迟执行，如果在这期间又有新的更新事件，会清除之前的定时器
+      creditsUpdateTimer = setTimeout(async () => {
+        if (mounted) {
+          await refreshCredits(0, false); // 使用节流，不强制刷新
+        }
+        creditsUpdateTimer = null;
+      }, 1000); // 延迟1秒执行，合并多次事件
     };
 
     window.addEventListener('credits-updated', handleCreditsUpdated);
 
     return () => {
       mounted = false;
-      clearTimeout(initialRefreshTimer);
+      if (creditsUpdateTimer) {
+        clearTimeout(creditsUpdateTimer);
+      }
       subscription.unsubscribe();
       window.removeEventListener('credits-updated', handleCreditsUpdated);
     };
@@ -168,6 +181,12 @@ export default function Header() {
               >
                 Story Script
               </Link>
+              {/* <Link 
+                href="/ai-music-video-generator" 
+                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+              >
+                Music
+              </Link> */}
               <Link 
                 href="/prompt-guide" 
                 className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
@@ -253,6 +272,13 @@ export default function Header() {
               >
                 Story Script
               </Link>
+              {/* <Link 
+                href="/ai-music-video-generator" 
+                onClick={() => setMobileMenuOpen(false)}
+                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+              >
+                Music
+              </Link> */}
               <Link 
                 href="/prompt-guide" 
                 onClick={() => setMobileMenuOpen(false)}

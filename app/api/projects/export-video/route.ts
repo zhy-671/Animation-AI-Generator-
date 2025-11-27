@@ -124,14 +124,16 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
-  const taskId = searchParams.get('taskId');
+  const taskIdParam = searchParams.get('taskId');
 
-  if (!taskId) {
+  if (!taskIdParam) {
     return NextResponse.json(
       { error: 'taskId is required' },
       { status: 400 }
     );
   }
+  // 确保 taskId 是 string 类型
+  const taskId: string = taskIdParam;
 
   // 检查是否是 SSE 请求
   const acceptHeader = request.headers.get('accept') || '';
@@ -140,7 +142,7 @@ export async function GET(request: NextRequest) {
   // 如果不是 SSE 请求，返回 JSON 响应（用于手动检查状态）
   const userSupabase = await createClient();
   const { data: { user }, error: userError } = await userSupabase.auth.getUser();
-  if (userError || !user) {
+  if (userError || !user || !user.id) {
     return NextResponse.json(
       { error: 'Unauthorized' },
       { status: 401 }
@@ -148,7 +150,9 @@ export async function GET(request: NextRequest) {
   }
 
   const adminSupabase = getServiceRoleClient();
-  const { task, ownershipMismatch } = await fetchTaskForUser(adminSupabase, taskId, user.id);
+  // 确保 user.id 不为 null（已经在上面检查过）
+  const userIdForTask = user.id as string;
+  const { task, ownershipMismatch } = await fetchTaskForUser(adminSupabase, taskId, userIdForTask);
   if (!task) {
     if (ownershipMismatch) {
       return NextResponse.json(
@@ -166,12 +170,20 @@ export async function GET(request: NextRequest) {
   }
 
   // SSE 响应
+  // 确保 user.id 存在（已经在上面检查过，但为了类型安全，这里再次确认）
+  // 使用类型断言，因为我们已经检查过 user.id 不为 null
+  const userId: string = user.id as string;
+
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
+      // 在闭包中明确声明类型，确保 TypeScript 正确推断
+      const taskIdForClosure: string = taskId;
+      const userIdForClosure: string = userId;
       
       async function pushUpdate(): Promise<boolean> {
-        const { task: latestTask, ownershipMismatch: mismatch } = await fetchTaskForUser(adminSupabase, taskId, user.id);
+        // 使用明确类型的变量
+        const { task: latestTask, ownershipMismatch: mismatch } = await fetchTaskForUser(adminSupabase, taskIdForClosure, userIdForClosure);
         if (!latestTask) {
           const errorMessage = mismatch ? 'Not authorized to access this task' : 'Task not found';
           const data = JSON.stringify({

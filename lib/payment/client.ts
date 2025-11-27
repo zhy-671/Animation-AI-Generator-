@@ -185,3 +185,14 @@ export function refreshCreditsBalance() {
   }
 }
 
+/**
+ * 刷新订阅计划
+ * 触发一个自定义事件，让其他组件更新订阅计划显示
+ */
+export function refreshSubscriptionPlan() {
+  // 触发自定义事件
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('subscription-updated'));
+  }
+}
+

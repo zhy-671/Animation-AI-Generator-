@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,7 +21,9 @@ import {
   ChevronUp,
   Shuffle,
   FileText,
-  X
+  X,
+  Diamond,
+  Video
 } from "lucide-react";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
@@ -36,6 +39,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Switch } from "@/components/ui/switch";
 import { checkCreditsBalance, deductMusicCredits, deductLyricsCredits, deductMusicWithLyricsCredits } from "@/lib/credits/deduct";
 import { createClient } from "@/lib/supabase/client";
+import ProfessionalAudioVisualizer from "@/components/music/professional-audio-visualizer";
+import ProfessionalProgressBar from "@/components/music/professional-progress-bar";
 
 interface MusicFormData {
   prompt: string;
@@ -46,6 +51,7 @@ interface MusicFormData {
   energy: string;
   lyrics: boolean;
   instrumental: boolean;
+  voiceType: 'male' | 'female' | 'duet';
 }
 
 interface GeneratedMusic {
@@ -68,6 +74,7 @@ interface PendingGenerationContext {
   mode: PendingGenerationMode;
   description: string;
   generatedPrompt: string;
+  title?: string;
   genre: string;
   mood: string;
   theme: string;
@@ -75,6 +82,8 @@ interface PendingGenerationContext {
   energy: string;
   lyrics: string;
   instrumental: boolean;
+  voiceType: 'male' | 'female' | 'duet';
+  image?: string;
 }
 
 interface MusicExample {
@@ -139,6 +148,12 @@ const ENERGY_LEVELS = [
   { value: "very-high", label: "Very High" },
 ];
 
+const VOICE_TYPES = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "duet", label: "Duet" },
+];
+
 const DEFAULT_AUDIO_SETTING = {
   sample_rate: 44100,
   bitrate: 256000,
@@ -152,19 +167,30 @@ interface MusicPromptAttributes {
   tempo?: string;
   energy?: string;
   description?: string;
+  voiceType?: 'male' | 'female' | 'duet';
 }
 
 const buildMusicGenerationPrompt = (attributes: MusicPromptAttributes) => {
-  return [
+  const parts = [
     attributes.genre,
     attributes.mood,
     attributes.theme,
     attributes.tempo,
     attributes.energy,
     attributes.description,
-  ]
-    .filter((value) => Boolean(value && value.trim()))
-    .join(", ");
+  ].filter((value) => Boolean(value && value.trim()));
+
+  // 如果有 voiceType 且不是伴奏模式，添加人物选择（英文）
+  if (attributes.voiceType) {
+    const voiceTypeMap: Record<'male' | 'female' | 'duet', string> = {
+      'male': 'male voice',
+      'female': 'female voice',
+      'duet': 'male and female duet',
+    };
+    parts.push(voiceTypeMap[attributes.voiceType]);
+  }
+
+  return parts.join(", ");
 };
 
 export default function MusicGeneratorForm() {
@@ -177,6 +203,7 @@ export default function MusicGeneratorForm() {
     energy: "",
     lyrics: false,
     instrumental: false,
+    voiceType: 'female', // 默认女声
   });
   const promptValue = typeof formData.prompt === "string" ? formData.prompt : "";
   const trimmedPromptValue = promptValue.trim();
@@ -184,7 +211,8 @@ export default function MusicGeneratorForm() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedMusics, setGeneratedMusics] = useState<GeneratedMusic[]>([]);
   const [currentPlayingId, setCurrentPlayingId] = useState<string | null>(null);
-  const [audioElements, setAudioElements] = useState<Map<string, HTMLAudioElement>>(new Map());
+  const audioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const [audioProgress, setAudioProgress] = useState<Map<string, { currentTime: number; duration: number }>>(new Map());
   const [isMounted, setIsMounted] = useState(false);
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [generationProgress, setGenerationProgress] = useState<{
@@ -197,10 +225,16 @@ export default function MusicGeneratorForm() {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
   const [musicExamples, setMusicExamples] = useState<MusicExample[]>([]);
   const [examplePlayingId, setExamplePlayingId] = useState<string | null>(null);
-  const [exampleAudioElements, setExampleAudioElements] = useState<Map<string, HTMLAudioElement>>(new Map());
+  const exampleAudioElementsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const [exampleAudioProgress, setExampleAudioProgress] = useState<Map<string, { currentTime: number; duration: number }>>(new Map());
+  const exampleAudioListeners = useRef<Map<string, () => void>>(new Map());
+  const audioListeners = useRef<Map<string, () => void>>(new Map());
   const [activeTab, setActiveTab] = useState<'examples' | 'my-music'>('examples');
   const [myMusicList, setMyMusicList] = useState<GeneratedMusic[]>([]);
   const [isLoadingMyMusic, setIsLoadingMyMusic] = useState(false);
+  const myMusicSectionRef = useRef<HTMLElement>(null);
+  const router = useRouter();
+  const [videoPreparingId, setVideoPreparingId] = useState<string | null>(null);
   
   // 歌词编辑弹窗状态
   const [lyricsEditDialog, setLyricsEditDialog] = useState<{
@@ -218,7 +252,7 @@ export default function MusicGeneratorForm() {
 
   const supabase = createClient();
   const requiredCreditsForMusic = 5; // 非歌词模式音乐生成所需的积分
-  const requiredCreditsForLyrics = 5; // 歌词生成所需的积分
+  const requiredCreditsForLyrics = 35; // 歌词模式生成所需的积分（包含生成歌曲和封面）
   const requiredCreditsForMusicWithLyrics = 30; // 带歌词的音乐生成所需的积分
 
   const logGenerationSnapshot = (
@@ -240,13 +274,785 @@ export default function MusicGeneratorForm() {
     }
   };
 
+  const cleanupAudioListeners = (
+    listenersMap: React.MutableRefObject<Map<string, () => void>>,
+    id: string
+  ) => {
+    const cleanup = listenersMap.current.get(id);
+    if (cleanup) {
+      cleanup();
+      listenersMap.current.delete(id);
+    }
+  };
+
+  const attachExampleAudioElement = useCallback(
+    (id: string, el: HTMLAudioElement | null) => {
+      console.log('[DEBUG attachExampleAudioElement]', { id, hasElement: !!el, src: el?.src });
+      const map = exampleAudioElementsRef.current;
+      const current = map.get(id);
+      if (current === el) {
+        console.log('[DEBUG attachExampleAudioElement] Element unchanged, skipping');
+        return;
+      }
+      if (el) {
+        map.set(id, el);
+        console.log('[DEBUG attachExampleAudioElement] Element registered, total:', map.size);
+      } else {
+        // 清理 Blob URL（如果存在）
+        if (current && (window as any).__audioBlobURLCleanup) {
+          const cleanup = (window as any).__audioBlobURLCleanup.get(current);
+          if (cleanup) {
+            cleanup();
+            (window as any).__audioBlobURLCleanup.delete(current);
+          }
+        }
+        map.delete(id);
+        console.log('[DEBUG attachExampleAudioElement] Element removed, total:', map.size);
+      }
+
+      cleanupAudioListeners(exampleAudioListeners, id);
+
+      if (!el) {
+        return;
+      }
+
+      // 确保音频元素未静音且音量正常
+      if (el.muted) {
+        console.warn('[DEBUG attachExampleAudioElement] Audio element is muted, unmuting...');
+        el.muted = false;
+      }
+      if (el.volume === 0) {
+        console.warn('[DEBUG attachExampleAudioElement] Audio element volume is 0, setting to 1...');
+        el.volume = 1.0;
+      }
+      console.log('[DEBUG attachExampleAudioElement] Audio element state:', {
+        id,
+        muted: el.muted,
+        volume: el.volume,
+        paused: el.paused,
+        readyState: el.readyState,
+        src: el.src?.substring(0, 100)
+      });
+
+      let timeUpdateCount = 0;
+      const handleTimeUpdate = () => {
+        timeUpdateCount++;
+        // 前 5 次和每 10 次 timeupdate 记录一次日志
+        if (timeUpdateCount <= 5 || timeUpdateCount % 10 === 0) {
+          console.log('[DEBUG attachExampleAudioElement] timeupdate:', {
+            id,
+            count: timeUpdateCount,
+            currentTime: el.currentTime,
+            duration: el.duration,
+            paused: el.paused,
+            readyState: el.readyState,
+            seeking: el.seeking,
+            buffered: el.buffered.length > 0 ? `${el.buffered.start(0)}-${el.buffered.end(0)}` : 'none'
+          });
+        }
+        setExampleAudioProgress((prev) => {
+          const next = new Map(prev);
+          next.set(id, {
+            currentTime: el.currentTime,
+            duration: el.duration || 0,
+          });
+          return next;
+        });
+      };
+
+      const handleLoadedMetadata = () => {
+        setExampleAudioProgress((prev) => {
+          const next = new Map(prev);
+          next.set(id, {
+            currentTime: 0,
+            duration: el.duration || 0,
+          });
+          return next;
+        });
+      };
+
+      const handleError = (event: Event) => {
+        console.error("[DEBUG attachExampleAudioElement] Example audio loading error:", { id, event, src: el.src });
+      };
+
+      const handleEnded = () => {
+        console.log('[DEBUG attachExampleAudioElement] Example audio ended:', id);
+        setExamplePlayingId((current) => (current === id ? null : current));
+        setExampleAudioProgress((prev) => {
+          const next = new Map(prev);
+          const progress = next.get(id);
+          if (progress) {
+            next.set(id, { ...progress, currentTime: 0 });
+          }
+          return next;
+        });
+      };
+
+      const handlePlay = () => {
+        console.log('[DEBUG attachExampleAudioElement] Audio play event:', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused,
+          readyState: el.readyState
+        });
+      };
+
+      const handlePlaying = () => {
+        console.log('[DEBUG attachExampleAudioElement] Audio playing event (actually playing):', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused,
+          readyState: el.readyState,
+          duration: el.duration
+        });
+      };
+
+      const handlePause = () => {
+        console.log('[DEBUG attachExampleAudioElement] Audio pause event:', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused
+        });
+      };
+
+      const handleWaiting = () => {
+        console.log('[DEBUG attachExampleAudioElement] Audio waiting event (buffering):', {
+          id,
+          currentTime: el.currentTime,
+          readyState: el.readyState
+        });
+      };
+
+      const handleStalled = () => {
+        console.warn('[DEBUG attachExampleAudioElement] Audio stalled event:', {
+          id,
+          currentTime: el.currentTime,
+          readyState: el.readyState,
+          networkState: el.networkState
+        });
+      };
+
+      el.addEventListener('timeupdate', handleTimeUpdate);
+      el.addEventListener('loadedmetadata', handleLoadedMetadata);
+      el.addEventListener('error', handleError);
+      el.addEventListener('ended', handleEnded);
+      el.addEventListener('play', handlePlay);
+      el.addEventListener('playing', handlePlaying);
+      el.addEventListener('pause', handlePause);
+      el.addEventListener('waiting', handleWaiting);
+      el.addEventListener('stalled', handleStalled);
+
+      exampleAudioListeners.current.set(id, () => {
+        el.removeEventListener('timeupdate', handleTimeUpdate);
+        el.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        el.removeEventListener('error', handleError);
+        el.removeEventListener('ended', handleEnded);
+        el.removeEventListener('play', handlePlay);
+        el.removeEventListener('playing', handlePlaying);
+        el.removeEventListener('pause', handlePause);
+        el.removeEventListener('waiting', handleWaiting);
+        el.removeEventListener('stalled', handleStalled);
+      });
+    },
+    [setExampleAudioProgress, setExamplePlayingId]
+  );
+
+  const attachMainAudioElement = useCallback(
+    (id: string, el: HTMLAudioElement | null) => {
+      console.log('[DEBUG attachMainAudioElement]', { id, hasElement: !!el, src: el?.src });
+      const map = audioElementsRef.current;
+      const current = map.get(id);
+      if (current === el) {
+        console.log('[DEBUG attachMainAudioElement] Element unchanged, skipping');
+        return;
+      }
+      if (el) {
+        map.set(id, el);
+        console.log('[DEBUG attachMainAudioElement] Element registered, total:', map.size);
+      } else {
+        // 清理 Blob URL（如果存在）
+        if (current && (window as any).__audioBlobURLCleanup) {
+          const cleanup = (window as any).__audioBlobURLCleanup.get(current);
+          if (cleanup) {
+            cleanup();
+            (window as any).__audioBlobURLCleanup.delete(current);
+          }
+        }
+        map.delete(id);
+        console.log('[DEBUG attachMainAudioElement] Element removed, total:', map.size);
+      }
+
+      cleanupAudioListeners(audioListeners, id);
+
+      if (!el) {
+        return;
+      }
+
+      // 确保音频元素未静音且音量正常
+      if (el.muted) {
+        console.warn('[DEBUG attachMainAudioElement] Audio element is muted, unmuting...');
+        el.muted = false;
+      }
+      if (el.volume === 0) {
+        console.warn('[DEBUG attachMainAudioElement] Audio element volume is 0, setting to 1...');
+        el.volume = 1.0;
+      }
+      console.log('[DEBUG attachMainAudioElement] Audio element state:', {
+        id,
+        muted: el.muted,
+        volume: el.volume,
+        paused: el.paused,
+        readyState: el.readyState,
+        src: el.src?.substring(0, 100)
+      });
+
+      let timeUpdateCount = 0;
+      let lastTimeUpdateTime = 0;
+      const handleTimeUpdate = () => {
+        timeUpdateCount++;
+        const currentTimeNow = el.currentTime;
+        const timeChanged = currentTimeNow > lastTimeUpdateTime;
+        lastTimeUpdateTime = currentTimeNow;
+        
+        // 前 10 次和每 10 次 timeupdate 记录一次日志
+        if (timeUpdateCount <= 10 || timeUpdateCount % 10 === 0) {
+          console.log('[DEBUG attachMainAudioElement] timeupdate:', {
+            id,
+            count: timeUpdateCount,
+            currentTime: el.currentTime,
+            duration: el.duration,
+            paused: el.paused,
+            readyState: el.readyState,
+            seeking: el.seeking,
+            timeChanged,
+            buffered: el.buffered.length > 0 ? `${el.buffered.start(0)}-${el.buffered.end(0)}` : 'none'
+          });
+        }
+        
+        // 如果时间没有变化但音频在播放，记录警告
+        if (!timeChanged && !el.paused && timeUpdateCount > 1) {
+          console.warn('[DEBUG attachMainAudioElement] WARNING: timeupdate fired but currentTime did not change!', {
+            id,
+            currentTime: el.currentTime,
+            paused: el.paused,
+            readyState: el.readyState
+          });
+        }
+        setAudioProgress((prev) => {
+          const next = new Map(prev);
+          next.set(id, {
+            currentTime: el.currentTime,
+            duration: el.duration || 0,
+          });
+          return next;
+        });
+      };
+
+      const handleLoadedMetadata = () => {
+        setAudioProgress((prev) => {
+          const next = new Map(prev);
+          next.set(id, {
+            currentTime: 0,
+            duration: el.duration || 0,
+          });
+          return next;
+        });
+      };
+
+      const handleError = (event: Event) => {
+        console.error("[DEBUG attachMainAudioElement] Audio loading error:", { id, event, src: el.src });
+      };
+
+      const handleEnded = () => {
+        console.log('[DEBUG attachMainAudioElement] Audio ended:', id);
+        setCurrentPlayingId((current) => (current === id ? null : current));
+      };
+
+      const handlePlay = () => {
+        console.log('[DEBUG attachMainAudioElement] Audio play event:', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused,
+          readyState: el.readyState
+        });
+      };
+
+      const handlePlaying = () => {
+        const playingStartTime = el.currentTime;
+        console.log('[DEBUG attachMainAudioElement] Audio playing event (actually playing):', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused,
+          readyState: el.readyState,
+          duration: el.duration
+        });
+        
+        // 定期检查 currentTime 是否在增加
+        const checkInterval = setInterval(() => {
+          const currentTimeNow = el.currentTime;
+          const timeIncreased = currentTimeNow > playingStartTime;
+          console.log('[DEBUG attachMainAudioElement] Playing check:', {
+            id,
+            playingStartTime,
+            currentTimeNow,
+            timeIncreased,
+            paused: el.paused,
+            readyState: el.readyState
+          });
+          
+          if (el.paused || !timeIncreased) {
+            console.warn('[DEBUG attachMainAudioElement] Audio stopped or not progressing:', {
+              id,
+              paused: el.paused,
+              timeIncreased,
+              currentTime: el.currentTime
+            });
+            clearInterval(checkInterval);
+          }
+        }, 200);
+        
+        // 5 秒后停止检查
+        setTimeout(() => {
+          clearInterval(checkInterval);
+        }, 5000);
+      };
+
+      const handlePause = () => {
+        console.log('[DEBUG attachMainAudioElement] Audio pause event:', {
+          id,
+          currentTime: el.currentTime,
+          paused: el.paused
+        });
+      };
+
+      const handleWaiting = () => {
+        console.log('[DEBUG attachMainAudioElement] Audio waiting event (buffering):', {
+          id,
+          currentTime: el.currentTime,
+          readyState: el.readyState
+        });
+      };
+
+      const handleStalled = () => {
+        console.warn('[DEBUG attachMainAudioElement] Audio stalled event:', {
+          id,
+          currentTime: el.currentTime,
+          readyState: el.readyState,
+          networkState: el.networkState
+        });
+      };
+
+      el.addEventListener('timeupdate', handleTimeUpdate);
+      el.addEventListener('loadedmetadata', handleLoadedMetadata);
+      el.addEventListener('error', handleError);
+      el.addEventListener('ended', handleEnded);
+      el.addEventListener('play', handlePlay);
+      el.addEventListener('playing', handlePlaying);
+      el.addEventListener('pause', handlePause);
+      el.addEventListener('waiting', handleWaiting);
+      el.addEventListener('stalled', handleStalled);
+
+      audioListeners.current.set(id, () => {
+        el.removeEventListener('timeupdate', handleTimeUpdate);
+        el.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        el.removeEventListener('error', handleError);
+        el.removeEventListener('ended', handleEnded);
+        el.removeEventListener('play', handlePlay);
+        el.removeEventListener('playing', handlePlaying);
+        el.removeEventListener('pause', handlePause);
+        el.removeEventListener('waiting', handleWaiting);
+        el.removeEventListener('stalled', handleStalled);
+      });
+    },
+    [setAudioProgress]
+  );
+
+  const ensureAudioCanPlay = (audio: HTMLAudioElement) => {
+    console.log('[DEBUG ensureAudioCanPlay] Audio state:', { 
+      readyState: audio.readyState, 
+      src: audio.src?.substring(0, 100),
+      paused: audio.paused,
+      duration: audio.duration,
+      currentTime: audio.currentTime
+    });
+    
+    // 如果音频已经加载足够的数据，直接返回
+    if (audio.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+      console.log('[DEBUG ensureAudioCanPlay] Audio already ready (readyState >= 3)');
+      // 确保从头开始播放
+      if (audio.currentTime > 0) {
+        console.log('[DEBUG ensureAudioCanPlay] Resetting currentTime to 0');
+        audio.currentTime = 0;
+      }
+      return Promise.resolve();
+    }
+
+    console.log('[DEBUG ensureAudioCanPlay] Waiting for audio to load...');
+    return new Promise<void>((resolve, reject) => {
+      let resolved = false;
+      let timeout: NodeJS.Timeout | null = null;
+      
+      const cleanup = () => {
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        audio.removeEventListener('canplay', handleCanPlayFinal);
+        audio.removeEventListener('canplaythrough', handleCanPlayThroughFinal);
+        audio.removeEventListener('error', handleError);
+      };
+
+      const handleError = (event: Event) => {
+        if (resolved) return;
+        console.error('[DEBUG ensureAudioCanPlay] Audio load error:', event);
+        console.error('[DEBUG ensureAudioCanPlay] Audio state on error:', {
+          src: audio.src?.substring(0, 150),
+          readyState: audio.readyState,
+          networkState: audio.networkState,
+          error: (audio as any).error
+        });
+        resolved = true;
+        cleanup();
+        reject(event);
+      };
+
+      const handleLoadedMetadata = () => {
+        console.log('[DEBUG ensureAudioCanPlay] Audio metadata loaded:', {
+          duration: audio.duration,
+          readyState: audio.readyState
+        });
+      };
+
+      // 优先等待 canplaythrough，如果超时则使用 canplay
+      const doResolve = () => {
+        if (resolved) return;
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+        if (audio.currentTime > 0) {
+          console.log('[DEBUG ensureAudioCanPlay] Resetting currentTime to 0');
+          audio.currentTime = 0;
+        }
+        resolved = true;
+        cleanup();
+        resolve();
+      };
+      
+      const handleCanPlayFinal = () => {
+        if (resolved) return;
+        console.log('[DEBUG ensureAudioCanPlay] Audio can play now', {
+          readyState: audio.readyState,
+          paused: audio.paused,
+          currentTime: audio.currentTime,
+          duration: audio.duration
+        });
+        doResolve();
+      };
+
+      const handleCanPlayThroughFinal = () => {
+        if (resolved) return;
+        console.log('[DEBUG ensureAudioCanPlay] Audio can play through now', {
+          readyState: audio.readyState,
+          paused: audio.paused,
+          currentTime: audio.currentTime,
+          duration: audio.duration
+        });
+        doResolve();
+      };
+      
+      audio.addEventListener('canplaythrough', handleCanPlayThroughFinal, { once: true });
+      audio.addEventListener('canplay', handleCanPlayFinal, { once: true });
+      audio.addEventListener('error', handleError, { once: true });
+      audio.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
+      
+      // 设置超时，如果 3 秒内没有响应，但 readyState >= 2，则继续
+      timeout = setTimeout(() => {
+        if (!resolved && audio.readyState >= 2) {
+          console.log('[DEBUG ensureAudioCanPlay] Timeout reached, but readyState >= 2, resolving');
+          doResolve();
+        }
+      }, 3000);
+      
+      console.log('[DEBUG ensureAudioCanPlay] Calling audio.load()');
+      audio.load();
+    });
+  };
+
+  // 将 Base64 音频转换为 Blob URL
+  const convertBase64ToBlobURL = (base64DataUrl: string): string | null => {
+    try {
+      const [header, data] = base64DataUrl.split(',');
+      if (!data) {
+        console.error('[DEBUG convertBase64ToBlobURL] Invalid base64 data URL format');
+        return null;
+      }
+      
+      const mimeMatch = header.match(/data:([^;]+)/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'audio/mpeg';
+      
+      const binaryString = atob(data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      
+      const blob = new Blob([bytes], { type: mimeType });
+      const blobURL = URL.createObjectURL(blob);
+      console.log('[DEBUG convertBase64ToBlobURL] Converted Base64 to Blob URL:', {
+        mimeType,
+        blobSize: blob.size,
+        blobURL: blobURL.substring(0, 50) + '...'
+      });
+      return blobURL;
+    } catch (error) {
+      console.error('[DEBUG convertBase64ToBlobURL] Error converting Base64 to Blob:', error);
+      return null;
+    }
+  };
+
+  const playAudioElementSafely = async (audio: HTMLAudioElement) => {
+    console.log('[DEBUG playAudioElementSafely] Starting playback attempt');
+    const isBase64 = audio.src?.startsWith('data:audio');
+    console.log('[DEBUG playAudioElementSafely] Audio state before:', {
+      src: audio.src?.substring(0, 150),
+      isBase64,
+      readyState: audio.readyState,
+      paused: audio.paused,
+      currentTime: audio.currentTime,
+      duration: audio.duration,
+      muted: audio.muted,
+      volume: audio.volume,
+      networkState: audio.networkState,
+      error: (audio as any).error ? {
+        code: (audio as any).error.code,
+        message: (audio as any).error.message
+      } : null
+    });
+    
+    // 如果是 Base64 音频，尝试转换为 Blob URL
+    let blobURL: string | null = null;
+    let originalSrc: string | null = null;
+    if (isBase64) {
+      console.log('[DEBUG playAudioElementSafely] Base64 audio detected, converting to Blob URL...');
+      originalSrc = audio.src;
+      blobURL = convertBase64ToBlobURL(audio.src);
+      if (blobURL) {
+        audio.src = blobURL;
+        console.log('[DEBUG playAudioElementSafely] Base64 converted to Blob URL, reloading audio...');
+        audio.load();
+      } else {
+        console.warn('[DEBUG playAudioElementSafely] Failed to convert Base64 to Blob URL, using original');
+      }
+    }
+    
+    // 检查音频错误状态
+    if ((audio as any).error) {
+      console.error('[DEBUG playAudioElementSafely] Audio has error before play:', (audio as any).error);
+    }
+    
+    try {
+      await ensureAudioCanPlay(audio);
+      console.log('[DEBUG playAudioElementSafely] Audio ready, calling play()');
+      
+      // 设置一个标志来检查 playing 事件是否触发
+      let playingEventFired = false;
+      const playingHandler = () => {
+        playingEventFired = true;
+        console.log('[DEBUG playAudioElementSafely] playing event fired!');
+        audio.removeEventListener('playing', playingHandler);
+      };
+      audio.addEventListener('playing', playingHandler, { once: true });
+      
+      const playPromise = audio.play();
+      console.log('[DEBUG playAudioElementSafely] play() called, waiting for promise');
+      await playPromise;
+      console.log('[DEBUG playAudioElementSafely] Playback started successfully');
+      console.log('[DEBUG playAudioElementSafely] Audio state after play():', {
+        paused: audio.paused,
+        currentTime: audio.currentTime,
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        error: (audio as any).error ? {
+          code: (audio as any).error.code,
+          message: (audio as any).error.message
+        } : null
+      });
+      
+      // 延迟检查播放状态，多次检查以确认是否真的在播放
+      const initialTime = audio.currentTime;
+      
+      // 检查 playing 事件是否在短时间内触发
+      setTimeout(() => {
+        if (!playingEventFired) {
+          console.warn('[DEBUG playAudioElementSafely] WARNING: playing event did not fire within 100ms!');
+          console.warn('[DEBUG playAudioElementSafely] This suggests playback was blocked by browser autoplay policy');
+        }
+      }, 100);
+      
+      setTimeout(() => {
+        const timeAfter100ms = audio.currentTime;
+        const timeChanged = timeAfter100ms > initialTime;
+        console.log('[DEBUG playAudioElementSafely] Audio state 100ms after play():', {
+          paused: audio.paused,
+          currentTime: audio.currentTime,
+          initialTime,
+          timeChanged,
+          readyState: audio.readyState,
+          seeking: audio.seeking,
+          playingEventFired
+        });
+        if (!timeChanged && !audio.paused) {
+          console.warn('[DEBUG playAudioElementSafely] WARNING: Audio is not paused but currentTime did not change!');
+          // 尝试重新播放
+          if (!playingEventFired) {
+            console.log('[DEBUG playAudioElementSafely] Attempting to force play again...');
+            audio.play().catch(err => {
+              console.error('[DEBUG playAudioElementSafely] Retry play failed:', err);
+            });
+          }
+        }
+      }, 100);
+      
+      setTimeout(() => {
+        const timeAfter500ms = audio.currentTime;
+        const timeChanged = timeAfter500ms > initialTime;
+        console.log('[DEBUG playAudioElementSafely] Audio state 500ms after play():', {
+          paused: audio.paused,
+          currentTime: audio.currentTime,
+          initialTime,
+          timeChanged,
+          readyState: audio.readyState,
+          playingEventFired,
+          muted: audio.muted,
+          volume: audio.volume,
+          seeking: audio.seeking,
+          error: (audio as any).error ? {
+            code: (audio as any).error.code,
+            message: (audio as any).error.message
+          } : null
+        });
+        if (!timeChanged && !audio.paused) {
+          console.error('[DEBUG playAudioElementSafely] ERROR: Audio is not paused but currentTime did not change after 500ms!');
+          console.error('[DEBUG playAudioElementSafely] This indicates the audio is not actually playing despite paused=false');
+          console.error('[DEBUG playAudioElementSafely] playingEventFired:', playingEventFired);
+          console.error('[DEBUG playAudioElementSafely] muted:', audio.muted, 'volume:', audio.volume);
+          console.error('[DEBUG playAudioElementSafely] isBase64:', audio.src?.startsWith('data:audio'));
+          console.error('[DEBUG playAudioElementSafely] Possible causes:');
+          console.error('[DEBUG playAudioElementSafely] 1. Browser autoplay policy blocking playback');
+          console.error('[DEBUG playAudioElementSafely] 2. Audio source is invalid or corrupted (especially Base64)');
+          console.error('[DEBUG playAudioElementSafely] 3. Audio element is muted or disabled');
+          console.error('[DEBUG playAudioElementSafely] 4. Network/CORS issues preventing playback');
+          console.error('[DEBUG playAudioElementSafely] 5. Audio element was recreated by React during playback');
+          
+          // 检查音频数据是否有效
+          if (audio.src?.startsWith('data:audio')) {
+            console.warn('[DEBUG playAudioElementSafely] Base64 audio detected - checking data validity');
+            const base64Data = audio.src.split(',')[1];
+            if (!base64Data || base64Data.length < 100) {
+              console.error('[DEBUG playAudioElementSafely] Base64 audio data appears to be invalid or too short');
+            }
+          }
+          
+          // 尝试修复：确保音频未静音，重置并重新播放
+          console.log('[DEBUG playAudioElementSafely] Attempting recovery: ensure unmuted, reset currentTime, reload and play');
+          audio.muted = false;
+          audio.volume = 1.0;
+          const wasPlaying = !audio.paused;
+          audio.currentTime = 0;
+          
+          // 如果之前正在播放，尝试恢复播放
+          if (wasPlaying) {
+            audio.load();
+            
+            // 等待加载完成后再次播放
+            const retryPlay = () => {
+              audio.play().then(() => {
+                console.log('[DEBUG playAudioElementSafely] Recovery play() succeeded');
+                // 再次检查 playing 事件和 timeupdate
+                const retryPlayingHandler = () => {
+                  console.log('[DEBUG playAudioElementSafely] Recovery: playing event fired!');
+                  // 检查 timeupdate 是否触发
+                  setTimeout(() => {
+                    if (audio.currentTime === 0 && !audio.paused) {
+                      console.error('[DEBUG playAudioElementSafely] Recovery: Still no time progression after playing event!');
+                    }
+                  }, 200);
+                };
+                audio.addEventListener('playing', retryPlayingHandler, { once: true });
+              }).catch(err => {
+                console.error('[DEBUG playAudioElementSafely] Recovery play() failed:', err);
+              });
+            };
+            
+            if (audio.readyState >= 2) {
+              setTimeout(retryPlay, 100);
+            } else {
+              audio.addEventListener('canplay', retryPlay, { once: true });
+              audio.addEventListener('canplaythrough', retryPlay, { once: true });
+            }
+          }
+        }
+      }, 500);
+      
+      // 设置清理 Blob URL 的监听器（如果使用了 Blob URL）
+      if (blobURL && originalSrc) {
+        const cleanupBlobURL = () => {
+          console.log('[DEBUG playAudioElementSafely] Cleaning up Blob URL');
+          URL.revokeObjectURL(blobURL!);
+          // 恢复原始 src（如果需要）
+          // audio.src = originalSrc;
+        };
+        
+        // 在音频结束时清理
+        const handleEnded = () => {
+          cleanupBlobURL();
+          audio.removeEventListener('ended', handleEnded);
+        };
+        audio.addEventListener('ended', handleEnded, { once: true });
+        
+        // 在组件卸载或音频元素被移除时清理（通过一个标记）
+        // 注意：这里我们使用一个 WeakMap 来跟踪需要清理的音频元素
+        if (!(window as any).__audioBlobURLCleanup) {
+          (window as any).__audioBlobURLCleanup = new WeakMap();
+        }
+        (window as any).__audioBlobURLCleanup.set(audio, cleanupBlobURL);
+      }
+      
+      return playPromise;
+    } catch (error) {
+      console.error('[DEBUG playAudioElementSafely] Play failed:', error);
+      console.error('[DEBUG playAudioElementSafely] Audio state on error:', {
+        paused: audio.paused,
+        currentTime: audio.currentTime,
+        readyState: audio.readyState,
+        src: audio.src?.substring(0, 150),
+        error: (audio as any).error ? {
+          code: (audio as any).error.code,
+          message: (audio as any).error.message
+        } : null
+      });
+      
+      // 如果出错，立即清理 Blob URL
+      if (blobURL) {
+        console.log('[DEBUG playAudioElementSafely] Cleaning up Blob URL due to error');
+        URL.revokeObjectURL(blobURL);
+        if (originalSrc) {
+          audio.src = originalSrc;
+        }
+      }
+      
+      throw error;
+    }
+  };
+
   const requestMusicGeneration = async ({
     prompt,
     lyrics,
     audioSetting = DEFAULT_AUDIO_SETTING,
   }: {
     prompt: string;
-    lyrics: string;
+    lyrics: string; // 可以为空字符串（当instrumental为true时）
     audioSetting?: typeof DEFAULT_AUDIO_SETTING;
   }) => {
     const response = await fetch('/api/music/generate-from-lyrics', {
@@ -256,7 +1062,7 @@ export default function MusicGeneratorForm() {
       },
       body: JSON.stringify({
         prompt,
-        lyrics,
+        lyrics: lyrics || '', // 如果为空则传空字符串
         audioSetting,
       }),
     });
@@ -413,7 +1219,7 @@ export default function MusicGeneratorForm() {
 
     try {
       if (formData.lyrics) {
-        // 歌词模式：先扣5积分生成歌词
+        // 歌词模式：扣35积分，直接生成歌曲和封面
         const deductResult = await deductLyricsCredits({
           prompt: promptValue,
           genre: formData.genre,
@@ -430,51 +1236,213 @@ export default function MusicGeneratorForm() {
           window.dispatchEvent(new Event('credits-updated'));
         }
 
-        // TODO: Replace with actual lyrics generation API
-        // 模拟生成歌词
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const generatedLyrics = `[Verse 1]\n${promptValue}\nA melody that flows like a river\nThrough the heart of every listener\n\n[Chorus]\nThis is the sound of dreams\nComing to life in harmony\nEvery note tells a story\nOf hope and endless possibility\n\n[Verse 2]\nWith every beat, we find our rhythm\nIn this moment, we're together\nMusic connects us all\nBreaking down every wall`;
+        // 调用API生成歌词和标题
+        setGenerationProgress({
+          status: 'generating',
+          message: 'Generating lyrics and title...'
+        });
 
-        setPendingGeneration({
-          mode: 'lyrics',
-          description: promptValue,
-          generatedPrompt: promptValue,
+        const promptResponse = await fetch('/api/music/generate-prompt', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            genre: selectedGenre,
+            mood: selectedMood,
+            theme: selectedTheme,
+            tempo: selectedTempo,
+            energy: selectedEnergy,
+            description: promptValue,
+          }),
+        });
+
+        if (!promptResponse.ok) {
+          const errorData = await promptResponse.json();
+          throw new Error(errorData.error || 'Failed to generate lyrics');
+        }
+
+        const promptResult = await promptResponse.json();
+        const generatedPrompt = promptResult.prompt || promptValue;
+        const generatedLyrics = promptResult.lyrics || '';
+        const generatedTitle = promptResult.title || '';
+
+        // 如果选择伴奏模式，lyrics传空
+        const lyricsForMusic = formData.instrumental ? '' : generatedLyrics;
+
+        // 构建音乐生成提示词
+        const minimaxiPrompt = buildMusicGenerationPrompt({
           genre: selectedGenre,
           mood: selectedMood,
           theme: selectedTheme,
           tempo: selectedTempo,
           energy: selectedEnergy,
-          lyrics: generatedLyrics,
-          instrumental: formData.instrumental,
-        });
-
-        // 创建临时音乐记录（只有歌词，还没有音频）
-        const tempMusicId = `temp-${Date.now()}`;
-        
-        // 打开歌词编辑弹窗
-        setLyricsEditDialog({
-          isOpen: true,
-          lyrics: generatedLyrics,
-          musicId: tempMusicId,
-          isNewGeneration: true,
-        });
-
-        logGenerationSnapshot('Lyrics Draft Ready', {
-          mode: 'lyrics-only',
           description: promptValue,
-          genre: selectedGenre,
-          mood: selectedMood,
-          theme: selectedTheme,
-          tempo: selectedTempo,
-          energy: selectedEnergy,
-          instrumental: formData.instrumental,
-          requiredCredits: requiredCreditsForLyrics,
-          lyrics: generatedLyrics,
+          voiceType: formData.instrumental ? undefined : formData.voiceType,
         });
+
+        // 同时生成音乐、标题和封面
+        setGenerationProgress({
+          status: 'generating',
+          message: 'Creating your music with lyrics...'
+        });
+
+        // 如果是歌词模式（非伴奏），调用新API获取标题和图片描述
+        const titleAndImagePromise = !formData.instrumental && generatedLyrics && generatedLyrics.trim()
+          ? fetch('/api/music/generate-title-and-image', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                lyrics: generatedLyrics.trim(),
+              }),
+            }).then(async (res) => {
+              if (res.ok) {
+                const result = await res.json();
+                if (result.success) {
+                  return {
+                    title: result.title || generatedTitle || promptValue.substring(0, 50),
+                    imagePrompt: result.image || '',
+                  };
+                }
+              }
+              return {
+                title: generatedTitle || promptValue.substring(0, 50),
+                imagePrompt: '',
+              };
+            }).catch((error) => {
+              console.error("Error generating title and image:", error);
+              return {
+                title: generatedTitle || promptValue.substring(0, 50),
+                imagePrompt: '',
+              };
+            })
+          : Promise.resolve({
+              title: generatedTitle || promptValue.substring(0, 50),
+              imagePrompt: '',
+            });
+
+        const [musicResult, titleAndImageResult] = await Promise.all([
+          requestMusicGeneration({
+            prompt: minimaxiPrompt,
+            lyrics: lyricsForMusic,
+          }),
+          titleAndImagePromise,
+        ]);
+
+        // 使用获取的图片描述生成封面
+        const imageResult = titleAndImageResult.imagePrompt
+          ? await fetch('/api/scenes/generate-image', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                prompt: titleAndImageResult.imagePrompt,
+              }),
+            }).then(async (res) => {
+              if (res.ok) {
+                const result = await res.json();
+                if (result.success && result.data && result.data.length > 0) {
+                  return result.data[0].url;
+                }
+              }
+              return null;
+            }).catch((error) => {
+              console.error("Error generating cover image:", error);
+              return null;
+            })
+          : null;
+
+        // 创建音乐对象
+        const newMusic: GeneratedMusic = {
+          id: `music-${Date.now()}`,
+          audioUrl: musicResult.audioUrl,
+          coverUrl: imageResult || null,
+          prompt: generatedPrompt,
+          title: titleAndImageResult.title,
+          style: selectedGenre || "",
+          mood: selectedMood,
+          duration: "30",
+          createdAt: new Date(),
+          lyrics: generatedLyrics,
+          hasLyrics: !formData.instrumental && !!generatedLyrics,
+        };
+
+        // 保存到数据库
+        try {
+          const saveResponse = await fetch('/api/music/save', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              title: titleAndImageResult.title,
+              prompt: generatedPrompt,
+              genre: selectedGenre,
+              mood: selectedMood,
+              theme: selectedTheme,
+              tempo: selectedTempo,
+              energy: selectedEnergy,
+              lyrics: !formData.instrumental && !!generatedLyrics,
+              instrumental: formData.instrumental,
+              voiceType: formData.instrumental ? undefined : formData.voiceType,
+              audioUrl: musicResult.audioUrl,
+              coverUrl: imageResult || undefined,
+              duration: 30,
+              status: 'completed',
+              metadata: {
+                lyrics: generatedLyrics,
+                minimaxiTraceId: musicResult.traceId,
+                minimaxiExtraInfo: musicResult.extraInfo,
+              },
+            }),
+          });
+
+          if (saveResponse.ok) {
+            const result = await saveResponse.json();
+            if (result.success && result.data) {
+              newMusic.id = result.data.id;
+              if (result.data.audio_url) {
+                newMusic.audioUrl = result.data.audio_url;
+              }
+              if (result.data.cover_url) {
+                newMusic.coverUrl = result.data.cover_url;
+              }
+            }
+          }
+        } catch (saveError) {
+          console.error("Error saving music to database:", saveError);
+        }
+
+        logGenerationSnapshot('Music With Lyrics Generated', {
+          id: newMusic.id,
+          prompt: newMusic.prompt,
+          title: newMusic.title,
+          genre: newMusic.style,
+          mood: newMusic.mood,
+          duration: newMusic.duration,
+          lyrics: generatedLyrics,
+          instrumental: formData.instrumental,
+          creditsSpent: requiredCreditsForLyrics,
+          audioUrl: newMusic.audioUrl,
+          coverUrl: newMusic.coverUrl,
+          minimaxiTraceId: musicResult.traceId,
+        });
+
+        setGeneratedMusics(prev => [newMusic, ...prev]);
+        setMyMusicList(prev => [newMusic, ...prev]);
+
+        // 切换到 My Music 标签页并滚动到该区域
+        setActiveTab('my-music');
+        setTimeout(() => {
+          myMusicSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
 
         setGenerationProgress({
           status: 'completed',
-          message: 'Lyrics generated successfully!'
+          message: 'Music with lyrics generated successfully!'
         });
       } else {
         // 非歌词模式：扣5积分直接生成音乐
@@ -523,11 +1491,14 @@ export default function MusicGeneratorForm() {
         const promptResult = await promptResponse.json();
         const generatedPrompt = promptResult.prompt || promptValue;
         const generatedLyrics = promptResult.lyrics || '';
+        const generatedImage = promptResult.image || '';
+        const generatedTitle = promptResult.title || '';
 
         setPendingGeneration({
           mode: 'music',
           description: promptValue,
           generatedPrompt,
+          title: generatedTitle,
           genre: selectedGenre,
           mood: selectedMood,
           theme: selectedTheme,
@@ -535,6 +1506,8 @@ export default function MusicGeneratorForm() {
           energy: selectedEnergy,
           lyrics: generatedLyrics,
           instrumental: formData.instrumental,
+          voiceType: formData.instrumental ? 'female' : formData.voiceType, // 默认值，但实际不会在伴奏模式下使用
+          image: generatedImage,
         });
 
         setLyricsEditDialog({
@@ -593,7 +1566,8 @@ export default function MusicGeneratorForm() {
 
     const lyricsToAttach = lyricsEditDialog.lyrics.trim() || pendingGeneration.lyrics?.trim() || '';
 
-    if (!lyricsToAttach) {
+    // 如果选择伴奏模式，允许没有歌词；否则需要提供歌词
+    if (!pendingGeneration.instrumental && !lyricsToAttach) {
       alert('Please provide lyrics before generating music.');
       return;
     }
@@ -605,6 +1579,15 @@ export default function MusicGeneratorForm() {
       tempo: pendingGeneration.tempo,
       energy: pendingGeneration.energy,
       description: pendingGeneration.description,
+      voiceType: pendingGeneration.instrumental ? undefined : pendingGeneration.voiceType,
+    });
+
+    // 立即关闭弹窗并显示生成状态
+    setLyricsEditDialog({
+      isOpen: false,
+      lyrics: '',
+      musicId: null,
+      isNewGeneration: false,
     });
 
     setIsGenerating(true);
@@ -614,9 +1597,12 @@ export default function MusicGeneratorForm() {
     });
 
     try {
+      // 如果选择伴奏模式，lyrics传空
+      const lyricsForMusic = pendingGeneration.instrumental ? '' : lyricsToAttach;
+      
       const musicResult = await requestMusicGeneration({
         prompt: minimaxiPrompt,
-        lyrics: lyricsToAttach,
+        lyrics: lyricsForMusic,
       });
 
       const newMusic: GeneratedMusic = {
@@ -624,25 +1610,27 @@ export default function MusicGeneratorForm() {
         audioUrl: musicResult.audioUrl,
         coverUrl: null,
         prompt: pendingGeneration.generatedPrompt,
-        title: pendingGeneration.description.substring(0, 50),
+        title: pendingGeneration.title || pendingGeneration.description.substring(0, 50),
         style: pendingGeneration.genre,
         mood: pendingGeneration.mood,
         duration: "30",
         createdAt: new Date(),
-        hasLyrics: !!lyricsToAttach,
+        hasLyrics: !pendingGeneration.instrumental && !!lyricsToAttach,
         lyrics: lyricsToAttach || undefined,
       };
 
       try {
         const payload: Record<string, any> = {
+          title: pendingGeneration.title || pendingGeneration.description.substring(0, 50),
           prompt: pendingGeneration.generatedPrompt,
           genre: pendingGeneration.genre,
           mood: pendingGeneration.mood,
           theme: pendingGeneration.theme,
           tempo: pendingGeneration.tempo,
           energy: pendingGeneration.energy,
-          lyrics: !!lyricsToAttach,
+          lyrics: !pendingGeneration.instrumental && !!lyricsToAttach,
           instrumental: pendingGeneration.instrumental,
+          voiceType: pendingGeneration.instrumental ? undefined : pendingGeneration.voiceType,
           audioUrl: musicResult.audioUrl,
           duration: 30,
           status: 'completed',
@@ -694,12 +1682,12 @@ export default function MusicGeneratorForm() {
       setGeneratedMusics(prev => [newMusic, ...prev]);
       setMyMusicList(prev => [newMusic, ...prev]);
 
-      setLyricsEditDialog({
-        isOpen: false,
-        lyrics: '',
-        musicId: null,
-        isNewGeneration: false,
-      });
+      // 切换到 My Music 标签页并滚动到该区域
+      setActiveTab('my-music');
+      setTimeout(() => {
+        myMusicSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+
       setPendingGeneration(null);
 
       setGenerationProgress({
@@ -744,6 +1732,8 @@ export default function MusicGeneratorForm() {
           energy: formData.energy || ENERGY_LEVELS[0].value,
           lyrics,
           instrumental: formData.instrumental,
+          voiceType: formData.instrumental ? 'female' : formData.voiceType, // 默认值，但实际不会在伴奏模式下使用
+          image: pendingGeneration?.image,
         };
 
     const minimaxiPrompt = buildMusicGenerationPrompt({
@@ -753,6 +1743,7 @@ export default function MusicGeneratorForm() {
       tempo: context.tempo,
       energy: context.energy,
       description: context.description,
+      voiceType: context.instrumental ? undefined : context.voiceType,
     });
 
     // 检查积分余额
@@ -761,6 +1752,14 @@ export default function MusicGeneratorForm() {
       alert(`Insufficient credits. Required: ${requiredCreditsForMusicWithLyrics}, Current: ${creditsCheck.balance || 0}`);
       return;
     }
+
+    // 立即关闭弹窗并显示生成状态
+    setLyricsEditDialog({
+      isOpen: false,
+      lyrics: '',
+      musicId: null,
+      isNewGeneration: false,
+    });
 
     setIsGenerating(true);
     setGenerationProgress({
@@ -787,24 +1786,54 @@ export default function MusicGeneratorForm() {
         window.dispatchEvent(new Event('credits-updated'));
       }
 
-      const musicResult = await requestMusicGeneration({
-        prompt: minimaxiPrompt,
-        lyrics: trimmedLyrics,
-      });
+      // 如果选择伴奏模式，lyrics传空
+      const lyricsForMusic = context.instrumental ? '' : trimmedLyrics;
+
+      // 同时生成音乐和图片（如果存在 image 字段）
+      const [musicResult, imageResult] = await Promise.all([
+        requestMusicGeneration({
+          prompt: minimaxiPrompt,
+          lyrics: lyricsForMusic,
+        }),
+        // 如果存在 image 字段，则生成图片
+        context.image && context.image.trim()
+          ? fetch('/api/scenes/generate-image', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                prompt: context.image.trim(),
+              }),
+            }).then(async (res) => {
+              if (res.ok) {
+                const result = await res.json();
+                if (result.success && result.data && result.data.length > 0) {
+                  // 返回第一张图片的URL
+                  return result.data[0].url;
+                }
+              }
+              return null;
+            }).catch((error) => {
+              console.error("Error generating cover image:", error);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
 
       // 生成带歌词的音乐
       const newMusic: GeneratedMusic = {
         id: `music-${Date.now()}`,
         audioUrl: musicResult.audioUrl,
-        coverUrl: null,
+        coverUrl: imageResult || null,
         prompt: context.generatedPrompt,
-        title: context.description.substring(0, 50),
+        title: context.title || context.description.substring(0, 50),
         style: context.genre || "",
         mood: context.mood,
         duration: "30",
         createdAt: new Date(),
         lyrics: trimmedLyrics,
-        hasLyrics: true,
+        hasLyrics: !context.instrumental && !!trimmedLyrics,
       };
 
       // 保存到数据库
@@ -815,21 +1844,25 @@ export default function MusicGeneratorForm() {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
+            title: context.title || context.description.substring(0, 50),
             prompt: context.generatedPrompt,
             genre: context.genre,
             mood: context.mood,
             theme: context.theme,
             tempo: context.tempo,
             energy: context.energy,
-            lyrics: true,
+            lyrics: !context.instrumental && !!trimmedLyrics,
             instrumental: context.instrumental,
+            voiceType: context.instrumental ? undefined : context.voiceType,
             audioUrl: musicResult.audioUrl,
+            coverUrl: imageResult || undefined,
             duration: 30,
             status: 'completed',
             metadata: { 
               lyrics: trimmedLyrics,
               minimaxiTraceId: musicResult.traceId,
               minimaxiExtraInfo: musicResult.extraInfo,
+              imagePrompt: context.image,
             },
           }),
         });
@@ -868,13 +1901,12 @@ export default function MusicGeneratorForm() {
       setGeneratedMusics(prev => [newMusic, ...prev]);
       setMyMusicList(prev => [newMusic, ...prev]);
       
-      // 关闭歌词编辑弹窗
-      setLyricsEditDialog({
-        isOpen: false,
-        lyrics: '',
-        musicId: null,
-        isNewGeneration: false,
-      });
+      // 切换到 My Music 标签页并滚动到该区域
+      setActiveTab('my-music');
+      setTimeout(() => {
+        myMusicSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+      
       setPendingGeneration(null);
 
       setGenerationProgress({
@@ -898,17 +1930,33 @@ export default function MusicGeneratorForm() {
     }
   };
 
-  const handlePlayPause = (musicId: string) => {
+  const handlePlayPause = async (musicId: string) => {
+    console.log('[DEBUG handlePlayPause] Called with musicId:', musicId, 'currentPlayingId:', currentPlayingId);
+    console.log('[DEBUG handlePlayPause] audioElementsRef.current size:', audioElementsRef.current.size);
+    console.log('[DEBUG handlePlayPause] audioElementsRef.current keys:', Array.from(audioElementsRef.current.keys()));
+    
     if (currentPlayingId === musicId) {
       // Pause current
-      const audio = audioElements.get(musicId);
+      console.log('[DEBUG handlePlayPause] Pausing current audio');
+      const audio = audioElementsRef.current.get(musicId);
+      console.log('[DEBUG handlePlayPause] Got audio element:', !!audio);
       if (audio) {
         audio.pause();
+        console.log('[DEBUG handlePlayPause] Audio paused');
       }
       setCurrentPlayingId(null);
     } else {
+      // Stop example audios when switching sections
+      console.log('[DEBUG handlePlayPause] Stopping all example audios');
+      exampleAudioElementsRef.current.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+      setExamplePlayingId(null);
+
       // Stop all other audio
-      audioElements.forEach((audio, id) => {
+      console.log('[DEBUG handlePlayPause] Stopping all other main audios');
+      audioElementsRef.current.forEach((audio, id) => {
         if (id !== musicId) {
           audio.pause();
           audio.currentTime = 0;
@@ -916,13 +1964,65 @@ export default function MusicGeneratorForm() {
       });
 
       // Play new audio
-      if (generatedMusics.find(m => m.id === musicId)?.audioUrl) {
-        const audio = audioElements.get(musicId);
+      const music = generatedMusics.find((m) => m.id === musicId);
+      console.log('[DEBUG handlePlayPause] Found music:', !!music, 'audioUrl:', !!music?.audioUrl);
+      console.log('[DEBUG handlePlayPause] Audio URL type:', music?.audioUrl ? (music.audioUrl.startsWith('data:audio') ? 'BASE64' : 'URL') : 'NONE');
+      console.log('[DEBUG handlePlayPause] Audio URL preview:', music?.audioUrl?.substring(0, 150));
+      
+      if (music?.audioUrl) {
+        const audio = audioElementsRef.current.get(musicId);
+        console.log('[DEBUG handlePlayPause] Got audio element for playback:', !!audio);
+        
         if (audio) {
-          audio.play();
+          console.log('[DEBUG handlePlayPause] Audio element details:', {
+            src: audio.src?.substring(0, 150),
+            srcMatches: audio.src === music.audioUrl,
+            isBase64: audio.src?.startsWith('data:audio'),
+            readyState: audio.readyState,
+            paused: audio.paused,
+            currentTime: audio.currentTime,
+            duration: audio.duration,
+            muted: audio.muted,
+            volume: audio.volume
+          });
+          
           setCurrentPlayingId(musicId);
+          try {
+            console.log('[DEBUG handlePlayPause] Attempting to play audio');
+            await playAudioElementSafely(audio);
+            console.log('[DEBUG handlePlayPause] Audio playback successful');
+            // 再次检查播放状态
+            setTimeout(() => {
+              console.log('[DEBUG handlePlayPause] Audio state 200ms after play:', {
+                paused: audio.paused,
+                currentTime: audio.currentTime,
+                readyState: audio.readyState
+              });
+            }, 200);
+          } catch (error) {
+            console.error("[DEBUG handlePlayPause] Error playing audio:", error);
+            setCurrentPlayingId(null);
+          }
+        } else {
+          console.error('[DEBUG handlePlayPause] No audio element found for musicId:', musicId);
+          console.error('[DEBUG handlePlayPause] Available audio element IDs:', Array.from(audioElementsRef.current.keys()));
         }
+      } else {
+        console.error('[DEBUG handlePlayPause] Music has no audioUrl:', music);
       }
+    }
+  };
+
+  const handleSeek = (musicId: string, time: number) => {
+    const audio = audioElementsRef.current.get(musicId);
+    if (audio) {
+      audio.currentTime = time;
+      setAudioProgress(prev => {
+        const newMap = new Map(prev);
+        const current = newMap.get(musicId) || { currentTime: 0, duration: 0 };
+        newMap.set(musicId, { ...current, currentTime: time });
+        return newMap;
+      });
     }
   };
 
@@ -936,17 +2036,58 @@ export default function MusicGeneratorForm() {
     }
   };
 
-  const handleExamplePlayPause = (musicId: string) => {
+  const handleNavigateToMusicVideo = async (musicId: string) => {
+    try {
+      setVideoPreparingId(musicId);
+      const response = await fetch('/api/music-video/characters/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ musicId }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to prepare music video');
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to open music video');
+      setVideoPreparingId(null);
+      return;
+    }
+
+    router.push(`/music-video/${musicId}`);
+    setVideoPreparingId(null);
+  };
+
+  const handleExamplePlayPause = async (musicId: string) => {
+    console.log('[DEBUG handleExamplePlayPause] Called with musicId:', musicId, 'examplePlayingId:', examplePlayingId);
+    console.log('[DEBUG handleExamplePlayPause] exampleAudioElementsRef.current size:', exampleAudioElementsRef.current.size);
+    console.log('[DEBUG handleExamplePlayPause] exampleAudioElementsRef.current keys:', Array.from(exampleAudioElementsRef.current.keys()));
+    
     if (examplePlayingId === musicId) {
       // Pause current
-      const audio = exampleAudioElements.get(musicId);
+      console.log('[DEBUG handleExamplePlayPause] Pausing current example audio');
+      const audio = exampleAudioElementsRef.current.get(musicId);
+      console.log('[DEBUG handleExamplePlayPause] Got audio element:', !!audio);
       if (audio) {
         audio.pause();
+        console.log('[DEBUG handleExamplePlayPause] Audio paused');
       }
       setExamplePlayingId(null);
     } else {
+      // Stop generated/my music playback before starting example audio
+      console.log('[DEBUG handleExamplePlayPause] Stopping all main audios');
+      audioElementsRef.current.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+      setCurrentPlayingId(null);
+
       // Stop all other audio
-      exampleAudioElements.forEach((audio, id) => {
+      console.log('[DEBUG handleExamplePlayPause] Stopping all other example audios');
+      exampleAudioElementsRef.current.forEach((audio, id) => {
         if (id !== musicId) {
           audio.pause();
           audio.currentTime = 0;
@@ -954,14 +2095,65 @@ export default function MusicGeneratorForm() {
       });
 
       // Play new audio
-      const music = musicExamples.find(m => m.id === musicId);
+      const music = musicExamples.find((m) => m.id === musicId);
+      console.log('[DEBUG handleExamplePlayPause] Found music:', !!music, 'audioUrl:', !!music?.audioUrl);
+      console.log('[DEBUG handleExamplePlayPause] Audio URL type:', music?.audioUrl ? (music.audioUrl.startsWith('data:audio') ? 'BASE64' : 'URL') : 'NONE');
+      console.log('[DEBUG handleExamplePlayPause] Audio URL preview:', music?.audioUrl?.substring(0, 150));
+      
       if (music?.audioUrl) {
-        const audio = exampleAudioElements.get(musicId);
+        const audio = exampleAudioElementsRef.current.get(musicId);
+        console.log('[DEBUG handleExamplePlayPause] Got audio element for playback:', !!audio);
+        
         if (audio) {
-          audio.play();
+          console.log('[DEBUG handleExamplePlayPause] Audio element details:', {
+            src: audio.src?.substring(0, 150),
+            srcMatches: audio.src === music.audioUrl,
+            isBase64: audio.src?.startsWith('data:audio'),
+            readyState: audio.readyState,
+            paused: audio.paused,
+            currentTime: audio.currentTime,
+            duration: audio.duration,
+            muted: audio.muted,
+            volume: audio.volume
+          });
+          
           setExamplePlayingId(musicId);
+          try {
+            console.log('[DEBUG handleExamplePlayPause] Attempting to play example audio');
+            await playAudioElementSafely(audio);
+            console.log('[DEBUG handleExamplePlayPause] Audio playback successful');
+            // 再次检查播放状态
+            setTimeout(() => {
+              console.log('[DEBUG handleExamplePlayPause] Audio state 200ms after play:', {
+                paused: audio.paused,
+                currentTime: audio.currentTime,
+                readyState: audio.readyState
+              });
+            }, 200);
+          } catch (error) {
+            console.error("[DEBUG handleExamplePlayPause] Error playing example audio:", error);
+            setExamplePlayingId(null);
+          }
+        } else {
+          console.error('[DEBUG handleExamplePlayPause] No audio element found for musicId:', musicId);
+          console.error('[DEBUG handleExamplePlayPause] Available audio element IDs:', Array.from(exampleAudioElementsRef.current.keys()));
         }
+      } else {
+        console.error('[DEBUG handleExamplePlayPause] Music has no audioUrl:', music);
       }
+    }
+  };
+
+  const handleExampleSeek = (musicId: string, time: number) => {
+    const audio = exampleAudioElementsRef.current.get(musicId);
+    if (audio) {
+      audio.currentTime = time;
+      setExampleAudioProgress(prev => {
+        const newMap = new Map(prev);
+        const current = newMap.get(musicId) || { currentTime: 0, duration: 0 };
+        newMap.set(musicId, { ...current, currentTime: time });
+        return newMap;
+      });
     }
   };
 
@@ -1000,8 +2192,15 @@ export default function MusicGeneratorForm() {
         </motion.div>
 
         <div className="max-w-4xl mx-auto space-y-6">
-          {/* Generation Form - Reference Style */}
-          <div className="space-y-6">
+          {/* Mode Tabs */}
+          <div className="w-full">
+            <div className="flex items-center justify-center gap-4 mb-6">
+              <Music className="w-8 h-8 text-gray-400 flex-shrink-0" />
+            </div>
+
+            {/* Generation Form - Reference Style */}
+            <div className="space-y-6">
+              <div className="space-y-6">
             {/* Large Rounded Input Field with Random Button */}
             <div className="relative">
               <Textarea
@@ -1078,7 +2277,7 @@ export default function MusicGeneratorForm() {
             </div>
 
             {/* Five Dropdown Selectors Row */}
-            <div className="grid grid-cols-5 gap-3">
+            <div className={`grid gap-3 ${!formData.instrumental ? 'grid-cols-6' : 'grid-cols-5'}`}>
               {/* Mood */}
               <Select
                 value={formData.mood}
@@ -1183,6 +2382,29 @@ export default function MusicGeneratorForm() {
                   ))}
                 </SelectContent>
               </Select>
+
+              {/* Voice Type - Only show when not instrumental */}
+              {!formData.instrumental && (
+                <Select
+                  value={formData.voiceType}
+                  onValueChange={(value) => handleInputChange("voiceType", value as 'male' | 'female' | 'duet')}
+                >
+                  <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
+                    <SelectValue placeholder="人物" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                    {VOICE_TYPES.map((voice) => (
+                      <SelectItem
+                        key={voice.value}
+                        value={voice.value}
+                        className="hover:bg-gray-700"
+                      >
+                        {voice.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             {/* Progress Message */}
@@ -1204,6 +2426,8 @@ export default function MusicGeneratorForm() {
                 </motion.div>
               )}
             </AnimatePresence>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1239,7 +2463,11 @@ export default function MusicGeneratorForm() {
                     <Loader2 className="w-12 h-12 text-[#FFDA2A] animate-spin" />
                   </div>
                   <h3 className="text-xl font-semibold text-white mb-2">Generating, please wait...</h3>
-                  <p className="text-gray-400 text-sm">Creating your unique music track</p>
+                  <p className="text-gray-400 text-sm">
+                    {formData.lyrics 
+                      ? 'Creating your music with lyrics and cover art' 
+                      : 'Creating your unique music track'}
+                  </p>
                 </div>
               </motion.div>
             )}
@@ -1268,7 +2496,7 @@ export default function MusicGeneratorForm() {
                       >
                         <div className="flex gap-4">
                           {/* Cover Image */}
-                          <div className="flex-shrink-0 w-24 h-24 bg-gray-700 rounded-lg overflow-hidden">
+                          <div className="flex-shrink-0 w-24 h-24 bg-gray-700 rounded-lg overflow-hidden relative">
                             {music.coverUrl ? (
                               <img
                                 src={music.coverUrl}
@@ -1280,10 +2508,39 @@ export default function MusicGeneratorForm() {
                                 <Music className="w-8 h-8 text-gray-500" />
                               </div>
                             )}
+                            {/* Professional Audio Visualizer Overlay - Only visible when playing */}
+                            {currentPlayingId === music.id && (
+                              <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
+                                <div className="w-full h-full p-4">
+                                  <ProfessionalAudioVisualizer
+                                    isPlaying={currentPlayingId === music.id}
+                                    audioElement={audioElementsRef.current.get(music.id) || undefined}
+                                    variant="bars"
+                                    barCount={20}
+                                    color="#FFDA2A"
+                                    className="w-full h-full"
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </div>
                           
                           {/* Content */}
                           <div className="flex-1 min-w-0">
+                            {/* Audio Progress Bar - Only show when playing */}
+                            {currentPlayingId === music.id && (() => {
+                              const progress = audioProgress.get(music.id) || { currentTime: 0, duration: 0 };
+                              return (
+                                <ProfessionalProgressBar
+                                  currentTime={progress.currentTime}
+                                  duration={progress.duration}
+                                  onSeek={(time) => handleSeek(music.id, time)}
+                                  showTime={true}
+                                  color="#FFDA2A"
+                                  className="mb-3"
+                                />
+                              );
+                            })()}
                             <div className="flex items-start justify-between mb-2">
                               <div className="flex-1 min-w-0">
                                 <h3 className="text-white font-medium mb-1 truncate">
@@ -1328,10 +2585,26 @@ export default function MusicGeneratorForm() {
                                     <FileText className="w-4 h-4" />
                                   </Button>
                                 )}
+                                {/* <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleNavigateToMusicVideo(music.id)}
+                                  className="text-white hover:bg-gray-700"
+                                  title="Create Music Video"
+                                  disabled={videoPreparingId === music.id}
+                                >
+                                  {videoPreparingId === music.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Video className="w-4 h-4" />
+                                  )}
+                                </Button> */}
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => handlePlayPause(music.id)}
+                                  onClick={() => {
+                                    void handlePlayPause(music.id);
+                                  }}
                                   className="text-white hover:bg-gray-700"
                                   disabled={!music.audioUrl}
                                 >
@@ -1356,13 +2629,20 @@ export default function MusicGeneratorForm() {
                         </div>
                         {music.audioUrl && (
                           <audio
-                            ref={(el) => {
-                              if (el) {
-                                audioElements.set(music.id, el);
-                              }
-                            }}
+                            ref={(el) => attachMainAudioElement(music.id, el)}
                             src={music.audioUrl}
-                            onEnded={() => setCurrentPlayingId(null)}
+                            preload="metadata"
+                            onEnded={() => {
+                              setCurrentPlayingId(null);
+                              setAudioProgress(prev => {
+                                const newMap = new Map(prev);
+                                const current = newMap.get(music.id);
+                                if (current) {
+                                  newMap.set(music.id, { ...current, currentTime: 0 });
+                                }
+                                return newMap;
+                              });
+                            }}
                             className="hidden"
                           />
                         )}
@@ -1383,6 +2663,7 @@ export default function MusicGeneratorForm() {
 
         {/* Music Examples / My Music Section */}
         <motion.section
+          ref={myMusicSectionRef}
           initial={{ opacity: 0, y: 40 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
@@ -1453,10 +2734,27 @@ export default function MusicGeneratorForm() {
                           (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%231f2937' width='400' height='400'/%3E%3Ctext fill='%239ca3af' font-family='sans-serif' font-size='20' x='50%25' y='50%25' text-anchor='middle' dy='.3em'%3ENo Cover%3C/text%3E%3C/svg%3E";
                         }}
                       />
+                      {/* Professional Audio Visualizer Overlay - Only visible when playing */}
+                      {examplePlayingId === music.id && (
+                        <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
+                          <div className="w-full h-full p-6">
+                            <ProfessionalAudioVisualizer
+                              isPlaying={examplePlayingId === music.id}
+                                  audioElement={exampleAudioElementsRef.current.get(music.id) || undefined}
+                              variant="circle"
+                              barCount={24}
+                              color="#FFDA2A"
+                              className="w-full h-full"
+                            />
+                          </div>
+                        </div>
+                      )}
                       {/* Play Button Overlay - Always visible */}
                       <div className="absolute inset-0 flex items-center justify-center">
                         <button
-                          onClick={() => handleExamplePlayPause(music.id)}
+                          onClick={() => {
+                            void handleExamplePlayPause(music.id);
+                          }}
                           className="w-14 h-14 rounded-full bg-white hover:bg-gray-100 transition-all flex items-center justify-center shadow-lg z-10"
                         >
                           {examplePlayingId === music.id ? (
@@ -1468,13 +2766,20 @@ export default function MusicGeneratorForm() {
                       </div>
                       {/* Audio Element */}
                       <audio
-                        ref={(el) => {
-                          if (el) {
-                            exampleAudioElements.set(music.id, el);
-                          }
-                        }}
+                        ref={(el) => attachExampleAudioElement(music.id, el)}
                         src={music.audioUrl}
-                        onEnded={() => setExamplePlayingId(null)}
+                        preload="metadata"
+                        onEnded={() => {
+                          setExamplePlayingId(null);
+                          setExampleAudioProgress(prev => {
+                            const newMap = new Map(prev);
+                            const current = newMap.get(music.id);
+                            if (current) {
+                              newMap.set(music.id, { ...current, currentTime: 0 });
+                            }
+                            return newMap;
+                          });
+                        }}
                         className="hidden"
                       />
                     </div>
@@ -1485,6 +2790,21 @@ export default function MusicGeneratorForm() {
                       <h3 className="text-white font-medium text-sm line-clamp-1">
                         {music.title || "Untitled"}
                       </h3>
+
+                      {/* Audio Progress Bar - Only show when playing */}
+                      {examplePlayingId === music.id && (() => {
+                        const progress = exampleAudioProgress.get(music.id) || { currentTime: 0, duration: 0 };
+                        return (
+                          <ProfessionalProgressBar
+                            currentTime={progress.currentTime}
+                            duration={progress.duration}
+                            onSeek={(time) => handleExampleSeek(music.id, time)}
+                            color="#FFDA2A"
+                            showTime={false}
+                            className="mt-2"
+                          />
+                        );
+                      })()}
 
                       {/* Tags */}
                       <div className="flex flex-wrap gap-1.5">
@@ -1560,10 +2880,27 @@ export default function MusicGeneratorForm() {
                               <Music className="w-16 h-16 text-gray-600" />
                             </div>
                           )}
+                          {/* Professional Audio Visualizer Overlay - Only visible when playing */}
+                          {currentPlayingId === music.id && (
+                            <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
+                              <div className="w-full h-full p-6">
+                                <ProfessionalAudioVisualizer
+                                  isPlaying={currentPlayingId === music.id}
+                                  audioElement={audioElementsRef.current.get(music.id) || undefined}
+                                  variant="circle"
+                                  barCount={24}
+                                  color="#FFDA2A"
+                                  className="w-full h-full"
+                                />
+                              </div>
+                            </div>
+                          )}
                           {/* Play Button Overlay */}
                           <div className="absolute inset-0 flex items-center justify-center">
                             <button
-                              onClick={() => handlePlayPause(music.id)}
+                              onClick={() => {
+                                void handlePlayPause(music.id);
+                              }}
                               className="w-14 h-14 rounded-full bg-white hover:bg-gray-100 transition-all flex items-center justify-center shadow-lg z-10"
                               disabled={!music.audioUrl}
                             >
@@ -1577,13 +2914,20 @@ export default function MusicGeneratorForm() {
                           {/* Audio Element */}
                           {music.audioUrl && (
                             <audio
-                              ref={(el) => {
-                                if (el) {
-                                  audioElements.set(music.id, el);
-                                }
-                              }}
+                              ref={(el) => attachMainAudioElement(music.id, el)}
                               src={music.audioUrl}
-                              onEnded={() => setCurrentPlayingId(null)}
+                              preload="metadata"
+                              onEnded={() => {
+                                setCurrentPlayingId(null);
+                                setAudioProgress(prev => {
+                                  const newMap = new Map(prev);
+                                  const current = newMap.get(music.id);
+                                  if (current) {
+                                    newMap.set(music.id, { ...current, currentTime: 0 });
+                                  }
+                                  return newMap;
+                                });
+                              }}
                               className="hidden"
                             />
                           )}
@@ -1595,6 +2939,21 @@ export default function MusicGeneratorForm() {
                           <h3 className="text-white font-medium text-sm line-clamp-2">
                             {music.title || music.prompt || "Untitled"}
                           </h3>
+                          
+                          {/* Audio Progress Bar - Only show when playing */}
+                          {currentPlayingId === music.id && (() => {
+                            const progress = audioProgress.get(music.id) || { currentTime: 0, duration: 0 };
+                            return (
+                              <ProfessionalProgressBar
+                                currentTime={progress.currentTime}
+                                duration={progress.duration}
+                                onSeek={(time) => handleSeek(music.id, time)}
+                                showTime={false}
+                                color="#FFDA2A"
+                                className="mt-2"
+                              />
+                            );
+                          })()}
                           
                           {/* Lyrics Icon and Info */}
                           <div className="flex items-center justify-between">
@@ -1885,11 +3244,14 @@ export default function MusicGeneratorForm() {
                       ) : pendingGeneration?.mode === 'music' ? (
                         <>
                           <span>Create Music</span>
+                          <Diamond className="w-4 h-4 ml-2" />
+                          <span className="text-xs ml-1">{requiredCreditsForMusicWithLyrics}</span>
                         </>
                       ) : (
                         <>
                           <span>Generate Music</span>
-                          <span className="font-bold">{requiredCreditsForMusicWithLyrics}</span>
+                          <Diamond className="w-4 h-4 ml-2" />
+                          <span className="text-xs ml-1">30</span>
                         </>
                       )}
                     </Button>
@@ -2027,4 +3389,3 @@ export default function MusicGeneratorForm() {
     </div>
   );
 }
-

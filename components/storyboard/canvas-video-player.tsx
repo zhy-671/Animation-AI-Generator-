@@ -110,20 +110,99 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
   const lastFrameDrawnRef = useRef<{ video: HTMLVideoElement | null; time: number }>({ video: null, time: 0 });
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [isAVisible, setIsAVisible] = useState(true);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null); // Store video aspect ratio
 
-  // Initialize canvas size
+  // Update video aspect ratio when video loads or changes
+  useEffect(() => {
+    const videoA = videoARef.current;
+    const videoB = videoBRef.current;
+    
+    const updateAspectRatio = (video: HTMLVideoElement) => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        const aspectRatio = video.videoWidth / video.videoHeight;
+        setVideoAspectRatio(aspectRatio);
+      }
+    };
+
+    const handleVideoALoadedMetadata = () => {
+      if (videoA) updateAspectRatio(videoA);
+    };
+    const handleVideoBLoadedMetadata = () => {
+      if (videoB) updateAspectRatio(videoB);
+    };
+
+    // Check current active video and update aspect ratio
+    const checkActiveVideo = () => {
+      const activeVideo = isVideoAPlayingRef.current ? videoA : videoB;
+      if (activeVideo && activeVideo.videoWidth > 0) {
+        updateAspectRatio(activeVideo);
+      }
+    };
+
+    if (videoA) {
+      videoA.addEventListener("loadedmetadata", handleVideoALoadedMetadata);
+      if (videoA.videoWidth > 0) {
+        updateAspectRatio(videoA);
+      }
+    }
+    if (videoB) {
+      videoB.addEventListener("loadedmetadata", handleVideoBLoadedMetadata);
+      if (videoB.videoWidth > 0) {
+        updateAspectRatio(videoB);
+      }
+    }
+
+    // Also check when clips change
+    if (clips.length > 0) {
+      checkActiveVideo();
+    }
+
+    return () => {
+      if (videoA) videoA.removeEventListener("loadedmetadata", handleVideoALoadedMetadata);
+      if (videoB) videoB.removeEventListener("loadedmetadata", handleVideoBLoadedMetadata);
+    };
+  }, [clips]);
+
+  // Initialize canvas size based on video aspect ratio
   useEffect(() => {
     const updateCanvasSize = () => {
       const container = canvasARef.current?.parentElement;
       if (container && canvasARef.current && canvasBRef.current) {
-        const width = container.clientWidth || 1280; // Default width if 0
-        const height = Math.floor(width * 9 / 16); // 16:9 aspect ratio
-        setCanvasSize({ width, height });
-        canvasARef.current.width = width;
-        canvasARef.current.height = height;
-        canvasBRef.current.width = width;
-        canvasBRef.current.height = height;
-      } else {
+        const containerWidth = container.clientWidth || 1280;
+        const containerHeight = container.clientHeight || 720;
+        
+        // Use video aspect ratio if available, otherwise default to 16:9
+        const aspectRatio = videoAspectRatio || 16 / 9;
+        
+        // Calculate canvas size to fit container while maintaining aspect ratio
+        let canvasWidth: number;
+        let canvasHeight: number;
+        
+        if (aspectRatio > containerWidth / containerHeight) {
+          // Video is wider than container - fit to width
+          canvasWidth = containerWidth;
+          canvasHeight = Math.floor(containerWidth / aspectRatio);
+        } else {
+          // Video is taller than container - fit to height
+          canvasHeight = containerHeight;
+          canvasWidth = Math.floor(containerHeight * aspectRatio);
+        }
+        
+        // Ensure canvas doesn't exceed container
+        if (canvasWidth > containerWidth) {
+          canvasWidth = containerWidth;
+          canvasHeight = Math.floor(containerWidth / aspectRatio);
+        }
+        if (canvasHeight > containerHeight) {
+          canvasHeight = containerHeight;
+          canvasWidth = Math.floor(containerHeight * aspectRatio);
+        }
+        
+        setCanvasSize({ width: canvasWidth, height: canvasHeight });
+        canvasARef.current.width = canvasWidth;
+        canvasARef.current.height = canvasHeight;
+        canvasBRef.current.width = canvasWidth;
+        canvasBRef.current.height = canvasHeight;
       }
     };
 
@@ -142,7 +221,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       timeoutIds.forEach(id => clearTimeout(id));
       window.removeEventListener("resize", updateCanvasSize);
     };
-  }, []);
+  }, [videoAspectRatio]);
 
   // Render function - defined early so it can be used in useEffect
   const render = useCallback(() => {
@@ -165,12 +244,42 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     const inactiveCtx = inactiveCanvas.getContext("2d");
     if (!activeCtx || !inactiveCtx) return;
 
+    // Update aspect ratio if video dimensions are available
+    if (activeVideo.videoWidth > 0 && activeVideo.videoHeight > 0) {
+      const currentAspectRatio = activeVideo.videoWidth / activeVideo.videoHeight;
+      if (videoAspectRatio !== currentAspectRatio) {
+        setVideoAspectRatio(currentAspectRatio);
+      }
+    }
+
     // Render active video frame only if ready (readyState >= 2)
     if (activeVideo.readyState >= 2 && activeCanvas.width > 0 && activeCanvas.height > 0) {
       try {
-        // Clear and draw new frame
+        // Clear and draw new frame - maintain video aspect ratio
         activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
-        activeCtx.drawImage(activeVideo, 0, 0, activeCanvas.width, activeCanvas.height);
+        
+        // Calculate drawing dimensions to maintain video aspect ratio
+        const videoAspect = activeVideo.videoWidth > 0 && activeVideo.videoHeight > 0
+          ? activeVideo.videoWidth / activeVideo.videoHeight
+          : 16 / 9; // Default to 16:9 if video dimensions not available
+        const canvasAspect = activeCanvas.width / activeCanvas.height;
+        
+        let drawWidth = activeCanvas.width;
+        let drawHeight = activeCanvas.height;
+        let drawX = 0;
+        let drawY = 0;
+        
+        if (videoAspect > canvasAspect) {
+          // Video is wider than canvas - fit to width
+          drawHeight = activeCanvas.width / videoAspect;
+          drawY = (activeCanvas.height - drawHeight) / 2;
+        } else {
+          // Video is taller than canvas - fit to height
+          drawWidth = activeCanvas.height * videoAspect;
+          drawX = (activeCanvas.width - drawWidth) / 2;
+        }
+        
+        activeCtx.drawImage(activeVideo, drawX, drawY, drawWidth, drawHeight);
         lastFrameDrawnRef.current = { video: activeVideo, time: activeVideo.currentTime };
         
         // Debug log every 30 frames (about once per second at 30fps)
@@ -224,8 +333,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       const lineHeight = fontSize * 1.25;
       const maxSubtitleWidth = activeCanvas.width * (isPortrait ? 0.88 : 0.72);
       const shouldCenter = subtitle.x === undefined;
-      const x = shouldCenter ? activeCanvas.width / 2 : subtitle.x;
-      const baseY = subtitle.y ?? activeCanvas.height - 10;
+      // 确保 x 是 number 类型
+      const canvasWidth = activeCanvas.width || 0;
+      const x: number = shouldCenter ? canvasWidth / 2 : (subtitle.x ?? 0);
+      const baseY = subtitle.y ?? (activeCanvas.height || 0) - 10;
 
       activeCtx.font = `600 ${fontSize}px "Noto Sans", "Microsoft YaHei", "Arial", sans-serif`;
       activeCtx.textAlign = shouldCenter ? "center" : "left";
@@ -240,7 +351,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       const firstLineY = baseY - (lines.length - 1) * lineHeight;
 
       lines.forEach((line, lineIndex) => {
-        const lineY = firstLineY + lineIndex * lineHeight;
+        const lineY: number = firstLineY + lineIndex * lineHeight;
         activeCtx.fillStyle = "#ffffff";
         if (line) {
           activeCtx.strokeText(line, x, lineY);
@@ -967,8 +1078,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       {/* Dual Canvas - CanvasA for videoA, CanvasB for videoB */}
       <canvas
         ref={canvasARef}
-        className="absolute w-full h-full object-contain"
+        className="absolute object-contain"
         style={{ 
+          width: canvasSize.width > 0 ? `${canvasSize.width}px` : '100%',
+          height: canvasSize.height > 0 ? `${canvasSize.height}px` : '100%',
           maxWidth: "100%", 
           maxHeight: "100%",
           zIndex: isAVisible ? 2 : 1,
@@ -979,8 +1092,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       />
       <canvas
         ref={canvasBRef}
-        className="absolute w-full h-full object-contain"
+        className="absolute object-contain"
         style={{ 
+          width: canvasSize.width > 0 ? `${canvasSize.width}px` : '100%',
+          height: canvasSize.height > 0 ? `${canvasSize.height}px` : '100%',
           maxWidth: "100%", 
           maxHeight: "100%",
           zIndex: isAVisible ? 1 : 2,

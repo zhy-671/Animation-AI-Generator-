@@ -1566,22 +1566,34 @@ export default function StoryboardCreateForm() {
       let downloadEndpoint: string;
       let selectedModel: string;
 
-      // 固定使用Sora模型，根据分辨率选择模型
-      // 根据分辨率选择模型：480p/720p使用横屏模型，1080p使用横屏模型
-      // 根据时长选择：10秒或15秒
+      // 根据宽高比和时长选择模型
+      // 9:16 竖屏使用 sora_video2，其他使用 sora_video2-landscape
+      const isPortrait = artSetting === "9:16";
       if (duration === 15) {
-        selectedModel = "sora_video2-landscape-15s";
+        selectedModel = isPortrait ? "sora_video2-15s" : "sora_video2-landscape-15s";
       } else {
-        selectedModel = "sora_video2-landscape";
+        selectedModel = isPortrait ? "sora_video2" : "sora_video2-landscape";
       }
       
-      // 根据分辨率设置size
-      const resolutionMap: Record<string, string> = {
-        "480P": "1280x704",
-        "720P": "1280x704",
-        "1080P": "1920x1080",
-      };
-      const size = resolutionMap[videoResolution] || "1280x704";
+      // 根据宽高比和分辨率设置size
+      let size: string;
+      if (artSetting === "9:16") {
+        // 竖屏尺寸
+        const portraitSizeMap: Record<string, string> = {
+          "480P": "576x1024",
+          "720P": "720x1280",
+          "1080P": "1080x1920",
+        };
+        size = portraitSizeMap[videoResolution] || "720x1280";
+      } else {
+        // 横屏尺寸
+        const landscapeSizeMap: Record<string, string> = {
+          "480P": "1280x704",
+          "720P": "1280x704",
+          "1080P": "1920x1080",
+        };
+        size = landscapeSizeMap[videoResolution] || "1280x704";
+      }
       
       const soraPrompt = finalDescription; // 严格使用视频描述，不添加风格提示词
       
@@ -1590,38 +1602,14 @@ export default function StoryboardCreateForm() {
         imageUrl: shot.image_url, // 可以是 URL 或本地文件路径
         size: size,
         seconds: duration, // 使用用户选择的时长
-        model: selectedModel, // 传递模型名称
+        model: selectedModel, // 传递模型名称（API 会根据 aspectRatio 自动选择，但这里也传递以确保一致性）
+        aspectRatio: artSetting, // 传递宽高比，让 API 可以自动选择模型
       };
 
       apiEndpoint = "/api/video/generate-sora-video2";
       statusEndpoint = "/api/video/status-sora-video2";
       downloadEndpoint = "/api/video/download-sora-video2";
 
-      // 打印前端发送的参数日志
-      console.log("========== sora_video2 创建视频参数日志 ==========");
-      console.log("分辨率:", videoResolution);
-      console.log("选择的模型:", selectedModel);
-      console.log("分镜信息:", {
-        shotNumber: shot.shot_number,
-        description: shot.description,
-        imagePrompt: shot.image_prompt,
-        videoPrompt: shot.video_prompt,
-        imageUrl: shot.image_url,
-      });
-      console.log("用户输入:", {
-        videoDescription,
-        videoResolution,
-        duration,
-      });
-      console.log("最终参数:", {
-        prompt: soraPrompt,
-        imageUrl: shot.image_url,
-        size: size,
-        seconds: duration,
-        model: selectedModel,
-      });
-      console.log("完整请求体:", JSON.stringify(requestBody, null, 2));
-      console.log("=============================================================");
 
       // 调用视频生成API
       const response = await fetch(apiEndpoint, {
@@ -1633,19 +1621,28 @@ export default function StoryboardCreateForm() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate video");
+        // 检查响应类型，避免解析 HTML 错误页面
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate video");
+        } else {
+          // 响应是 HTML（错误页面）
+          const errorText = await response.text();
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // 检查响应类型，确保是 JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
       const taskId = result.data.taskId;
 
-      // 打印 API 响应结果
-      console.log("========== 创建视频 API 响应 ==========");
-      console.log("响应状态:", response.status, response.statusText);
-      console.log("响应数据:", JSON.stringify(result, null, 2));
-      console.log("任务ID:", taskId);
-      console.log("======================================");
 
       // 轮询视频生成状态
       const pollStatus = async () => {
@@ -1658,8 +1655,22 @@ export default function StoryboardCreateForm() {
 
             const statusResponse = await fetch(`${statusEndpoint}?taskId=${taskId}`);
             if (!statusResponse.ok) {
-              const errorData = await statusResponse.json();
-              throw new Error(errorData.error || "获取视频状态失败");
+              // 检查响应类型
+              const contentType = statusResponse.headers.get("content-type");
+              if (contentType && contentType.includes("application/json")) {
+                const errorData = await statusResponse.json();
+                throw new Error(errorData.error || "获取视频状态失败");
+              } else {
+                const errorText = await statusResponse.text();
+                throw new Error(`Server error (${statusResponse.status}): Please try again later`);
+              }
+            }
+
+            // 检查响应类型
+            const statusContentType = statusResponse.headers.get("content-type");
+            if (!statusContentType || !statusContentType.includes("application/json")) {
+              const errorText = await statusResponse.text();
+              throw new Error("Invalid response from server. Please try again.");
             }
 
             const statusResult = await statusResponse.json();
@@ -1699,8 +1710,22 @@ export default function StoryboardCreateForm() {
               });
 
               if (!downloadResponse.ok) {
-                const downloadError = await downloadResponse.json();
-                throw new Error(downloadError.error || "Failed to download and upload video");
+                // 检查响应类型
+                const contentType = downloadResponse.headers.get("content-type");
+                if (contentType && contentType.includes("application/json")) {
+                  const downloadError = await downloadResponse.json();
+                  throw new Error(downloadError.error || "Failed to download and upload video");
+                } else {
+                  const errorText = await downloadResponse.text();
+                  throw new Error(`Server error (${downloadResponse.status}): Please try again later`);
+                }
+              }
+
+              // 检查响应类型
+              const downloadContentType = downloadResponse.headers.get("content-type");
+              if (!downloadContentType || !downloadContentType.includes("application/json")) {
+                const errorText = await downloadResponse.text();
+                throw new Error("Invalid response from server. Please try again.");
               }
 
               const downloadResult = await downloadResponse.json();
@@ -2950,7 +2975,7 @@ export default function StoryboardCreateForm() {
                           }
                           
                           return hasStoryboard && hasShots && shotsCount > 0;
-                        })() ? (
+                        })() && selectedScene.storyboard ? (
                           <div className="space-y-6 pt-6">
                             {/* 场景标题和摘要 */}
                             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
@@ -3043,84 +3068,43 @@ export default function StoryboardCreateForm() {
                                           </motion.div>
                                         )}
                                         
-                                        {/* Video Player */}
-                                        {currentShot.video_url && !isGeneratingVideoForThisShot ? (
-                                          <motion.div 
-                                            className="w-full h-full relative group cursor-pointer overflow-hidden rounded-lg"
-                                            initial={{ opacity: 0, scale: 0.95 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            transition={{ duration: 0.3 }}
-                                            whileHover={{ scale: 1.02 }}
+                                        {/* 图片显示（如果有视频则在图片上叠加视频图标） */}
+                                        {currentShot.image_url && !isGeneratingVideoForThisShot ? (
+                                          <div className="w-full h-full relative group cursor-pointer overflow-hidden rounded-lg"
                                             onClick={() => {
-                                              setVideoDetailModal({
-                                                isOpen: true,
-                                                shot: currentShot,
-                                                sceneTitle: selectedScene.storyboard?.scene_title || "",
-                                              });
-                                            }}
-                                            onTouchStart={(e) => {
-                                              // 触摸时自动播放
-                                              const video = e.currentTarget.querySelector('video:not(.blur-bg)') as HTMLVideoElement;
-                                              if (video) {
-                                                video.play().catch(() => {
-                                                  // 自动播放失败时忽略错误
+                                              if (currentShot.video_url) {
+                                                setVideoDetailModal({
+                                                  isOpen: true,
+                                                  shot: currentShot,
+                                                  sceneTitle: selectedScene.storyboard?.scene_title || "",
                                                 });
                                               }
                                             }}
                                           >
-                                            {/* 模糊背景视频层 */}
-                                            <video
-                                              src={currentShot.video_url}
-                                              className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-40 scale-110 z-0"
-                                              muted
-                                              loop
-                                              playsInline
-                                              autoPlay
-                                            />
-                                            {/* 渐变遮罩 */}
-                                            <div className="absolute inset-0 bg-gradient-to-br from-gray-900/40 via-gray-800/20 to-gray-900/40 z-[5]" />
-                                            {/* Main Video Player */}
-                                            <video
-                                              src={currentShot.video_url}
-                                              className="w-full h-full object-cover relative z-10"
-                                              muted
-                                              loop
-                                              playsInline
-                                              onMouseEnter={(e) => {
-                                                const video = e.currentTarget;
-                                                video.play().catch(() => {});
-                                              }}
-                                              onMouseLeave={(e) => {
-                                                const video = e.currentTarget;
-                                                video.pause();
-                                                video.currentTime = 0;
+                                            <img
+                                              src={currentShot.image_url}
+                                              alt={`Shot ${currentShot.shot_number}`}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                const target = e.target as HTMLImageElement;
+                                                target.style.display = 'none';
                                               }}
                                             />
-                                            {/* 悬停覆盖层 */}
-                                            <motion.div 
-                                              className="absolute inset-0 z-20 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center"
-                                              initial={{ opacity: 0 }}
-                                              whileHover={{ opacity: 1 }}
-                                            >
-                                              <motion.div
-                                                initial={{ scale: 0.8, opacity: 0 }}
-                                                whileHover={{ scale: 1, opacity: 1 }}
-                                                transition={{ duration: 0.2 }}
-                                              >
-                                                <Video className="w-8 h-8 text-white drop-shadow-lg" />
-                                              </motion.div>
-                                            </motion.div>
-                                          </motion.div>
-                                        ) : currentShot.image_url && !isGeneratingVideoForThisShot ? (
-                                          <img
-                                            src={currentShot.image_url}
-                                            alt={`Shot ${currentShot.shot_number}`}
-                                            className="w-full h-full object-cover"
-                                            onError={(e) => {
-                                              const target = e.target as HTMLImageElement;
-                                              target.style.display = 'none';
-                                            }}
-                                          />
+                                            {/* 如果有视频，在图片上显示视频图标 */}
+                                            {currentShot.video_url && (
+                                              <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
+                                                <motion.div
+                                                  initial={{ scale: 0.9, opacity: 0.8 }}
+                                                  animate={{ scale: 1, opacity: 1 }}
+                                                  whileHover={{ scale: 1.1 }}
+                                                  transition={{ duration: 0.2 }}
+                                                  className="bg-black/60 rounded-full p-3 backdrop-blur-sm"
+                                                >
+                                                  <Video className="w-6 h-6 text-white" />
+                                                </motion.div>
+                                              </div>
+                                            )}
+                                          </div>
                                         ) : !isGeneratingVideoForThisShot ? (
                                           <div className="w-full h-full flex items-center justify-center">
                                             <ImageIcon className="w-8 h-8 text-gray-500" />

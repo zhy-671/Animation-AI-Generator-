@@ -113,10 +113,16 @@ export default function StoryboardForm() {
           setSubscriptionPlan(planData.plan);
         }
         
-        const balanceCheck = await checkCreditsBalance(0);
-        if (balanceCheck.balance !== undefined) {
-          setCreditsBalance(balanceCheck.balance);
-        }
+        // 延迟加载积分余额，避免与 Header 组件同时调用
+        // Header 组件会在页面加载时查询积分，这里延迟 500ms 再查询
+        setTimeout(async () => {
+          if (isMounted) {
+            const balanceCheck = await checkCreditsBalance(0);
+            if (balanceCheck.balance !== undefined) {
+              setCreditsBalance(balanceCheck.balance);
+            }
+          }
+        }, 500);
       } catch (error) {
       }
     };
@@ -677,7 +683,7 @@ export default function StoryboardForm() {
       
       // 使用Sora API生成视频
       // 根据分辨率选择模型
-      const selectedModel = duration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
+      const selectedModel = currentDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
       
       // 根据分辨率设置size
       const resolutionMap: Record<string, string> = {
@@ -696,7 +702,7 @@ export default function StoryboardForm() {
           prompt: imageItem.text || "动画视频",
           imageUrl: imageItem.imageUrl,
           size: size,
-          seconds: duration,
+          seconds: currentDuration,
           model: selectedModel,
         }),
       });
@@ -750,8 +756,6 @@ export default function StoryboardForm() {
                 },
                 body: JSON.stringify({
                   taskId: taskId,
-                  sceneItemId: imageItem.sceneItemId,
-                  shotNumber: imageItem.shotNumber,
                 }),
               });
               

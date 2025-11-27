@@ -43,18 +43,20 @@ export async function POST(request: NextRequest) {
     // if (!apiKey.startsWith('sk-') && apiKey.length < 20) {
     // }
 
-    // ========== 新的豆包 API 调用 ==========
-    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
-    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+    // ========== 使用 Laozhang API 调用 ==========
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
+        { success: false, error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
 
     // 构建提示词
-    const systemPrompt = `You are a professional story planner and anime scriptwriter specializing in Western/international settings and character design. 
+    const systemPrompt = `LANGUAGE REQUIREMENT (CRITICAL): All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated content. All field values (title, theme, character names, descriptions, etc.) must be in English.
+
+You are a professional story planner and anime scriptwriter specializing in Western/international settings and character design. 
 
 Based on the user's input text, automatically determine the story's style, tone, and genre (e.g., fantasy, sci-fi, adventure, mystery, romance, children's, or emotional/poetic). 
 
@@ -107,7 +109,8 @@ Then generate a **complete story outline** and **detailed character information*
 - Character names must be Western/international names.
 - Character visual descriptions must emphasize Western/international facial features and appearance.
 - Character info will be used by users to generate reference images; consistency must be maintained across all scenes.
-- Plot outline scenes should reference characters, but character images are not generated at this stage—only provide prompts and detailed descriptions for later use.`;
+- Plot outline scenes should reference characters, but character images are not generated at this stage—only provide prompts and detailed descriptions for later use.
+- **LANGUAGE REQUIREMENT**: All output must be in English only. Do not include any Chinese characters or translations in the JSON output.`;
 
     const userPrompt = `**User Input:** "${userText.trim()}"
 
@@ -238,9 +241,9 @@ Then generate a **complete story outline** and **detailed character information*
     // ========== 原来的 DashScope API 调用结束 ==========
 
     // ========== 新的豆包 API 调用 ==========
-    // 构建请求参数（使用 doubao API 格式）
+    // 构建请求参数（使用 OpenAI 兼容格式）
     const requestBody = {
-      model: "doubao-seed-1-6-251015",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -255,9 +258,9 @@ Then generate a **complete story outline** and **detailed character information*
       max_tokens: 4000,
     };
 
-    // 调用 doubao Chat Completions API
+    // 调用 Laozhang Chat Completions API
     const response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -281,7 +284,7 @@ Then generate a **complete story outline** and **detailed character information*
         return NextResponse.json(
           {
             success: false,
-            error: "API key authentication failed. Please check your VOLCANO_API_KEY or ARK_API_KEY environment variable.",
+            error: "API key authentication failed. Please check your LAOZHANG_API_KEY_STORY environment variable.",
             details: errorText,
           },
           { status: 401 }
@@ -291,7 +294,7 @@ Then generate a **complete story outline** and **detailed character information*
       return NextResponse.json(
         {
           success: false,
-          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
+            error: `Laozhang API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
         {
           status: 500, // Always return 500 for API errors, not the upstream status
@@ -320,12 +323,12 @@ Then generate a **complete story outline** and **detailed character information*
       );
     }
 
-    // 提取返回内容（doubao API 返回格式与 OpenAI 兼容）
+    // 提取返回内容（Laozhang API 返回格式与 OpenAI 兼容）
     const content = data.choices?.[0]?.message?.content || "";
 
     if (!content) {
       return NextResponse.json(
-        { success: false, error: "No content in Doubao API response" },
+        { success: false, error: "No content in Laozhang API response" },
         { status: 500 }
       );
     }

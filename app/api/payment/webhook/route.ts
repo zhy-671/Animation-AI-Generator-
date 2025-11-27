@@ -440,22 +440,24 @@ async function handleCheckoutCompleted(event: CreemWebhookEvent) {
 
     // Update subscription plan in anim_customers
     if (metadata.plan_name && checkout.subscription) {
+      const subscriptionId = checkout.subscription.id;
       const expiresAt = new Date((checkout.subscription as any).current_period_end_date || new Date().setMonth(new Date().getMonth() + 1));
       const { error: updateError, data: updateData } = await supabase
         .from('anim_customers')
         .update({
           subscription_plan: metadata.plan_name,
           subscription_expires_at: expiresAt.toISOString(),
+          subscription_id: subscriptionId, // 保存 subscription_id
         })
         .eq('id', customerId)
-        .select('subscription_plan, subscription_expires_at');
+        .select('subscription_plan, subscription_expires_at, subscription_id');
 
       if (updateError) {
       } else {
         // Verify the update
         const { data: verifyData, error: verifyError } = await supabase
           .from('anim_customers')
-          .select('subscription_plan, subscription_expires_at')
+          .select('subscription_plan, subscription_expires_at, subscription_id')
           .eq('id', customerId)
           .single();
         
@@ -498,22 +500,24 @@ async function handleSubscriptionActive(event: CreemWebhookEvent) {
   const customerId = customer.id;
   // Update subscription plan
   if (metadata.plan_name) {
+    const subscriptionId = subscription.id;
     const expiresAt = new Date(subscription.current_period_end_date);
     const { error: updateError, data: updateData } = await supabase
       .from('anim_customers')
       .update({
         subscription_plan: metadata.plan_name,
         subscription_expires_at: expiresAt.toISOString(),
+        subscription_id: subscriptionId, // 保存 subscription_id
       })
       .eq('id', customerId)
-      .select('subscription_plan, subscription_expires_at');
+      .select('subscription_plan, subscription_expires_at, subscription_id');
 
     if (updateError) {
     } else {
       // Verify the update
       const { data: verifyData, error: verifyError } = await supabase
         .from('anim_customers')
-        .select('subscription_plan, subscription_expires_at')
+        .select('subscription_plan, subscription_expires_at, subscription_id')
         .eq('id', customerId)
         .single();
       
@@ -579,22 +583,24 @@ async function handleSubscriptionPaid(event: CreemWebhookEvent) {
   const customerId = customer.id;
   // Update subscription plan
   if (metadata.plan_name) {
+    const subscriptionId = subscription.id;
     const expiresAt = new Date(subscription.current_period_end_date);
     const { error: updateError, data: updateData } = await supabase
       .from('anim_customers')
       .update({
         subscription_plan: metadata.plan_name,
         subscription_expires_at: expiresAt.toISOString(),
+        subscription_id: subscriptionId, // 保存 subscription_id
       })
       .eq('id', customerId)
-      .select('subscription_plan, subscription_expires_at');
+      .select('subscription_plan, subscription_expires_at, subscription_id');
 
     if (updateError) {
     } else {
       // Verify the update
       const { data: verifyData, error: verifyError } = await supabase
         .from('anim_customers')
-        .select('subscription_plan, subscription_expires_at')
+        .select('subscription_plan, subscription_expires_at, subscription_id')
         .eq('id', customerId)
         .single();
       
@@ -659,6 +665,7 @@ async function handleSubscriptionCanceled(event: CreemWebhookEvent) {
       .update({
         subscription_plan: null,
         subscription_expires_at: null,
+        subscription_id: null, // 清除 subscription_id
       })
       .eq('id', customer.id);
   }
@@ -692,6 +699,7 @@ async function handleSubscriptionExpired(event: CreemWebhookEvent) {
       .update({
         subscription_plan: null,
         subscription_expires_at: null,
+        subscription_id: null, // 清除 subscription_id
       })
       .eq('id', customer.id);
   }

@@ -239,3 +239,54 @@ export async function deductStoryboardCredits(metadata?: Record<string, any>): P
     }
   );
 }
+
+/**
+ * 扣除音乐生成积分（非歌词模式）
+ * 非歌词模式固定消耗5积分
+ */
+export async function deductMusicCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const MUSIC_CREDITS = 5;
+  return await deductCredits(
+    MUSIC_CREDITS,
+    'Generated AI music (non-lyrics)',
+    {
+      ...metadata,
+      type: 'music',
+      credits: MUSIC_CREDITS,
+    }
+  );
+}
+
+/**
+ * 扣除歌词生成积分
+ * 歌词生成固定消耗5积分
+ */
+export async function deductLyricsCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const LYRICS_CREDITS = 5;
+  return await deductCredits(
+    LYRICS_CREDITS,
+    'Generated AI lyrics',
+    {
+      ...metadata,
+      type: 'lyrics',
+      credits: LYRICS_CREDITS,
+    }
+  );
+}
+
+/**
+ * 扣除带歌词的音乐生成积分
+ * 带歌词的音乐生成固定消耗30积分
+ */
+export async function deductMusicWithLyricsCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const MUSIC_WITH_LYRICS_CREDITS = 30;
+  return await deductCredits(
+    MUSIC_WITH_LYRICS_CREDITS,
+    'Generated AI music with lyrics',
+    {
+      ...metadata,
+      type: 'music_with_lyrics',
+      credits: MUSIC_WITH_LYRICS_CREDITS,
+    }
+  );
+}

@@ -47,7 +47,7 @@ export default function StoryboardProjectsList() {
         if (response.status === 401) {
           showError("Your session has expired. Please refresh the page or log in again.");
           setTimeout(() => {
-            window.location.href = "/";
+            router.push("/login");
           }, 2000);
           return;
         }

@@ -139,20 +139,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
   useEffect(() => {
     const loadUserData = async () => {
       try {
-        // 先从 Cookie 读取订阅计划（如果存在）
-        if (typeof document !== 'undefined') {
-          const cookiePlan = document.cookie
-            .split('; ')
-            .find(row => row.startsWith('subscription_plan='))
-            ?.split('=')[1];
-          if (cookiePlan && (cookiePlan === 'basic' || cookiePlan === 'pro' || cookiePlan === 'studio')) {
-            setSubscriptionPlan(cookiePlan as SubscriptionPlan);
-          } else if (cookiePlan === 'null') {
-            setSubscriptionPlan(null);
-          }
-        }
-        
-        // 加载订阅计划（从服务器获取最新数据）
+        // 直接从服务器获取最新订阅计划（不依赖 Cookie，确保数据准确）
         const planData = await getUserSubscriptionPlan();
         if (planData.plan !== undefined) {
           setSubscriptionPlan(planData.plan);
@@ -164,12 +151,26 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           }
         }
         
-        // 加载积分余额
-        const balanceCheck = await checkCreditsBalance(0);
-        if (balanceCheck.balance !== undefined) {
-          setCreditsBalance(balanceCheck.balance);
-        }
+        // 移除积分查询，因为 Header 组件已经统一管理积分显示
+        // 避免多个组件重复调用积分接口
+        // 如果需要积分余额，可以通过监听 credits-updated 事件获取
+        // const balanceCheck = await checkCreditsBalance(0);
+        // if (balanceCheck.balance !== undefined) {
+        //   setCreditsBalance(balanceCheck.balance);
+        // }
       } catch (error) {
+        // 如果加载失败，尝试从 Cookie 读取（作为后备）
+        if (typeof document !== 'undefined') {
+          const cookiePlan = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('subscription_plan='))
+            ?.split('=')[1];
+          if (cookiePlan && (cookiePlan === 'basic' || cookiePlan === 'pro' || cookiePlan === 'studio')) {
+            setSubscriptionPlan(cookiePlan as SubscriptionPlan);
+          } else if (cookiePlan === 'null') {
+            setSubscriptionPlan(null);
+          }
+        }
       }
     };
     
@@ -177,6 +178,37 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       loadUserData();
     }
   }, [isMounted]);
+
+  // 监听订阅计划更新事件（当支付成功后，pricing 页面会触发此事件）
+  useEffect(() => {
+    const handleSubscriptionUpdate = async () => {
+      try {
+        const planData = await getUserSubscriptionPlan();
+        if (planData.plan !== undefined) {
+          setSubscriptionPlan(planData.plan);
+          // 更新 Cookie
+          if (typeof document !== 'undefined') {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+            document.cookie = `subscription_plan=${planData.plan || 'null'}; expires=${expires.toUTCString()}; path=/`;
+          }
+        }
+      } catch (error) {
+        // 静默处理错误
+      }
+    };
+
+    // 监听自定义事件
+    if (typeof window !== 'undefined') {
+      window.addEventListener('subscription-updated', handleSubscriptionUpdate);
+      window.addEventListener('credits-updated', handleSubscriptionUpdate); // 积分更新时也刷新订阅计划
+      
+      return () => {
+        window.removeEventListener('subscription-updated', handleSubscriptionUpdate);
+        window.removeEventListener('credits-updated', handleSubscriptionUpdate);
+      };
+    }
+  }, []);
 
   // 客户端挂载后设置标志
   useEffect(() => {
@@ -1162,10 +1194,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       const stylePrompt = stylePrompts[currentModel] || "2D动画风格";
       
       // 使用Sora API生成视频
-      // 根据分辨率选择模型
-      const selectedModel = currentDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
-      
-      // 根据分辨率设置size
+      // 根据分辨率设置size（API 会根据 size 自动选择正确的模型）
       const resolutionMap: Record<string, string> = {
         "480p": "1280x704",
         "720p": "1280x704",
@@ -1183,7 +1212,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           imageUrl: imageItem.imageUrl,
           size: size,
           seconds: currentDuration,
-          model: selectedModel,
+          // 不传递 model，让 API 根据 size 自动选择（竖屏用 sora_video2，横屏用 sora_video2-landscape）
         }),
       });
 
@@ -2099,7 +2128,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         e.currentTarget.style.setProperty('background-color', '#FFDA2A', 'important');
                         e.currentTarget.style.setProperty('background', '#FFDA2A', 'important');
                       }}
-                      className="w-full px-6 text-gray-900 font-semibold rounded-lg flex flex-row items-center justify-center gap-2 h-10 disabled:opacity-50 disabled:cursor-not-allowed !bg-[#FFDA2A] hover:!bg-[#FFDA2A] active:!bg-[#FFDA2A] focus:!bg-[#FFDA2A]"
+                      className="w-full px-4 text-gray-900 font-semibold rounded-lg flex flex-row items-center justify-center gap-2 h-8 disabled:opacity-50 disabled:cursor-not-allowed !bg-[#FFDA2A] hover:!bg-[#FFDA2A] active:!bg-[#FFDA2A] focus:!bg-[#FFDA2A]"
                     >
                       {isGenerating ? (
                         <>
@@ -2107,16 +2136,16 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             key="loading-spinner"
                             animate={{ rotate: 360 }}
                             transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                            className="w-6 h-6"
+                            className="w-4 h-4"
                           >
-                            <Sparkles className="w-6 h-6 text-gray-900" />
+                            <Sparkles className="w-4 h-4 text-gray-900" />
                           </motion.div>
-                          <span>{formData.inputType === "text" && isSceneMode ? 'Generating story script...' : 'Generating video...'}</span>
+                          <span className="text-xs">{formData.inputType === "text" && isSceneMode ? 'Generating story script...' : 'Generating video...'}</span>
                         </>
                       ) : (
                         <>
-                          <Diamond className="w-7 h-7 text-gray-900" />
-                          <span className="text-sm">
+                          <Diamond className="w-5 h-5 text-gray-900" />
+                          <span className="text-xs">
                             {isGenerating && textToVideoProgress.status !== 'idle' 
                               ? 'Generating...' 
                               : formData.inputType === "text" && isSceneMode 
@@ -2625,7 +2654,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                     >
                       <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                     </motion.div>
-                    <span className="text-white text-lg font-medium">视频制作中，请稍后...</span>
+                    <span className="text-white text-lg font-medium">Video in production, please wait...</span>
                   </div>
                 )}
                 {textToVideoProgress.status === 'completed' && textToVideoProgress.videoUrl && (
@@ -2796,13 +2825,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               answer: "Creating anime-style art is easy with our tool. Start by describing your anime character or scene in the text input box. Be specific about what you want - mention things like 'anime style', 'manga character', or describe typical anime features like big eyes, colorful hair, or dramatic expressions. You can also use our scene generation feature to create multiple anime-style frames. Once you generate your images, you can then turn them into animated videos. The key is being descriptive in your prompts - the more details you give about the anime aesthetic you're going for, the better the results will be."
             },
             {
-              question: "如何制作 text to video 分镜？",
-              answer: "制作 text to video 分镜非常简单。首先，在 Text to Video 模式下输入您的场景描述，然后勾选'分镜'选项。点击'生成分镜'按钮后，系统会自动将您的文本按句子分段，为每个分镜生成对应的预览图片。您可以为每个分镜编辑文案、上传自定义图片，然后分别为每个分镜生成动画视频。这样可以让您更好地控制视频的每个场景，创作出更精细的动画作品。"
-            },
-            {
-              question: "分镜选项是干什么的？",
-              answer: "分镜选项是 Text to Video 模式下的一个功能开关。当您勾选'分镜'选项时，系统会将您的文本描述自动拆分成多个分镜，每个分镜对应一段文本和一张预览图片。这样您可以：1) 预览每个分镜的效果；2) 单独编辑每个分镜的文案和图片；3) 为每个分镜独立生成动画视频。如果不勾选分镜选项，系统会直接将整个文本描述生成一个完整的视频。分镜功能特别适合需要精细控制视频内容的创作者。"
-            }
+
+              Question: "How to create text-to-video storyboards?",
+              
+              Answer: "Creating text-to-video storyboards is very simple. First, enter your scene description in Text to Video mode, then check the 'Storyboard' option. After clicking the 'Generate Storyboard' button, the system will automatically divide your text into sentences and generate a corresponding preview image for each storyboard. You can edit the text and upload custom images for each storyboard, and then generate animated videos for each storyboard. This allows you to better control each scene in the video and create more refined animated works."
+              
+              },
+              
+              {
+              Question: "What is the storyboard option for?",
+              
+              Answer: "The storyboard option is a function switch in Text to Video mode. When you check the 'Storyboard' option, the system will automatically split your text description into multiple storyboards, each storyboard corresponding to a text and a preview image. This allows you to: 1) Preview the effect of each storyboard; 2) Edit the text and images of each storyboard individually; 3) Generates an independent animated video for each storyboard shot. If the storyboard option is not selected, the system will directly generate a complete video from the entire text description. The storyboard function is particularly suitable for creators who need precise control over the video content."
+              
+              }
           ].map((faq, index) => (
             <motion.div
               key={index}

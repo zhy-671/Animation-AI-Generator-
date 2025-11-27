@@ -4,7 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 /**
  * POST /api/storyboard/generate-content
  * 生成故事内容（纯文本剧本）
+ * 
+ * 注意：此接口需要较长时间来生成 2000-3000 字的故事内容
+ * 设置最大执行时间为 300 秒（5 分钟）
  */
+export const maxDuration = 300; // 5 分钟
+
 export async function POST(request: NextRequest) {
   try {
     // 打印 API 调用开始
@@ -163,18 +168,20 @@ export async function POST(request: NextRequest) {
     // }
     // ========== 原来的 DashScope API 调用结束 ==========
 
-    // ========== 新的豆包 API 调用 ==========
-    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
-    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+    // ========== 使用 Laozhang API 调用 GPT-5 ==========
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
+        { error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
 
     // 构建系统提示词
-    const systemPrompt = `You are a professional fiction author specializing in long, immersive, character-driven stories for an international audience.
+    const systemPrompt = `LANGUAGE REQUIREMENT (CRITICAL): All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated story.
+
+You are a professional fiction author specializing in long, immersive, character-driven stories for an international audience.
 
 Your task:
 
@@ -182,7 +189,7 @@ Based on the user's input sentence, idea, or theme, automatically determine the 
 
 Requirements:
 
-- Story length: 3,000–5,000 words.
+- Story length: 2,000–3,000 words.
 
 - Automatically choose story style based on user input: it could be contemporary realistic fiction, romance, thriller, sci-fi, fantasy, or any appropriate genre.
 
@@ -210,7 +217,9 @@ Requirements:
 
 - Ensure the story is relatable, emotionally engaging, and reflective of personal growth, life balance, or societal themes.
 
-- Output ONLY the story text.
+- Output ONLY the story text in English.
+
+**LANGUAGE REQUIREMENT**: The entire story must be written in English. Do not include any Chinese characters, translations, or non-English text in the output.
 
 Example user input: "A woman struggling to balance career, family, and personal dreams in a bustling city."
 
@@ -218,11 +227,13 @@ The output should be a long, immersive story, automatically choosing a fitting t
 
     const userPrompt = `User input: "${prompt.trim()}"
 
-Please write a fully developed, polished, long-form story (3,000–5,000 words) based on the above input. Automatically determine the most appropriate story style, tone, and genre. **IMPORTANT: Use Western/international settings and Western character names only. Avoid Asian settings and names.** Use natural and believable Western character names (e.g., Emily, Michael, Sarah, James). Include detailed daily life scenes in Western/international settings, rich sensory descriptions, deep exploration of characters' emotions and motivations, and complex interpersonal relationships. The narrative must have a clear arc with beginning, development, climax, and resolution. Use "show, don't tell" throughout. Output ONLY the story text with no lists, headings, or meta commentary.`;
+Please write a fully developed, polished, long-form story (2,000–3,000 words) based on the above input. Automatically determine the most appropriate story style, tone, and genre. **IMPORTANT: Use Western/international settings and Western character names only. Avoid Asian settings and names.** Use natural and believable Western character names (e.g., Emily, Michael, Sarah, James). Include detailed daily life scenes in Western/international settings, rich sensory descriptions, deep exploration of characters' emotions and motivations, and complex interpersonal relationships. The narrative must have a clear arc with beginning, development, climax, and resolution. Use "show, don't tell" throughout. Output ONLY the story text with no lists, headings, or meta commentary.
 
-    // 构建请求参数（使用 doubao API 格式）
+**CRITICAL LANGUAGE REQUIREMENT**: The entire story must be written in English only. Do not include any Chinese characters, translations, or non-English text anywhere in the output.`;
+
+    // 构建请求参数（使用 OpenAI 兼容格式）
     const requestBody = {
-      model: "doubao-seed-1-6-251015",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -234,88 +245,132 @@ Please write a fully developed, polished, long-form story (3,000–5,000 words) 
         },
       ],
       temperature: 0.7,
-      max_tokens: 12000, // 支持长故事生成（3000-5000字）
+      max_tokens: 12000, // 支持长故事生成（2000-3000字）
     };
 
-    // 调用 doubao Chat Completions API
-    const response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-      }
-    );
+    // 设置超时时间（240秒，4分钟，给 GPT-5 足够时间生成 2000-3000 字的故事）
+    // 注意：maxDuration 设置为 300 秒，所以这里设置为 240 秒，留出一些缓冲时间
+    const TIMEOUT_MS = 240000; // 240秒（4分钟）
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, TIMEOUT_MS);
+    
+    console.log(`[generate-content] Starting story generation with timeout: ${TIMEOUT_MS / 1000}s`);
 
-    if (!response.ok) {
-      let errorText = "";
-      try {
-        errorText = await response.text();
-      } catch (e) {
-        errorText = `HTTP ${response.status} ${response.statusText}`;
-      }
-      return NextResponse.json(
-        {
-          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
-        },
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    }
-
-    let data;
+    const startTime = Date.now();
     try {
-      data = await response.json();
-    } catch (parseError) {
-      return NextResponse.json(
+      console.log(`[generate-content] Calling Laozhang API with model: ${requestBody.model}`);
+      // 调用 Laozhang Chat Completions API (GPT-5)
+      const response = await fetch(
+        "https://api.laozhang.ai/v1/chat/completions",
         {
-          error: "Invalid response from AI service. Please try again.",
-        },
-        {
-          status: 500,
+          method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
           },
+          body: JSON.stringify(requestBody),
+          signal: controller.signal,
         }
       );
+
+      const elapsedTime = Date.now() - startTime;
+      console.log(`[generate-content] Laozhang API response received in ${elapsedTime}ms`);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        let errorText = "";
+        try {
+          errorText = await response.text();
+        } catch (e) {
+          errorText = `HTTP ${response.status} ${response.statusText}`;
+        }
+        return NextResponse.json(
+          {
+            error: `Laozhang API error: ${response.status}. ${errorText.substring(0, 200)}`,
+          },
+          {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (parseError) {
+        return NextResponse.json(
+          {
+            error: "Invalid response from AI service. Please try again.",
+          },
+          {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+
+      // 提取返回内容（Laozhang API 返回格式与 OpenAI 兼容）
+      const content = data.choices?.[0]?.message?.content || "";
+
+      if (!content) {
+        return NextResponse.json(
+          { error: "No content in Laozhang API response" },
+          { status: 500 }
+        );
+      }
+      // ========== Laozhang API 调用结束 ==========
+
+      // 提取标题（第一行或前50个字符）
+      const lines = content.split('\n');
+      let title = lines[0] || "AI Generated Script";
+      if (title.length > 50) {
+        title = title.substring(0, 50) + "...";
+      }
+      // 移除标题中的#号
+      title = title.replace(/^#+\s*/, '').trim();
+
+      // 打印最终返回给客户端的数据（服务器端日志）
+      const finalResponse = {
+        success: true,
+        data: {
+          title: title,
+          content: content,
+        },
+      };
+      return NextResponse.json(finalResponse);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      // 检查是否是超时错误
+      if (error instanceof Error && error.name === 'AbortError') {
+        const elapsedTime = Date.now() - startTime;
+        console.error(`[generate-content] Request timeout after ${elapsedTime}ms (${TIMEOUT_MS / 1000}s limit)`);
+        return NextResponse.json(
+          {
+            error: `Request timeout after ${TIMEOUT_MS / 1000} seconds. The story generation is taking longer than expected. This may be due to GPT-5 model processing time. Please try again or use a shorter prompt.`,
+          },
+          {
+            status: 504, // Gateway Timeout
+            headers: {
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+      
+      // 记录其他错误
+      console.error(`[generate-content] Error during API call:`, error instanceof Error ? error.message : String(error));
+      
+      // 其他错误继续抛出，由外层 catch 处理
+      throw error;
     }
-
-    // 提取返回内容（doubao API 返回格式与 OpenAI 兼容）
-    const content = data.choices?.[0]?.message?.content || "";
-
-    if (!content) {
-      return NextResponse.json(
-        { error: "No content in Doubao API response" },
-        { status: 500 }
-      );
-    }
-    // ========== 新的豆包 API 调用结束 ==========
-
-    // 提取标题（第一行或前50个字符）
-    const lines = content.split('\n');
-    let title = lines[0] || "AI生成的剧本";
-    if (title.length > 50) {
-      title = title.substring(0, 50) + "...";
-    }
-    // 移除标题中的#号
-    title = title.replace(/^#+\s*/, '').trim();
-
-    // 打印最终返回给客户端的数据（服务器端日志）
-    const finalResponse = {
-      success: true,
-      data: {
-        title: title,
-        content: content,
-      },
-    };
-    return NextResponse.json(finalResponse);
   } catch (error) {
     return NextResponse.json(
       {

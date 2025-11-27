@@ -36,24 +36,41 @@ export async function POST(request: NextRequest) {
       imageUrl, // 可以是 URL 或本地文件路径（文生视频时可选）
       size = "1280x704", // 默认分辨率 1280×704
       seconds = 10, // 默认 10 秒
-      model = "sora_video2-landscape" // 默认模型
+      model, // 模型名称（可选，如果不提供则根据 size 自动选择）
+      aspectRatio // 宽高比（如 "9:16" 或 "16:9"），用于自动选择模型
     } = body;
 
     // 判断是文生视频还是图生视频
     const isTextToVideo = !imageUrl;
 
-    // 打印创建视频的参数日志
-    console.log("========== sora_video2 创建视频参数日志 ==========");
-    console.log("请求参数:", {
-      prompt,
-      imageUrl,
-      size,
-      seconds,
-      model,
-      isTextToVideo,
-    });
-    console.log("完整请求体:", JSON.stringify(body, null, 2));
-    console.log("=============================================================");
+    // 如果没有指定模型，根据 size 或 aspectRatio 自动选择
+    let selectedModel = model;
+    if (!selectedModel) {
+      // 解析 size 或 aspectRatio 来判断是竖屏还是横屏
+      let isPortrait = false;
+      
+      if (aspectRatio) {
+        // 如果提供了 aspectRatio，直接判断
+        isPortrait = aspectRatio === "9:16" || aspectRatio.startsWith("9:");
+      } else if (size) {
+        // 从 size 中解析（格式如 "576x1024" 或 "1280x704"）
+        const sizeMatch = size.match(/(\d+)x(\d+)/);
+        if (sizeMatch) {
+          const width = parseInt(sizeMatch[1]);
+          const height = parseInt(sizeMatch[2]);
+          // 如果高度大于宽度，则是竖屏
+          isPortrait = height > width;
+        }
+      }
+      
+      // 根据竖屏/横屏和时长选择模型
+      if (isPortrait) {
+        selectedModel = seconds === 15 ? "sora_video2-15s" : "sora_video2";
+      } else {
+        selectedModel = seconds === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
+      }
+    }
+
 
     if (!prompt) {
       return NextResponse.json(
@@ -71,7 +88,6 @@ export async function POST(request: NextRequest) {
         // 直接使用本地文件路径
         tempImagePath = imageUrl;
         isTempFile = false; // 不是临时文件，不需要清理
-        console.log("使用本地文件路径:", tempImagePath);
       } else {
         // 下载图片到临时目录
         const tempDir = path.join(process.cwd(), "tmp");
@@ -100,9 +116,11 @@ export async function POST(request: NextRequest) {
           }
 
           // 将图片保存到临时文件
+          if (!tempImagePath) {
+            throw new Error('Temporary image path is not set');
+          }
           const fileStream = fs.createWriteStream(tempImagePath);
           await streamPipeline(imageResponse.body as any, fileStream);
-          console.log("图片已下载到临时文件:", tempImagePath);
         } catch (downloadError) {
           // 清理临时文件
           if (tempImagePath && fs.existsSync(tempImagePath)) {
@@ -113,22 +131,29 @@ export async function POST(request: NextRequest) {
       }
 
       // 验证文件是否存在
-      if (!fs.existsSync(tempImagePath)) {
-        throw new Error(`Image file not found: ${tempImagePath}`);
+      if (!tempImagePath) {
+        throw new Error('Image path is not set');
+      }
+      // 使用类型断言，因为我们已经检查过 tempImagePath 不为 null
+      const imagePath: string = tempImagePath;
+      if (!fs.existsSync(imagePath)) {
+        throw new Error(`Image file not found: ${imagePath}`);
       }
     }
 
     // 使用本地图片文件上传创建视频任务（文生视频时不传图片）
     const formData = new FormData();
-    formData.append("model", model); // 使用传入的模型名称
+    formData.append("model", selectedModel); // 使用自动选择或传入的模型名称
     formData.append("prompt", prompt); // 严格使用传入的 prompt（视频描述）
     formData.append("size", size); // 分辨率（如 1280x704 或 576x1024）
     formData.append("seconds", String(seconds)); // 时长（10 或 15 秒）
     
     // 只有图生视频时才添加图片
     if (!isTextToVideo && tempImagePath) {
-      formData.append("input_reference", fs.createReadStream(tempImagePath), {
-        filename: path.basename(tempImagePath),
+      // tempImagePath 已经在上面的检查中确认为非 null
+      const imagePath: string = tempImagePath;
+      formData.append("input_reference", fs.createReadStream(imagePath), {
+        filename: path.basename(imagePath),
         contentType: "image/png",
       });
     }
@@ -137,7 +162,7 @@ export async function POST(request: NextRequest) {
     console.log("========== 发送到 API 的参数 ==========");
     console.log("API URL:", `${LAOZHANG_API_BASE}/videos`);
     console.log("FormData 参数:", {
-      model: model,
+      model: selectedModel,
       prompt,
       input_reference: isTextToVideo ? "[not provided - text-to-video]" : `[file: ${tempImagePath}]`,
       size,
@@ -167,7 +192,7 @@ export async function POST(request: NextRequest) {
         "Authorization": `Bearer ${LAOZHANG_API_KEY}`,
         ...formData.getHeaders(), // 添加 Content-Type 和 boundary
       },
-      body: formDataBuffer,
+      body: formDataBuffer as any, // Buffer 可以用于 fetch body
     });
 
     // 清理临时图片文件（仅当是临时文件时）
@@ -181,10 +206,20 @@ export async function POST(request: NextRequest) {
 
     if (!createResponse.ok) {
       const errorText = await createResponse.text().catch(() => "Unknown error");
+      console.error("API 错误响应:", errorText);
       throw new Error(`API error: ${createResponse.status} ${errorText}`);
     }
 
-    const result = await createResponse.json();
+    // 尝试解析 JSON 响应
+    let result;
+    try {
+      const responseText = await createResponse.text();
+      console.log("API 响应文本:", responseText);
+      result = JSON.parse(responseText);
+    } catch (jsonError) {
+      console.error("JSON 解析错误:", jsonError);
+      throw new Error(`Failed to parse API response as JSON. Response status: ${createResponse.status}`);
+    }
 
     // 打印 API 响应结果
     console.log("========== API 响应结果 ==========");

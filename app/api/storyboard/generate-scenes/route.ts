@@ -54,12 +54,12 @@ export async function POST(request: NextRequest) {
     //   );
     // }
 
-    // ========== 新的豆包 API 调用 ==========
-    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
-    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+    // ========== 使用 Laozhang API 调用 ==========
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
+        { success: false, error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
@@ -264,7 +264,9 @@ ${storyScript.content || ""}
 
 IMPORTANT: You must generate exactly ${sortedChapters.length} scenes, one for each chapter. The scene number in the "scene" field must match the chapter number (e.g., "1: Chapter Title" for Chapter 1, "2: Chapter Title" for Chapter 2, etc.).
 
-Please generate animation-ready scene JSONs for each chapter. Focus only on environments, props, buildings, weather, lighting, and atmosphere. Do NOT include characters, dialogues, or actions. Each chapter should correspond to exactly one scene.`;
+Please generate animation-ready scene JSONs for each chapter. Focus only on environments, props, buildings, weather, lighting, and atmosphere. Do NOT include characters, dialogues, or actions. Each chapter should correspond to exactly one scene.
+
+**CRITICAL LANGUAGE REQUIREMENT**: All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated JSON. All field values (scene titles, descriptions, locations, etc.) must be in English.`;
 
     // 打印传递给AI的提示词长度
     // ========== 原来的 DashScope API 调用（已注释） ==========
@@ -308,10 +310,10 @@ Please generate animation-ready scene JSONs for each chapter. Focus only on envi
     // const data = await response.json();
     // const rawContent = data.choices?.[0]?.message?.content || "";
 
-    // ========== 新的豆包 API 调用 ==========
-    // 构建请求参数（使用 doubao API 格式）
+    // ========== 使用 Laozhang API 调用 ==========
+    // 构建请求参数（使用 OpenAI 兼容格式）
     const requestBody = {
-      model: "doubao-seed-1-6-251015",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -326,9 +328,9 @@ Please generate animation-ready scene JSONs for each chapter. Focus only on envi
       max_tokens: 8000,
     };
 
-    // 调用 doubao Chat Completions API
+    // 调用 Laozhang Chat Completions API
     const response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -352,7 +354,7 @@ Please generate animation-ready scene JSONs for each chapter. Focus only on envi
         return NextResponse.json(
           {
             success: false,
-            error: "API key authentication failed. Please check your VOLCANO_API_KEY or ARK_API_KEY environment variable.",
+            error: "API key authentication failed. Please check your LAOZHANG_API_KEY_STORY environment variable.",
             details: errorText,
           },
           { status: 401 }
@@ -362,7 +364,7 @@ Please generate animation-ready scene JSONs for each chapter. Focus only on envi
       return NextResponse.json(
         {
           success: false,
-          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
+            error: `Laozhang API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
         {
           status: 500,
@@ -391,7 +393,7 @@ Please generate animation-ready scene JSONs for each chapter. Focus only on envi
       );
     }
 
-    // 提取返回内容（doubao API 返回格式与 OpenAI 兼容）
+    // 提取返回内容（Laozhang API 返回格式与 OpenAI 兼容）
     const rawContent = data.choices?.[0]?.message?.content || "";
 
     if (!rawContent) {

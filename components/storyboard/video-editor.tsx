@@ -1040,10 +1040,7 @@ export default function VideoEditor() {
       }
       
       // 使用Sora API生成视频
-      // 根据分辨率选择模型
-      const selectedModel = videoDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
-      
-      // 根据分辨率设置size
+      // 根据分辨率设置size（API 会根据 size 自动选择正确的模型）
       const resolutionMap: Record<string, string> = {
         "480P": "1280x704",
         "720P": "1280x704",
@@ -1070,7 +1067,7 @@ export default function VideoEditor() {
           imageUrl: imageUrl,
           size: size,
           seconds: videoDuration,
-          model: selectedModel,
+          // 不传递 model，让 API 根据 size 自动选择（竖屏用 sora_video2，横屏用 sora_video2-landscape）
         }),
       });
       

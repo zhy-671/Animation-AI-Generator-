@@ -21,6 +21,7 @@ import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
 import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
 import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import { trackViewContent } from "@/lib/tiktok-pixel";
 
 interface ProjectCreateFormProps {
   projectId: string;
@@ -131,6 +132,9 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
   // 故事大纲文本框的 ref，用于自动调整高度
   const storyOutlineTextareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // 使用 useRef 来跟踪 ViewContent 事件是否已发送
+  const viewContentSentRef = React.useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (projectId) {
       loadProject();
@@ -138,6 +142,16 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
       checkCharactersCompleteStatus(projectId);
       // 页面加载时只查询一次项目步骤完成状态
       loadProjectStepStatus(projectId);
+      
+      // 发送 TikTok Pixel ViewContent 事件（每个 projectId 只发送一次）
+      if (!viewContentSentRef.current.has(projectId)) {
+        trackViewContent({
+          content_type: 'storyboard_settings',
+          content_name: 'Storyboard Project Settings',
+          content_id: projectId,
+        });
+        viewContentSentRef.current.add(projectId);
+      }
     }
   }, [projectId]);
 
@@ -375,9 +389,9 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         // 如果是 401 Unauthorized，可能是会话过期，需要重新登录
         if (response.status === 401) {
           showError("Your session has expired. Please refresh the page or log in again.");
-          // 可以选择重定向到登录页面或刷新页面
+          // 重定向到登录页面
           setTimeout(() => {
-            window.location.href = "/";
+            router.push("/login");
           }, 2000);
           return;
         }
@@ -1725,6 +1739,7 @@ export default function ProjectCreateForm({ projectId }: ProjectCreateFormProps)
         initialImageUrl={initialImageUrl}
         visualStyle={formData.visualStyle}
         artSetting={formData.artSetting}
+        projectId={projectId}
         onSave={async (updatedDetail) => {
           try {
             // 检查是否有图片

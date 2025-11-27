@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/storyboard/generate-script-doubao
- * 使用 doubao-seed-1-6-251015 模型生成剧本
+ * 使用 gpt-4o-mini 模型生成剧本（通过 Laozhang API）
  */
 export async function POST(request: NextRequest) {
   try {
@@ -27,17 +27,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
-    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
+        { error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
 
     // 构建系统提示词
-    const systemPrompt = `You are a professional fiction author specializing in long, immersive, character-driven stories for an international audience.
+    const systemPrompt = `LANGUAGE REQUIREMENT (CRITICAL): All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated story.
+
+You are a professional fiction author specializing in long, immersive, character-driven stories for an international audience.
 
 Your task:
 
@@ -73,7 +75,9 @@ Requirements:
 
 - Ensure the story is relatable, emotionally engaging, and reflective of personal growth, life balance, or societal themes.
 
-- Output ONLY the story text.
+- Output ONLY the story text in English.
+
+**LANGUAGE REQUIREMENT**: The entire story must be written in English. Do not include any Chinese characters, translations, or non-English text in the output.
 
 Example user input: "A woman struggling to balance career, family, and personal dreams in a bustling city."
 
@@ -81,11 +85,13 @@ The output should be a long, immersive story, automatically choosing a fitting t
 
     const userPrompt = `User input: "${prompt.trim()}"
 
-Please write a fully developed, polished, long-form story (3,000–5,000 words) based on the above input. Automatically determine the most appropriate story style, tone, and genre. **IMPORTANT: Use Western/international settings and Western character names only. Avoid Asian settings and names.** Use natural and believable Western character names (e.g., Emily, Michael, Sarah, James). Include detailed daily life scenes in Western/international settings, rich sensory descriptions, deep exploration of characters' emotions and motivations, and complex interpersonal relationships. The narrative must have a clear arc with beginning, development, climax, and resolution. Use "show, don't tell" throughout. Output ONLY the story text with no lists, headings, or meta commentary.`;
+Please write a fully developed, polished, long-form story (3,000–5,000 words) based on the above input. Automatically determine the most appropriate story style, tone, and genre. **IMPORTANT: Use Western/international settings and Western character names only. Avoid Asian settings and names.** Use natural and believable Western character names (e.g., Emily, Michael, Sarah, James). Include detailed daily life scenes in Western/international settings, rich sensory descriptions, deep exploration of characters' emotions and motivations, and complex interpersonal relationships. The narrative must have a clear arc with beginning, development, climax, and resolution. Use "show, don't tell" throughout. Output ONLY the story text with no lists, headings, or meta commentary.
 
-    // 构建请求参数（使用 doubao API 格式）
+**CRITICAL LANGUAGE REQUIREMENT**: The entire story must be written in English only. Do not include any Chinese characters, translations, or non-English text anywhere in the output.`;
+
+    // 构建请求参数（使用 OpenAI 兼容格式）
     const requestBody = {
-      model: "doubao-seed-1-6-251015",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -100,9 +106,9 @@ Please write a fully developed, polished, long-form story (3,000–5,000 words) 
       max_tokens: 12000, // 支持长故事生成（3000-5000字）
     };
 
-    // 调用 doubao Chat Completions API
+    // 调用 Laozhang Chat Completions API
     const response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -122,7 +128,7 @@ Please write a fully developed, polished, long-form story (3,000–5,000 words) 
       }
       return NextResponse.json(
         {
-          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
+            error: `Laozhang API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
         {
           status: 500,
@@ -150,19 +156,19 @@ Please write a fully developed, polished, long-form story (3,000–5,000 words) 
       );
     }
 
-    // 提取返回内容（doubao API 返回格式与 OpenAI 兼容）
+      // 提取返回内容（Laozhang API 返回格式与 OpenAI 兼容）
     const content = data.choices?.[0]?.message?.content || "";
 
     if (!content) {
       return NextResponse.json(
-        { error: "No content in Doubao API response" },
+        { error: "No content in Laozhang API response" },
         { status: 500 }
       );
     }
 
     // 提取标题（第一行或前50个字符）
     const lines = content.split('\n');
-    let title = lines[0] || "AI生成的剧本";
+    let title = lines[0] || "AI Generated Script";
     if (title.length > 50) {
       title = title.substring(0, 50) + "...";
     }

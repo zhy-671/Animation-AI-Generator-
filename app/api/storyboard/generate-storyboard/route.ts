@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
     // 6. 不再需要构建环境信息和详细角色信息，新格式只需要角色名称列表
 
     // 9. Build AI prompt (new instruction)
-    const systemPrompt = `LANGUAGE REQUIREMENT: Respond only in English.
+    const systemPrompt = `LANGUAGE REQUIREMENT (CRITICAL): All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated content. All field values (scene titles, descriptions, dialogue, image descriptions, video descriptions, etc.) must be in English.
 
 You are a professional cinematic storyboard director specializing in animation, continuous character motion, emotional consistency, scene continuity, and automatic costume inference.
 
@@ -269,19 +269,19 @@ Input:
     // // 兼容模式端点返回格式: choices[0].message.content
     // const content = aiResult.choices?.[0]?.message?.content || "";
 
-    // ========== 新的豆包 API 调用 ==========
-    // 使用火山引擎 API Key（支持 VOLCANO_API_KEY 或 ARK_API_KEY）
-    const apiKey = process.env.VOLCANO_API_KEY || process.env.ARK_API_KEY;
+    // ========== 使用 Laozhang API 调用 ==========
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "VOLCANO_API_KEY or ARK_API_KEY is not configured" },
+        { success: false, error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
 
-    // 构建请求参数（使用 doubao API 格式）
+    // 构建请求参数（使用 OpenAI 兼容格式）
     const requestBody = {
-      model: "doubao-seed-1-6-251015",
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
@@ -296,9 +296,9 @@ Input:
       max_tokens: 8000, // 单个场景的分镜生成
     };
 
-    // 调用 doubao Chat Completions API
+    // 调用 Laozhang Chat Completions API
     const response = await fetch(
-      "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -322,7 +322,7 @@ Input:
         return NextResponse.json(
           {
             success: false,
-            error: "API key authentication failed. Please check your VOLCANO_API_KEY or ARK_API_KEY environment variable.",
+            error: "API key authentication failed. Please check your LAOZHANG_API_KEY_STORY environment variable.",
             details: errorText,
           },
           { status: 401 }
@@ -332,7 +332,7 @@ Input:
       return NextResponse.json(
         {
           success: false,
-          error: `Doubao API error: ${response.status}. ${errorText.substring(0, 200)}`,
+            error: `Laozhang API error: ${response.status}. ${errorText.substring(0, 200)}`,
         },
         {
           status: 500,

@@ -61,6 +61,7 @@ interface CharacterEditModalProps {
   initialImageUrl?: string | null; // 初始图片URL
   visualStyle?: string; // 画面风格
   artSetting?: string; // 美术设定（比例）
+  projectId?: string; // 项目ID，用于API获取项目设置
 }
 
 export default function CharacterEditModal({
@@ -74,12 +75,14 @@ export default function CharacterEditModal({
   initialImageUrl = null,
   visualStyle = "2d",
   artSetting = "16:9",
+  projectId,
 }: CharacterEditModalProps) {
-  const { showError } = useToast();
+  const { showError, showInfo } = useToast();
   const [formData, setFormData] = useState<CharacterDetail | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]); // 生成的4张图片
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [isPolling, setIsPolling] = useState(false);
@@ -149,67 +152,80 @@ export default function CharacterEditModal({
       return;
     }
     
-    // 构建图片生成提示词并保存到角色数据中
-    const imageGenerationPrompt = buildImagePrompt(formData);
-    // 检查是否选择了图片（包括已上传的图片或选择了生成的图片）
-    // imageUrl: 已上传的图片URL
-    // selectedImageIndex: 用户选择了生成的图片（但可能还没上传完成）
-    const hasSelectedImage = imageUrl || (selectedImageIndex !== null && generatedImages.length > 0);
+    // 显示保存中的提示
+    setIsSaving(true);
+    showInfo("Saving...");
     
-    if (!hasSelectedImage) {
-      showError("Please create a character image before saving. Generate or upload an image first.");
-      return; // 阻止保存，要求用户先创建图片
-    }
-
-    // 如果用户选择了生成的图片但还没上传，先上传
-    // 优先使用用户最新选择的图片（selectedImageIndex），而不是旧的 imageUrl
-    let finalImageUrl = imageUrl;
-    // 如果用户选择了生成的图片，优先使用选择的图片（即使 imageUrl 不为空，也要使用新选择的）
-    if (selectedImageIndex !== null && generatedImages.length > 0) {
-      try {
-        const selectedImageUrl = generatedImages[selectedImageIndex];
-        // 如果 imageUrl 为空或者是旧的图片，需要上传新选择的图片
-        if (!imageUrl || imageUrl !== selectedImageUrl) {
-          const uploadedUrl = await onImageUploadFromUrl(selectedImageUrl);
-          if (uploadedUrl) {
-            finalImageUrl = uploadedUrl;
-            setImageUrl(uploadedUrl);
-          } else {
-            // 如果上传失败，使用生成的图片URL（可能是临时URL）
-            finalImageUrl = selectedImageUrl;
-            // 也更新 imageUrl 状态，以便后续显示
-            setImageUrl(selectedImageUrl);
-          }
-        } else {
-          // imageUrl 已经是选中的图片，直接使用
-          finalImageUrl = imageUrl;
-        }
-      } catch (error) {
-        // 如果上传失败，使用生成的图片URL（至少可以显示）
-        if (selectedImageIndex !== null && generatedImages.length > 0) {
-          finalImageUrl = generatedImages[selectedImageIndex];
-          setImageUrl(finalImageUrl);
-          // 不阻止保存，至少图片可以显示
-        } else {
-          // 如果没有选择的图片，才阻止保存
-          alert('Image upload failed. Please try again');
-          return;
-        }
+    try {
+      // 构建图片生成提示词并保存到角色数据中
+      const imageGenerationPrompt = buildImagePrompt(formData);
+      // 检查是否选择了图片（包括已上传的图片或选择了生成的图片）
+      // imageUrl: 已上传的图片URL
+      // selectedImageIndex: 用户选择了生成的图片（但可能还没上传完成）
+      const hasSelectedImage = imageUrl || (selectedImageIndex !== null && generatedImages.length > 0);
+      
+      if (!hasSelectedImage) {
+        showError("Please create a character image before saving. Generate or upload an image first.");
+        setIsSaving(false);
+        return; // 阻止保存，要求用户先创建图片
       }
-    } else if (!imageUrl) {
-      // 如果没有选择图片且 imageUrl 为空，阻止保存
-      alert('Please select or generate an image before saving');
-      return;
+
+      // 如果用户选择了生成的图片但还没上传，先上传
+      // 优先使用用户最新选择的图片（selectedImageIndex），而不是旧的 imageUrl
+      let finalImageUrl = imageUrl;
+      // 如果用户选择了生成的图片，优先使用选择的图片（即使 imageUrl 不为空，也要使用新选择的）
+      if (selectedImageIndex !== null && generatedImages.length > 0) {
+        try {
+          const selectedImageUrl = generatedImages[selectedImageIndex];
+          // 如果 imageUrl 为空或者是旧的图片，需要上传新选择的图片
+          if (!imageUrl || imageUrl !== selectedImageUrl) {
+            const uploadedUrl = await onImageUploadFromUrl(selectedImageUrl);
+            if (uploadedUrl) {
+              finalImageUrl = uploadedUrl;
+              setImageUrl(uploadedUrl);
+            } else {
+              // 如果上传失败，使用生成的图片URL（可能是临时URL）
+              finalImageUrl = selectedImageUrl;
+              // 也更新 imageUrl 状态，以便后续显示
+              setImageUrl(selectedImageUrl);
+            }
+          } else {
+            // imageUrl 已经是选中的图片，直接使用
+            finalImageUrl = imageUrl;
+          }
+        } catch (error) {
+          // 如果上传失败，使用生成的图片URL（至少可以显示）
+          if (selectedImageIndex !== null && generatedImages.length > 0) {
+            finalImageUrl = generatedImages[selectedImageIndex];
+            setImageUrl(finalImageUrl);
+            // 不阻止保存，至少图片可以显示
+          } else {
+            // 如果没有选择的图片，才阻止保存
+            alert('Image upload failed. Please try again');
+            setIsSaving(false);
+            return;
+          }
+        }
+      } else if (!imageUrl) {
+        // 如果没有选择图片且 imageUrl 为空，阻止保存
+        alert('Please select or generate an image before saving');
+        setIsSaving(false);
+        return;
+      }
+      // 保存时，将当前选中的图片URL和图片生成提示词一起保存
+      const dataToSave = {
+        ...formData,
+        imageUrl: finalImageUrl || null, // 将图片URL添加到保存的数据中
+        imageGenerationPrompt: imageGenerationPrompt, // 保存图片生成提示词
+      };
+      // 调用父组件的保存回调（这可能是异步的）
+      await onSave(dataToSave);
+      onClose();
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "Failed to save character");
+    } finally {
+      setIsSaving(false);
     }
-    // 保存时，将当前选中的图片URL和图片生成提示词一起保存
-    const dataToSave = {
-      ...formData,
-      imageUrl: finalImageUrl || null, // 将图片URL添加到保存的数据中
-      imageGenerationPrompt: imageGenerationPrompt, // 保存图片生成提示词
-    };
-    // 调用父组件的保存回调
-    onSave(dataToSave);
-    onClose();
   };
 
   const handleImageUpload = async (file: File) => {
@@ -242,13 +258,11 @@ export default function CharacterEditModal({
     const parts: string[] = [];
     
     // 角色基本信息：名称、年龄、性别
-    if (character.name && character.name.trim) {
+    if (character.name && character.name.trim()) {
       const name = String(character.name).trim();
       if (name) {
         parts.push(name);
-      } else {
       }
-    } else {
     }
     
     // 添加年龄和性别信息（如果有）
@@ -380,13 +394,16 @@ export default function CharacterEditModal({
       const prompt = buildImagePrompt(formData);
       
       // 打印提交的参数
-      // 提交生成任务
+      // 提交生成任务，传递 project_id 以便 API 获取项目设置（风格和宽高比）
       const response = await fetch('/api/scenes/generate-image', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ 
+          prompt,
+          project_id: projectId, // 传递项目ID，让API获取项目的风格和宽高比设置
+        }),
       });
 
       if (!response.ok) {
@@ -534,13 +551,20 @@ export default function CharacterEditModal({
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+              <motion.div whileHover={!isSaving ? { scale: 1.05 } : {}} whileTap={!isSaving ? { scale: 0.95 } : {}}>
                 <Button
                   onClick={handleSave}
-                  disabled={!formData}
-                  className="bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold h-11 px-8 shadow-lg shadow-[#FFDA2A]/30 text-base"
+                  disabled={!formData || isSaving}
+                  className="bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold h-11 px-8 shadow-lg shadow-[#FFDA2A]/30 text-base disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save
+                  {isSaving ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </span>
+                  ) : (
+                    "Save"
+                  )}
                 </Button>
               </motion.div>
               <button

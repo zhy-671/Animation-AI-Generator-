@@ -30,10 +30,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.DASHSCOPE_API_KEY;
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+        { success: false, error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
@@ -118,38 +119,47 @@ REQUIREMENTS:
 - Character names must be Western/international.
 - Ensure **appearance, clothing, personality, background, relationships, special traits combined do not exceed 700 characters** per character.
 - visual_reference_prompt must preserve all essential visual and posture details for AI image generation.
-- JSON must be valid and parsable.`;
+- JSON must be valid and parsable.
+
+**LANGUAGE REQUIREMENT (CRITICAL)**:
+- All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated content.
+- All field values (title, theme, summary, chapter titles, character names, descriptions, etc.) must be in English.
+- Do not translate or include any Chinese text in the output.`;
 
     const userPrompt = `STORY:
 
 ${story_text.trim()}
 
-Please generate the complete story outline and detailed character information according to the instructions above.`;
+Please generate the complete story outline and detailed character information according to the instructions above.
 
-    // 调用 DashScope Chat Completions API
+**IMPORTANT**: All output must be in English only. Do not include any Chinese characters or translations in the generated content.`;
+
+    // 调用 Laozhang Chat Completions API
+    const requestBody = {
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000,
+    };
+
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: "qwen-plus",
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
@@ -158,7 +168,7 @@ Please generate the complete story outline and detailed character information ac
       return NextResponse.json(
         {
           success: false,
-          error: `DashScope API error: ${response.status} - ${errorText}`,
+          error: `Laozhang API error: ${response.status} - ${errorText}`,
         },
         { status: response.status }
       );
