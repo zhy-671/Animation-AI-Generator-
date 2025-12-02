@@ -91,6 +91,20 @@ class TOSClient {
   }
 
   /**
+   * 上传音频到配置的 bucket
+   */
+  async uploadAudio(file: Buffer | ArrayBuffer, filename: string, format: string = 'mp3'): Promise<string> {
+    const key = `audio/${filename}`;
+    // 根据格式确定Content-Type
+    const contentType = format === 'mp3' ? 'audio/mpeg' : 
+                        format === 'wav' ? 'audio/wav' : 
+                        format === 'm4a' ? 'audio/mp4' : 
+                        'audio/mpeg';
+    const bucket = process.env.VOLC_TOS_BUCKET || "storybooks"; // 使用图片bucket或创建新的audio bucket
+    return this.uploadFile(bucket, key, file, contentType);
+  }
+
+  /**
    * 从 URL 下载并上传图片
    */
   async uploadImageFromUrl(imageUrl: string, filename: string): Promise<string> {

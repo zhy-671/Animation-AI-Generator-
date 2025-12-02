@@ -36,7 +36,7 @@ interface ImageTaskStatus {
   message?: string;
 }
 
-class WanXImageClient {
+export class WanXImageClient {
   private apiKey: string;
   private baseUrl: string;
   private image2ImageBaseUrl: string; // 图生图端点

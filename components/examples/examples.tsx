@@ -43,20 +43,36 @@ export default function Examples() {
   }, []);
 
   return (
-    <section id="examples" className="py-24 bg-gray-50 dark:bg-gray-950">
-      <div className="container px-4 md:px-6 max-w-6xl mx-auto">
+    <section id="examples" className="py-32 bg-gradient-to-b from-white via-gray-50 to-white dark:from-gray-900 dark:via-gray-950 dark:to-gray-900 relative overflow-hidden">
+      {/* Background Decoration */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_bottom,_var(--tw-gradient-stops))] from-yellow-100/20 via-transparent to-transparent dark:from-yellow-900/10" />
+      
+      <div className="container px-4 md:px-6 max-w-7xl mx-auto relative z-10">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-          className="text-center space-y-4 mb-16"
+          transition={{ duration: 0.6 }}
+          className="text-center space-y-5 mb-20"
         >
-          <h2 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
-            See It in Action
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            whileInView={{ opacity: 1, scale: 1 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5 }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 mb-4"
+          >
+            <Play className="w-4 h-4" />
+            <span className="text-sm font-semibold">Real Examples</span>
+          </motion.div>
+          <h2 className="text-5xl font-black tracking-tight text-gray-900 dark:text-white sm:text-6xl">
+            See Music Videos{" "}
+            <span className="bg-gradient-to-r from-yellow-600 to-amber-600 bg-clip-text text-transparent">
+              in Action
+            </span>
           </h2>
-          <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            Real animations made by creators like you. Get inspired, then make your own.
+          <p className="text-xl text-gray-600 dark:text-gray-400 max-w-3xl mx-auto leading-relaxed">
+            Real music videos created with VerseMovie. Get inspired by these AI-generated MVs, then create your own professional videos.
           </p>
         </motion.div>
 
@@ -74,9 +90,9 @@ export default function Examples() {
                 viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: index * 0.1 }}
               >
-                <Card className="group hover:shadow-lg transition-all duration-200 border-0 overflow-hidden bg-white dark:bg-gray-900">
+                <Card className="group hover:shadow-2xl transition-all duration-300 border-0 overflow-hidden bg-white dark:bg-gray-900 hover:scale-105">
                   <CardContent className="p-0">
-                    <div className="relative aspect-[9/16] overflow-hidden bg-gray-100 dark:bg-gray-800">
+                    <div className="relative aspect-[9/16] overflow-hidden bg-gray-100 dark:bg-gray-800 group-hover:brightness-110 transition-all duration-300">
                       {failedVideos.has(video.url) ? (
                         <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-800">
                           <div className="text-center p-4">

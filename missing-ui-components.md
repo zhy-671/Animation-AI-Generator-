@@ -1,89 +1,228 @@
-animation ai generator 网站关键词
+Video AI Music 网站 SEO 首页与结构布局分析文档
+1. 项目背景与目标
+产品核心能力
 
-1 animation ai generator from text
-2 animation video ai generator
-3 animation cartoon ai generator
-4 Create professional animations from text prompts using AI
-5 AI Text to Animation Creator - Free, Fast & Online 
-6 
-Ai animation generator
+AI 生成音乐（AI Music Generation）
 
+音乐 → 视频（Music to Video）
 
-Ai cartoon generator
+人物对口型 / 唱歌视频（AI Lip Sync Music Video）
 
+自动分镜 + 视频生成（≤15s 单段）
 
-Text to animation
+SEO 总目标
 
+围绕 video ai music 构建品牌认知
 
-Ai video generator
+通过 功能页 + 长尾词 实现持续自然流量
 
+推动可转化、高价值功能页（Lip Sync / Music Video）
 
-Animaker
+2. 关键词「video ai music」的定位判断
+搜索意图分析（结论）
 
+不是大流量词
 
+是高意图工具搜索词
 
+搜索用户多为：
 
-Generate video
+内容创作者
 
-7  animation ai generator from text
-animation-ai-generator
-animation ai generator free
-animation ai generator from image
-animation ai generator from text free
-animation ai generator from image free
-animation ai generator reddit
-animation ai generator cartoon
-animation ai generator from picture
-animation ai generator app
-animation ai generator from text
-animation-ai-generator
-animation ai video generator
-animation ai video generator from text free
-animation ai picture generator
-animation ai video generator free online
-animation ai photo generator
-animation ai photo generator free
-animation ai voice generator
-animation ai video generator free
+音乐 / 视频制作者
 
-animation ai generator from text
-animation-ai-generator
-animation video ai generator
-animation cartoon ai generator
-animation picture ai generator
-animation image ai generator free
-animation photo ai generator
-animation gif ai generator
-animation video ai generator free
-animation anime ai generator
+已清楚自己要「音乐 + 视频 + AI」
 
-animation ai generator from text
-animation-ai-generator
-2d animation ai generator3d animation ai generator
-3d animation ai generator free
-pixel art animation ai generator
-picture to animation ai generator
-cartoon animation ai generator
-cartoon animation ai generator free
-logo animation ai generator free
+正确定位方式
 
+✅ video ai music = 品牌词 + 行业定义词
 
-相关问题
-Can Al generate animations?
-Can ChatGPT animate?
-Is there a free Al cartoon generator?
-How to animate a picture using Al free?
+错误用法（需避免）
 
-Can CapCut animate photos?
-How to convert picture to animation?
-Can ChatGPT cartoonize a photo?
-Is Al animation free?
-Is Animaker actually free?
-Which Al animation tool is best?
-How to animate a picture using ChatGPT free?
-Is Disney using Al to animate?
-Can l make 3D animation for free?
-Is Al replacing animators?
-What are the 4 types of animation?
+堆砌在标题 / 段落中
 
-根据文件内关键词，并研究市面上竞品的seo，关键词布局 title ,描述, h1,h2 等给出首页，text to video 页面 image to video页面, 分镜页面 faq页面 为每个页面提供一个独特的标题，简洁准确地描述页面的内容；标题长度保持在50-60个字符以内（以免在搜索引擎结果页面中被截断）；将重要关键词放在首位，但要自然，就好像你首先为访客编写标题一样；在标题中使用您的品牌名称，品牌名称是animationaIgenerator ,为每个页面提供一个独特的元描述，清晰地反映页面所传达的价值；谷歌的摘要通常最多约为150-160个字符（包括空格）；包括您最重要的关键词，这样它们在实际的搜索引擎结果页面上就会被突出显示，但要小心避免关键词堆砌，不要让描述只是您正在针对的关键词的组合；可选择地，使用引人注目的号召行动，您提供的独特主张，或者关于期望的额外提示 - 如“学习”，“购买”等构建。
+首页重复出现 10+ 次
+
+多个页面抢同一个词
+
+3. 整站 SEO 结构策略（核心）
+总体原则
+
+首页 = 品牌 + 行业定义
+
+功能页 = 吃真实搜索量
+
+少而精准，而不是全堆在首页
+
+4. 页面结构推荐（核心执行方案）
+4.1 首页 /
+
+定位
+
+品牌入口
+
+定义什么是 video ai music
+
+SEO 策略
+
+用自然语言解释产品能力
+
+只出现 1–2 次「video ai music」
+
+Meta Title
+
+Create Music Videos with AI | Music to Video Generator
+
+Meta Description
+
+Generate original music and turn it into visually synced videos. Create AI-powered music videos with realistic vocal performance and style.
+
+4.2 AI 音乐生成页 /ai-music-generator
+
+主服务
+
+生成歌曲
+
+为视频服务的音乐
+
+关键词覆盖
+
+ai music generator
+
+generate music for video
+
+create original songs with AI
+
+H1
+
+AI Music Generator for Video & Creative Projects
+
+功能重点
+
+多风格
+
+节奏 / 氛围
+
+商用 / 内容创作
+
+4.3 AI 对口型视频页 /ai-lip-sync-video（重点盈利页）
+
+商业价值
+
+高 CPC
+
+强转化
+
+明确需求
+
+关键词覆盖
+
+ai lip sync
+
+singing character video
+
+vocal synced video
+
+music performance video
+
+H1
+
+AI Lip Sync Music Videos — Make Characters Sing
+
+功能说明
+
+音乐驱动嘴型
+
+情绪 / 强度匹配
+
+适合虚拟人物 / IP
+
+4.4 Music to Video 页面 /music-to-video
+
+搜索意图
+
+已有音乐
+
+想要视觉表达
+
+关键词覆盖
+
+music to video ai
+
+turn music into video
+
+ai music video generator
+
+H1
+
+Turn Music into Video with AI
+
+内容重点
+
+节奏可视化
+
+情绪驱动镜头
+
+适配短视频 / MV
+
+4.5 Use Cases 页面 /use-cases（可选）
+
+作用
+
+承接模糊搜索
+
+丰富语义
+
+H1
+
+Create AI Music Videos for Any Use Case
+
+子模块
+
+Music Promotion
+
+TikTok / Shorts
+
+Virtual Singer
+
+Demo Visualization
+
+5. 「video ai music」在页面中的正确用法
+✅ 推荐出现位置
+
+首页 Hero 文案
+
+Footer 品牌说明
+
+About 页面
+
+示例
+
+An all-in-one platform for video AI music creation
+We’re building tools for the future of video AI music.
+
+❌ 避免方式
+
+keyword stuffing
+
+强行拼接：
+
+video ai music generator
+
+video ai music online
+
+best video ai music tool
+
+6. 内容调性要求（避免 AI 味）
+
+不用「revolutionary」「ultimate」「next-gen」
+
+用 具体功能 + 使用场景
+
+写给「正在做视频的人」，而不是写给 Google
+
+7. SEO + 商业协同总结（一句话）
+
+用 video ai music 建立品牌认知
+用 Lip Sync / Music to Video 赚流量和钱
+用 功能页结构 让 Google 长期给曝光

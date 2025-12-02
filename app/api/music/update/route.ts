@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 /**
  * POST /api/music/update
- * 更新用户生成的音乐
+ * 更新音乐信息（歌词、音频URL等）
  */
 export async function POST(request: NextRequest) {
   try {
@@ -21,18 +21,10 @@ export async function POST(request: NextRequest) {
     const { 
       id,
       title,
-      prompt,
-      genre,
-      mood,
-      theme,
-      tempo,
-      energy,
+      prompt, 
       lyrics,
-      instrumental,
       audioUrl,
       coverUrl,
-      duration,
-      status,
       metadata
     } = body;
 
@@ -43,37 +35,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 构建更新数据
-    const updateData: any = {};
+    // lyrics 字段是布尔类型，表示是否有歌词
+    // 如果传入的 lyrics 是字符串（歌词内容），则将其保存到 metadata 中
+    let lyricsBool = false;
+    let lyricsText = null;
     
+    if (typeof lyrics === 'string' && lyrics.trim().length > 0) {
+      lyricsBool = true;
+      lyricsText = lyrics;
+    } else if (typeof lyrics === 'boolean') {
+      lyricsBool = lyrics;
+    } else if (lyrics) {
+      lyricsBool = true;
+    }
+    
+    // 构建 metadata，包含歌词文本（如果有）
+    const finalMetadata = {
+      ...(metadata || {}),
+      ...(lyricsText ? { lyricsText: lyricsText } : {}),
+    };
+
+    const updateData: any = {};
     if (title !== undefined) updateData.title = title;
     if (prompt !== undefined) updateData.prompt = prompt;
-    if (genre !== undefined) updateData.genre = genre;
-    if (mood !== undefined) updateData.mood = mood;
-    if (theme !== undefined) updateData.theme = theme;
-    if (tempo !== undefined) updateData.tempo = tempo;
-    if (energy !== undefined) updateData.energy = energy;
-    if (lyrics !== undefined) updateData.lyrics = lyrics;
-    if (instrumental !== undefined) updateData.instrumental = instrumental;
+    if (lyricsBool !== undefined) updateData.lyrics = lyricsBool;
     if (audioUrl !== undefined) updateData.audio_url = audioUrl;
     if (coverUrl !== undefined) updateData.cover_url = coverUrl;
-    if (duration !== undefined) updateData.duration = duration;
-    if (status !== undefined) updateData.status = status;
+    if (finalMetadata) updateData.metadata = finalMetadata;
 
-    if (metadata !== undefined) {
-      // 获取现有的metadata并合并
-      const { data: currentMusic } = await supabase
-        .from('anim_music')
-        .select('metadata')
-        .eq('id', id)
-        .eq('user_id', user.id)
-        .single();
-
-      const currentMetadata = currentMusic?.metadata || {};
-      updateData.metadata = { ...currentMetadata, ...metadata };
-    }
-
-    // 执行更新
+    // 更新记录
     const { data: updated, error: updateError } = await supabase
       .from('anim_music')
       .update(updateData)
@@ -91,6 +81,7 @@ export async function POST(request: NextRequest) {
       data: updated,
     });
   } catch (error) {
+    console.error("[Music Update API] Error:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to update music",
@@ -99,4 +90,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

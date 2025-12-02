@@ -2,6 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+  @keyframes waveMove {
+  0%, 100% {
+    transform: translateX(-20px);
+  }
+  50% {
+    transform: translateX(20px);
+  }
+}
+
+.wave-path-1 {
+  animation: waveMove 3s ease-in-out infinite;
+}
+
+.wave-path-2 {
+  animation: waveMove 3s ease-in-out infinite 0.6s;
+}
+
+.wave-path-3 {
+  animation: waveMove 3s ease-in-out infinite 1.2s;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/header/header";
-import AnimationHero from "@/components/hero/animation-hero";
+import MusicVideoHero from "@/components/hero/music-video-hero";
 import FeaturesShowcase from "@/components/features/features-showcase";
 import UseCases from "@/components/usecases/use-cases";
 import ProcessFlow from "@/components/process/process-flow";
@@ -51,9 +51,9 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "WebSite",
-            "name": "AI Animation Video Generator",
+            "name": "VerseMovie - AI Music Video Generator",
             "url": "https://animationaigenerator.com",
-            "description": "Generate high-quality animated videos and cartoons from text or images with our AI animation generator. Create professional animations instantly!",
+            "description": "Turn lyrics into cinematic AI music videos. Create professional MV videos from song lyrics instantly with our AI-powered music video generator.",
             "potentialAction": {
               "@type": "SearchAction",
               "target": {
@@ -71,10 +71,10 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "Organization",
-            "name": "AnimationAIGenerator",
+            "name": "VerseMovie",
             "url": "https://animationaigenerator.com",
-            "logo": "https://animationaigenerator.com/images/logo.png",
-            "description": "AI-powered animation generator for creating high-quality animated videos and cartoons from text or images",
+            "logo": "https://animationaigenerator.com/images/versemovie-logo.png",
+            "description": "AI-powered music video generator that transforms lyrics into cinematic music videos instantly",
             "sameAs": []
           })
         }}
@@ -85,7 +85,7 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "AI Animation Video Generator",
+            "name": "VerseMovie - AI Music Video Generator",
             "applicationCategory": "MultimediaApplication",
             "operatingSystem": "Web Browser",
             "offers": {
@@ -94,27 +94,28 @@ export default function HomeClient() {
               "priceCurrency": "USD",
               "availability": "https://schema.org/InStock"
             },
-            "description": "Generate high-quality animated videos and cartoons from text or images with our AI animation generator. Create professional animations instantly!",
+            "description": "Turn lyrics into cinematic AI music videos. Create professional MV videos from song lyrics instantly with our AI-powered music video generator.",
             "aggregateRating": {
               "@type": "AggregateRating",
-              "ratingValue": "4.8",
-              "reviewCount": "1250",
+              "ratingValue": "4.9",
+              "reviewCount": "2500",
               "bestRating": "5",
               "worstRating": "1"
             },
             "featureList": [
-              "Text-to-video animation",
-              "Image-to-video animation",
-              "2D and 3D animation styles",
-              "Short-form video creation",
-              "TikTok, Instagram Reels, YouTube Shorts optimization"
+              "Lyrics to music video conversion",
+              "AI-powered character generation",
+              "Cinematic video styles",
+              "Professional MV quality",
+              "Multiple aspect ratios (9:16, 16:9)",
+              "Auto-generated storyboards"
             ]
           })
         }}
       />
       <div className="min-h-screen bg-white dark:bg-gray-900">
         <Header />
-        <AnimationHero />
+        <MusicVideoHero />
         <FeaturesShowcase />
         <Examples />
         <UseCases />

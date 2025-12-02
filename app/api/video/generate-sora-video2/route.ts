@@ -40,8 +40,8 @@ export async function POST(request: NextRequest) {
       aspectRatio // 宽高比（如 "9:16" 或 "16:9"），用于自动选择模型
     } = body;
 
-    // 判断是文生视频还是图生视频
-    const isTextToVideo = !imageUrl;
+    // 判断是文生视频还是图生视频（空字符串也视为文生视频）
+    const isTextToVideo = !imageUrl || imageUrl.trim() === '';
 
     // 如果没有指定模型，根据 size 或 aspectRatio 自动选择
     let selectedModel = model;

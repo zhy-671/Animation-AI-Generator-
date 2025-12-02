@@ -12,11 +12,12 @@ export const metadata: Metadata = {
   description: "Create stunning animated videos with our AI-powered 2D and 3D animation tools. Optimized for short-form video creators on TikTok, Reels, and more. Try Animation AI Generator free today!",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/images/favicon.ico", sizes: "any", type: "image/x-icon" },
+      { url: "/images/versemovie-logo.png", sizes: "any" },
+      { url: "/images/versemovie-logo.png", sizes: "32x32", type: "image/png" },
+      { url: "/images/versemovie-logo.png", sizes: "16x16", type: "image/png" },
     ],
-    shortcut: "/images/favicon.ico",
-    apple: "/images/logo.png",
+    shortcut: "/images/versemovie-logo.png",
+    apple: "/images/versemovie-logo.png",
   },
   other: {
     "msvalidate.01": "79CD94EF4920CFF609CE443B3ADE8DA1",

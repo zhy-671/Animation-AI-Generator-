@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { prompt, sceneLocation, project_id } = body;
+    const { prompt, sceneLocation, project_id, count = 4, size } = body; // count 默认为4，用于兼容性，size 可选用于自定义分辨率
 
     // 打印接收到的参数
     console.log("[GenerateImage] Received parameters:", {
@@ -143,7 +143,10 @@ export async function POST(request: NextRequest) {
     }
 
     // 将 art_setting 的宽高比转换为 API 需要的 width*height 格式
-    const imageSize = convertAspectRatioToSize(projectArtSetting);
+    // 如果前端显式传入 size，则优先使用 size（例如 "1920*1080" 或 "1080*1920"）
+    const imageSize = typeof size === "string" && size.trim().length > 0
+      ? size.trim()
+      : convertAspectRatioToSize(projectArtSetting);
     // 转换为 API 需要的格式（将 * 替换为 x）
     const apiSize = imageSize.replace(/\*/g, "x");
 
@@ -182,12 +185,13 @@ export async function POST(request: NextRequest) {
       stylePrompt: projectVisualStyle && stylePrompts[projectVisualStyle] ? stylePrompts[projectVisualStyle] : null,
     });
 
-    // 豆包文生图API是同步的，需要生成4张图片，所以调用4次
+    // 豆包文生图API是同步的，根据count参数决定生成几张图片
     // 为了避免速率限制，添加小延迟
     const imageUrls: string[] = [];
     const delayBetweenRequests = 500; // 每个请求之间延迟500ms
+    const imageCount = Math.max(1, Math.min(4, parseInt(count) || 4)); // 限制在1-4之间
 
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < imageCount; i++) {
       try {
         // 如果不是第一个请求，添加延迟
         if (i > 0) {
@@ -205,7 +209,7 @@ export async function POST(request: NextRequest) {
         };
 
         // 打印每次API调用的请求参数
-        console.log(`[GenerateImage] API request ${i + 1}/4:`, {
+        console.log(`[GenerateImage] API request ${i + 1}/${imageCount}:`, {
           model: requestBody.model,
           prompt: requestBody.prompt.substring(0, 300) + (requestBody.prompt.length > 300 ? '...' : ''),
           promptLength: requestBody.prompt.length,

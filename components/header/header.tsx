@@ -163,7 +163,7 @@ export default function Header() {
   };
 
   return (
-    <header className="border-b border-gray-800 bg-black relative z-50">
+    <header className="border-b border-yellow-500/20 bg-gradient-to-br from-black via-gray-900 to-black backdrop-blur-xl relative z-50">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           <Logo />
@@ -171,37 +171,37 @@ export default function Header() {
             <nav className="flex items-center gap-6">
               <Link 
                 href="/generate" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 Generate
               </Link>
               <Link 
                 href="/storyboard" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 Story Script
               </Link>
               {/* <Link 
                 href="/ai-music-video-generator" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 Music
               </Link> */}
               <Link 
                 href="/prompt-guide" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 Prompt Guide
               </Link>
               <Link 
                 href="/pricing" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 Pricing
               </Link>
               <Link 
                 href="/faq" 
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium hover:bg-yellow-500/10 px-3 py-1.5 rounded-lg"
               >
                 FAQ
               </Link>
@@ -212,15 +212,15 @@ export default function Header() {
             ) : user ? (
               <div className="flex items-center gap-4">
                 {/* Credits balance display - always shown, even if creditsBalance is null */}
-                <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800/50 border border-gray-700 rounded-lg">
-                  <Diamond className="w-4 h-4 text-[#FFDA2A]" />
+                <div className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/10 backdrop-blur-sm border border-yellow-500/20 rounded-lg">
+                  <Diamond className="w-4 h-4 text-yellow-400" />
                   <span className="text-sm font-medium text-white">
                     {creditsBalance !== null ? creditsBalance.toLocaleString() : "0"} Credits
                   </span>
                 </div>
                 <Button
                   onClick={handleLogout}
-                  className="bg-transparent border border-gray-700 text-white hover:bg-gray-800 hover:text-white h-9 px-4 flex items-center gap-2"
+                  className="bg-yellow-500/10 backdrop-blur-sm border border-yellow-500/20 text-white hover:bg-yellow-500/20 hover:border-yellow-500/30 h-9 px-4 flex items-center gap-2 transition-all"
                 >
                   <LogOut className="w-4 h-4" />
                   <span>Logout</span>
@@ -229,7 +229,7 @@ export default function Header() {
             ) : (
               <Button
                 asChild
-                className="bg-transparent border border-gray-700 text-white hover:bg-gray-800 hover:text-white h-9 px-4"
+                className="bg-gradient-to-r from-yellow-600 to-amber-600 text-black hover:from-yellow-500 hover:to-amber-500 border-0 h-9 px-4 shadow-lg hover:shadow-yellow-500/50 transition-all font-semibold"
               >
                 <Link href="/login" className="flex items-center gap-2">
                   <LogIn className="w-4 h-4" />
@@ -243,7 +243,7 @@ export default function Header() {
               variant="ghost"
               size="sm"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="text-gray-300 hover:text-white"
+              className="text-gray-300 hover:text-yellow-400 hover:bg-yellow-500/10"
             >
               {mobileMenuOpen ? (
                 <X className="w-5 h-5" />
@@ -256,47 +256,47 @@ export default function Header() {
         
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="md:hidden mt-4 pb-4 border-t border-gray-800">
+          <div className="md:hidden mt-4 pb-4 border-t border-yellow-500/20">
             <nav className="flex flex-col gap-4 pt-4">
               <Link 
                 href="/generate" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 Generate
               </Link>
               <Link 
                 href="/storyboard" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 Story Script
               </Link>
               {/* <Link 
                 href="/ai-music-video-generator" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 Music
               </Link> */}
               <Link 
                 href="/prompt-guide" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 Prompt Guide
               </Link>
               <Link 
                 href="/pricing" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 Pricing
               </Link>
               <Link 
                 href="/faq" 
                 onClick={() => setMobileMenuOpen(false)}
-                className="text-gray-300 hover:text-white transition-colors text-sm font-medium py-2"
+                className="text-gray-300 hover:text-yellow-400 transition-colors text-sm font-medium py-2 px-3 rounded-lg hover:bg-yellow-500/10"
               >
                 FAQ
               </Link>
@@ -305,8 +305,8 @@ export default function Header() {
                 <>
                   {/* Credits balance display (mobile menu) - always shown when logged in */}
                   {user && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-gray-800/50 border border-gray-700 rounded-lg">
-                      <Diamond className="w-4 h-4 text-[#FFDA2A]" />
+                    <div className="flex items-center gap-2 px-3 py-2 bg-yellow-500/10 backdrop-blur-sm border border-yellow-500/20 rounded-lg">
+                      <Diamond className="w-4 h-4 text-yellow-400" />
                       <span className="text-sm font-medium text-white">
                         {creditsBalance !== null ? creditsBalance.toLocaleString() : "0"} Credits
                       </span>
@@ -320,7 +320,7 @@ export default function Header() {
                         setMobileMenuOpen(false);
                         handleLogout();
                       }}
-                      className="w-full bg-transparent border border-gray-700 text-white hover:bg-gray-800 hover:text-white h-10 flex items-center justify-center gap-2"
+                      className="w-full bg-yellow-500/10 backdrop-blur-sm border border-yellow-500/20 text-white hover:bg-yellow-500/20 hover:border-yellow-500/30 h-10 flex items-center justify-center gap-2 transition-all"
                     >
                       <LogOut className="w-4 h-4" />
                       <span>Logout</span>
@@ -328,7 +328,7 @@ export default function Header() {
                   ) : (
                     <Button
                       asChild
-                      className="w-full bg-transparent border border-gray-700 text-white hover:bg-gray-800 hover:text-white h-10"
+                      className="w-full bg-gradient-to-r from-yellow-600 to-amber-600 text-black hover:from-yellow-500 hover:to-amber-500 border-0 h-10 shadow-lg hover:shadow-yellow-500/50 transition-all font-semibold"
                     >
                       <Link 
                         href="/login" 

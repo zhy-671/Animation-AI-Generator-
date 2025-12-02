@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,21 +20,46 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
   Shuffle,
   FileText,
   X,
   Diamond,
-  Video
+  Video,
+  Maximize2,
+  Volume2,
+  Volume1,
+  VolumeX,
+  Share2,
+  MoreHorizontal,
+  Edit,
+  Mic
 } from "lucide-react";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
+// 动态导入 Select 组件以避免 hydration 错误
+const Select = dynamic(
+  () => import("@/components/ui/select").then((mod) => mod.Select),
+  { ssr: false }
+);
+const SelectContent = dynamic(
+  () => import("@/components/ui/select").then((mod) => mod.SelectContent),
+  { ssr: false }
+);
+const SelectItem = dynamic(
+  () => import("@/components/ui/select").then((mod) => mod.SelectItem),
+  { ssr: false }
+);
+const SelectTrigger = dynamic(
+  () => import("@/components/ui/select").then((mod) => mod.SelectTrigger),
+  { ssr: false }
+);
+const SelectValue = dynamic(
+  () => import("@/components/ui/select").then((mod) => mod.SelectValue),
+  { ssr: false }
+);
 import { Slider } from "@/components/ui/slider";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
@@ -41,6 +67,19 @@ import { checkCreditsBalance, deductMusicCredits, deductLyricsCredits, deductMus
 import { createClient } from "@/lib/supabase/client";
 import ProfessionalAudioVisualizer from "@/components/music/professional-audio-visualizer";
 import ProfessionalProgressBar from "@/components/music/professional-progress-bar";
+import MusicConversation from "@/components/music/music-conversation";
+import MVCustomizeDialog from "@/components/music/mv-customize";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface MusicFormData {
   prompt: string;
@@ -235,6 +274,366 @@ export default function MusicGeneratorForm() {
   const myMusicSectionRef = useRef<HTMLElement>(null);
   const router = useRouter();
   const [videoPreparingId, setVideoPreparingId] = useState<string | null>(null);
+  const [showConversation, setShowConversation] = useState(false);
+  const [conversationPrompt, setConversationPrompt] = useState("");
+  const [conversationMvParams, setConversationMvParams] = useState<{
+    audioUrl: string;
+    startTime: number;
+    endTime: number;
+    musicTitle?: string;
+    musicId?: string;
+    mvType: 'narrative' | 'dance';
+    visualStyle: string;
+    showSubtitles: boolean;
+    orientation: '16:9' | '9:16';
+    inspiration: string;
+    musicFeatures?: {
+      bpm?: number;
+      key?: string;
+      beats?: number[];
+      loudnessCurve?: Array<{ time: number; value: number }>;
+      energySegments?: Array<{ start: number; end: number; energy: number }>;
+    };
+    autoSegments?: Array<{
+      start: number;
+      end: number;
+      energy: number;
+      videoPrompt?: {
+        camera: string;
+        performance: string;
+        emotion: string;
+        prompt: string;
+        shotPlan?: {
+          shotSize: string;
+          cameraAngle: string;
+          framingRule: string;
+          cameraMotion: string;
+          shotPurpose: string;
+          cutContinuity: string;
+        };
+      };
+    }>;
+  } | undefined>(undefined);
+  const [showAudioSegmentDialog, setShowAudioSegmentDialog] = useState(false); // 显示选择音频片段对话框
+  // 全局播放器状态
+  const [currentPlayingMusic, setCurrentPlayingMusic] = useState<{
+    id: string;
+    title: string;
+    description: string;
+    coverUrl?: string;
+    audioUrl?: string;
+  } | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [isPlayerMinimized, setIsPlayerMinimized] = useState(false);
+  const globalAudioRef = useRef<HTMLAudioElement | null>(null);
+  const [musicDurations, setMusicDurations] = useState<Map<string, number>>(new Map()); // 存储每首音乐的时长
+  const [volume, setVolume] = useState(1); // 音量 0-1
+  const [isMuted, setIsMuted] = useState(false); // 是否静音
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false); // 显示音量滑块
+  const [currentPlaylist, setCurrentPlaylist] = useState<Array<{ id: string; title: string; description: string; coverUrl?: string; audioUrl?: string }>>([]); // 当前播放列表
+  const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState<number>(-1); // 当前播放索引
+  const [selectedMusicForVideo, setSelectedMusicForVideo] = useState<GeneratedMusic | null>(null); // 选择用于制作视频的音乐
+  const [selectedStartTime, setSelectedStartTime] = useState(0); // 选中的开始时间（秒）
+  const [selectedEndTime, setSelectedEndTime] = useState(30); // 选中的结束时间（秒），固定30秒
+  const [audioDuration, setAudioDuration] = useState(0); // 音频总时长（秒）
+  const [isDragging, setIsDragging] = useState(false); // 是否正在拖动
+  const [dragType, setDragType] = useState<'start' | 'end' | 'segment' | null>(null); // 拖动类型
+  const [segmentCurrentTime, setSegmentCurrentTime] = useState(0); // 片段播放的当前时间
+  const waveformContainerRef = useRef<HTMLDivElement | null>(null); // 波形容器引用
+  const segmentAudioRef = useRef<HTMLAudioElement | null>(null); // 片段播放音频元素引用
+  const [isPlayingSegment, setIsPlayingSegment] = useState(false); // 是否正在播放选中片段
+  const [showMVCustomizeDialog, setShowMVCustomizeDialog] = useState(false); // 显示MV自定义对话框
+  const [isAnalyzing, setIsAnalyzing] = useState(false); // 是否正在分析音频
+  const [autoSegments, setAutoSegments] = useState<Array<{ 
+    start: number; 
+    end: number; 
+    energy: number;
+    videoPrompt?: {
+      camera: string;
+      performance: string;
+      emotion: string;
+      prompt: string;
+      shotPlan?: {
+        shotSize: string;
+        cameraAngle: string;
+        framingRule: string;
+        cameraMotion: string;
+        shotPurpose: string;
+        cutContinuity: string;
+      };
+    };
+  }>>([]); // 自动拆段结果
+  const [sceneDescription, setSceneDescription] = useState(''); // 场景描述
+  const [playingSegmentIndex, setPlayingSegmentIndex] = useState<number | null>(null); // 正在播放的段落索引
+  const [selectedSegmentIndex, setSelectedSegmentIndex] = useState<number | null>(null); // 选中的段落索引
+  const segmentProgressListenerRef = useRef<(() => void) | null>(null); // 保存当前段落播放进度监听器
+  const [musicFeatures, setMusicFeatures] = useState<{
+    bpm?: number;
+    key?: string;
+    beats?: number[];
+    loudnessCurve?: Array<{ time: number; value: number }>;
+    energySegments?: Array<{ start: number; end: number; energy: number }>;
+  } | null>(null); // 音频特征数据
+
+  // 智能拆段函数
+  const handleAutoSegment = useCallback(async () => {
+    if (!selectedMusicForVideo?.audioUrl || isAnalyzing) return;
+    
+    // 确保 audioDuration 有值
+    const duration = audioDuration || (segmentAudioRef.current?.duration || 0);
+    if (duration <= 0) {
+      console.warn('音频时长无效，无法进行智能拆段');
+      return;
+    }
+    
+    setIsAnalyzing(true);
+    try {
+      // 调用音频分析API，使用完整的音频时长
+      const response = await fetch('/api/music/analyze-audio', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          audioUrl: selectedMusicForVideo.audioUrl,
+          startTime: 0,
+          endTime: duration, // 使用完整的音频时长
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('音频分析失败');
+      }
+
+      const result = await response.json();
+      if (result.success && result.data) {
+        setMusicFeatures(result.data);
+        
+        // 自动拆段逻辑：每段 ≤ 15 秒，保证节奏和高能量不被切
+        // 注意：API已经返回了带videoPrompt的energySegments，我们需要保留这些信息
+        const segments: Array<{ 
+          start: number; 
+          end: number; 
+          energy: number;
+          videoPrompt?: {
+            camera: string;
+            performance: string;
+            emotion: string;
+            prompt: string;
+          };
+        }> = [];
+        const beats = result.data.beats || [];
+        const energySegments = result.data.energySegments || []; // 现在每个segment可能包含videoPrompt
+        const maxSegmentDuration = 15;
+        
+        let currentStart = 0;
+        let currentEnd = 0;
+        let currentSegments: typeof energySegments = []; // 当前段的原始segments
+        
+        // 根据拍点和能量分段进行智能拆段
+        for (let i = 0; i < energySegments.length; i++) {
+          const seg = energySegments[i];
+          
+          // 如果当前段加上新段超过15秒，结束当前段
+          if (currentEnd > 0 && (seg.end - currentStart) > maxSegmentDuration) {
+            // 找到最接近15秒的拍点作为结束点
+            const targetEnd = currentStart + maxSegmentDuration;
+            const closestBeat = beats.find(b => Math.abs(b - targetEnd) < 0.5) || targetEnd;
+            
+            // 计算平均能量
+            const filteredSegs = currentSegments.filter(es => es.start >= currentStart && es.end <= Math.min(closestBeat, seg.end));
+            const avgEnergy = filteredSegs.length > 0
+              ? filteredSegs.reduce((sum, es) => sum + es.energy, 0) / filteredSegs.length
+              : 0.5;
+            
+            // 尝试从原始segments中获取videoPrompt（优先使用第一个segment的）
+            const videoPrompt = filteredSegs.find(s => s.videoPrompt)?.videoPrompt;
+            
+            segments.push({
+              start: currentStart,
+              end: Math.min(closestBeat, seg.end),
+              energy: avgEnergy,
+              videoPrompt: videoPrompt,
+            });
+            
+            currentStart = Math.min(closestBeat, seg.end);
+            currentSegments = [];
+          }
+          
+          // 如果是第一段或当前段为空，开始新段
+          if (currentEnd === 0) {
+            currentStart = seg.start;
+          }
+          
+          currentEnd = seg.end;
+          currentSegments.push(seg);
+          
+          // 如果当前段达到15秒，结束当前段
+          if ((currentEnd - currentStart) >= maxSegmentDuration) {
+            // 找到最接近15秒的拍点作为结束点
+            const targetEnd = currentStart + maxSegmentDuration;
+            const closestBeat = beats.find(b => b >= currentStart && b <= currentEnd && Math.abs(b - targetEnd) < 0.5) || currentEnd;
+            
+            // 计算平均能量
+            const filteredSegs = currentSegments.filter(es => es.start >= currentStart && es.end <= closestBeat);
+            const avgEnergy = filteredSegs.length > 0
+              ? filteredSegs.reduce((sum, es) => sum + es.energy, 0) / filteredSegs.length
+              : 0.5;
+            
+            // 尝试从原始segments中获取videoPrompt（优先使用第一个segment的）
+            const videoPrompt = filteredSegs.find(s => s.videoPrompt)?.videoPrompt;
+            
+            segments.push({
+              start: currentStart,
+              end: closestBeat,
+              energy: avgEnergy,
+              videoPrompt: videoPrompt,
+            });
+            
+            currentStart = closestBeat;
+            currentEnd = 0;
+            currentSegments = [];
+          }
+        }
+        
+        // 添加最后一段
+        if (currentEnd > currentStart) {
+          const filteredSegs = currentSegments.filter(es => es.start >= currentStart && es.end <= currentEnd);
+          const avgEnergy = filteredSegs.length > 0
+            ? filteredSegs.reduce((sum, es) => sum + es.energy, 0) / filteredSegs.length
+            : 0.5;
+          
+          // 尝试从原始segments中获取videoPrompt（优先使用第一个segment的）
+          const videoPrompt = filteredSegs.find(s => s.videoPrompt)?.videoPrompt;
+          
+          segments.push({
+            start: currentStart,
+            end: currentEnd,
+            energy: avgEnergy,
+            videoPrompt: videoPrompt,
+          });
+        }
+        
+        setAutoSegments(segments);
+        
+        // 默认选择第一段
+        if (segments.length > 0) {
+          setSelectedStartTime(segments[0].start);
+          setSelectedEndTime(segments[0].end);
+        }
+      }
+    } catch (error) {
+      console.error('智能拆段失败:', error);
+      alert('智能拆段失败，请重试');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }, [selectedMusicForVideo, audioDuration, isAnalyzing]);
+
+  // 播放指定段落的函数
+  const playSegment = useCallback(async (segment: { start: number; end: number }, index: number) => {
+    if (!segmentAudioRef.current || !selectedMusicForVideo?.audioUrl) return;
+    
+    // 先暂停全局播放器
+    if (globalAudioRef.current && !globalAudioRef.current.paused) {
+      try {
+        globalAudioRef.current.pause();
+      } catch (err) {
+        console.error('Error pausing global audio:', err);
+      }
+    }
+    
+    // 停止其他段落播放（如果有）
+    if (playingSegmentIndex !== null && playingSegmentIndex !== index) {
+      try {
+        segmentAudioRef.current.pause();
+        // 移除之前的事件监听器
+        if (segmentProgressListenerRef.current) {
+          segmentAudioRef.current.removeEventListener('timeupdate', segmentProgressListenerRef.current);
+          segmentProgressListenerRef.current = null;
+        }
+      } catch (err) {
+        console.error('Error pausing previous segment:', err);
+      }
+    }
+    
+    // 设置选中时间
+    setSelectedStartTime(segment.start);
+    setSelectedEndTime(segment.end);
+    
+    try {
+      // 设置播放位置
+      segmentAudioRef.current.currentTime = segment.start;
+      
+      // 先更新状态为播放中
+      setIsPlayingSegment(true);
+      setPlayingSegmentIndex(index);
+      
+      // 监听播放进度
+      const updateProgress = () => {
+        if (segmentAudioRef.current) {
+          const currentTime = segmentAudioRef.current.currentTime;
+          setSegmentCurrentTime(currentTime);
+          
+          // 如果播放到段落结束，停止播放
+          if (currentTime >= segment.end) {
+            try {
+              segmentAudioRef.current.pause();
+            } catch (err) {
+              console.error('Error pausing at segment end:', err);
+            }
+            setIsPlayingSegment(false);
+            setPlayingSegmentIndex(null);
+            setSegmentCurrentTime(segment.start);
+            if (segmentProgressListenerRef.current) {
+              segmentAudioRef.current.removeEventListener('timeupdate', segmentProgressListenerRef.current);
+              segmentProgressListenerRef.current = null;
+            }
+          }
+        }
+      };
+      
+      // 移除旧的事件监听器（如果有）
+      if (segmentProgressListenerRef.current) {
+        segmentAudioRef.current.removeEventListener('timeupdate', segmentProgressListenerRef.current);
+      }
+      
+      // 保存新的监听器引用
+      segmentProgressListenerRef.current = updateProgress;
+      
+      // 添加新的事件监听器
+      segmentAudioRef.current.addEventListener('timeupdate', updateProgress);
+      
+      // 播放该段落
+      const playPromise = segmentAudioRef.current.play();
+      if (playPromise !== undefined) {
+        await playPromise;
+      }
+    } catch (err) {
+      console.error('Error playing segment audio:', err);
+      setIsPlayingSegment(false);
+      setPlayingSegmentIndex(null);
+    }
+  }, [selectedMusicForVideo, playingSegmentIndex]);
+
+  const [trimmedAudioData, setTrimmedAudioData] = useState<{
+    audioUrl: string;
+    startTime: number;
+    endTime: number;
+    musicId?: string;
+    musicTitle?: string;
+    sceneDescription?: string; // 场景描述
+    musicFeatures?: {
+      bpm?: number;
+      key?: string;
+      beats?: number[];
+      loudnessCurve?: Array<{ time: number; value: number }>;
+      energySegments?: Array<{ start: number; end: number; energy: number }>;
+    };
+  } | null>(null); // 截取后的音频数据
+
   
   // 歌词编辑弹窗状态
   const [lyricsEditDialog, setLyricsEditDialog] = useState<{
@@ -1088,6 +1487,35 @@ export default function MusicGeneratorForm() {
     };
   };
 
+  // 监听 currentPlayingMusic 变化，自动播放新音频
+  useEffect(() => {
+    if (currentPlayingMusic?.audioUrl && globalAudioRef.current) {
+      const audio = globalAudioRef.current;
+      
+      // 如果音频源已改变，需要重新加载
+      if (audio.src !== currentPlayingMusic.audioUrl) {
+        audio.load();
+      }
+      
+      // 如果 isPlaying 为 true 且音频已准备好，则播放
+      if (isPlaying) {
+        const tryPlay = () => {
+          if (audio.readyState >= 2 && audio.paused) {
+            audio.play().catch((error) => {
+              console.error('Error auto-playing audio in useEffect:', error);
+              setIsPlaying(false);
+            });
+          } else if (audio.readyState < 2) {
+            // 如果还没准备好，等待加载
+            audio.addEventListener('canplay', tryPlay, { once: true });
+          }
+        };
+        
+        tryPlay();
+      }
+    }
+  }, [currentPlayingMusic?.audioUrl, isPlaying]);
+
   useEffect(() => {
     setIsMounted(true);
     
@@ -1191,8 +1619,10 @@ export default function MusicGeneratorForm() {
     }
   };
 
-  const handleGenerate = async () => {
-    if (!trimmedPromptValue) {
+  const handleGenerate = async (finalPrompt?: string) => {
+    const promptToUse = finalPrompt || trimmedPromptValue;
+    
+    if (!promptToUse) {
       alert("Please enter a description for your music");
       return;
     }
@@ -1203,7 +1633,14 @@ export default function MusicGeneratorForm() {
     const selectedTempo = formData.tempo || TEMPOS[0].value;
     const selectedEnergy = formData.energy || ENERGY_LEVELS[0].value;
 
-    // 检查积分余额
+    // 非歌词模式：如果没有finalPrompt，说明是第一次点击，只打开对话界面，不检查积分
+    if (!formData.lyrics && !finalPrompt) {
+      setConversationPrompt(promptToUse);
+      setShowConversation(true);
+      return;
+    }
+
+    // 检查积分余额（只在真正生成时检查）
     const requiredCredits = formData.lyrics ? requiredCreditsForLyrics : requiredCreditsForMusic;
     const creditsCheck = await checkCreditsBalance(requiredCredits);
     if (!creditsCheck.sufficient) {
@@ -1221,7 +1658,7 @@ export default function MusicGeneratorForm() {
       if (formData.lyrics) {
         // 歌词模式：扣35积分，直接生成歌曲和封面
         const deductResult = await deductLyricsCredits({
-          prompt: promptValue,
+          prompt: promptToUse,
           genre: formData.genre,
           mood: formData.mood,
         });
@@ -1253,7 +1690,7 @@ export default function MusicGeneratorForm() {
             theme: selectedTheme,
             tempo: selectedTempo,
             energy: selectedEnergy,
-            description: promptValue,
+            description: promptToUse,
           }),
         });
 
@@ -1263,7 +1700,7 @@ export default function MusicGeneratorForm() {
         }
 
         const promptResult = await promptResponse.json();
-        const generatedPrompt = promptResult.prompt || promptValue;
+        const generatedPrompt = promptResult.prompt || promptToUse;
         const generatedLyrics = promptResult.lyrics || '';
         const generatedTitle = promptResult.title || '';
 
@@ -1277,7 +1714,7 @@ export default function MusicGeneratorForm() {
           theme: selectedTheme,
           tempo: selectedTempo,
           energy: selectedEnergy,
-          description: promptValue,
+          description: promptToUse,
           voiceType: formData.instrumental ? undefined : formData.voiceType,
         });
 
@@ -1447,7 +1884,7 @@ export default function MusicGeneratorForm() {
       } else {
         // 非歌词模式：扣5积分直接生成音乐
         const deductResult = await deductMusicCredits({
-          prompt: promptValue,
+          prompt: promptToUse,
           genre: formData.genre,
           mood: formData.mood,
         });
@@ -1479,7 +1916,7 @@ export default function MusicGeneratorForm() {
             theme: selectedTheme,
             tempo: selectedTempo,
             energy: selectedEnergy,
-            description: promptValue,
+            description: promptToUse,
           }),
         });
 
@@ -1489,14 +1926,14 @@ export default function MusicGeneratorForm() {
         }
 
         const promptResult = await promptResponse.json();
-        const generatedPrompt = promptResult.prompt || promptValue;
+        const generatedPrompt = promptResult.prompt || promptToUse;
         const generatedLyrics = promptResult.lyrics || '';
         const generatedImage = promptResult.image || '';
         const generatedTitle = promptResult.title || '';
 
         setPendingGeneration({
           mode: 'music',
-          description: promptValue,
+          description: promptToUse,
           generatedPrompt,
           title: generatedTitle,
           genre: selectedGenre,
@@ -1519,7 +1956,7 @@ export default function MusicGeneratorForm() {
 
         logGenerationSnapshot('Music Prompt Generated', {
           mode: 'music',
-          description: promptValue,
+          description: promptToUse,
           generatedPrompt,
           lyricsPreview: generatedLyrics,
           genre: selectedGenre,
@@ -1723,8 +2160,8 @@ export default function MusicGeneratorForm() {
       ? { ...pendingGeneration, lyrics }
       : {
           mode: 'lyrics',
-          description: promptValue,
-          generatedPrompt: promptValue,
+          description: trimmedPromptValue,
+          generatedPrompt: trimmedPromptValue,
           genre: formData.genre || GENRES[0].value,
           mood: formData.mood || MOODS[0].value,
           theme: formData.theme || THEMES[0].value,
@@ -1931,23 +2368,102 @@ export default function MusicGeneratorForm() {
   };
 
   const handlePlayPause = async (musicId: string) => {
+    // 检查是否是 my music 列表中的音乐
+    const music = myMusicList.find((m) => m.id === musicId) || generatedMusics.find((m) => m.id === musicId);
+    
+    if (!music || !music.audioUrl) {
+      console.error('[handlePlayPause] Music not found or no audioUrl');
+      return;
+    }
+
+    // 如果是 my music 列表中的音乐，使用全局播放器
+    if (myMusicList.find((m) => m.id === musicId)) {
+      if (currentPlayingMusic?.id === musicId && isPlaying) {
+        // 暂停当前播放
+        if (globalAudioRef.current) {
+          globalAudioRef.current.pause();
+        }
+        setIsPlaying(false);
+      } else {
+        // 停止所有其他音频
+        // 先暂停拆段音频
+        if (segmentAudioRef.current && !segmentAudioRef.current.paused) {
+          try {
+            segmentAudioRef.current.pause();
+          } catch (err) {
+            console.error('Error pausing segment audio:', err);
+          }
+          setIsPlayingSegment(false);
+          setPlayingSegmentIndex(null);
+        }
+        
+        if (globalAudioRef.current) {
+          try {
+            globalAudioRef.current.pause();
+            globalAudioRef.current.currentTime = 0;
+          } catch (err) {
+            console.error('Error pausing global audio:', err);
+          }
+        }
+        exampleAudioElementsRef.current.forEach((audio) => {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch (err) {
+            console.error('Error pausing example audio:', err);
+          }
+        });
+        setExamplePlayingId(null);
+        audioElementsRef.current.forEach((audio) => {
+          try {
+            audio.pause();
+            audio.currentTime = 0;
+          } catch (err) {
+            console.error('Error pausing audio:', err);
+          }
+        });
+        setCurrentPlayingId(null);
+
+        // 构建播放列表（my music）
+        const playlist = myMusicList.map(m => ({
+          id: m.id,
+          title: m.title || m.prompt || 'Untitled',
+          description: m.prompt || '',
+          coverUrl: m.coverUrl || undefined,
+          audioUrl: m.audioUrl || undefined,
+        })).filter(m => m.audioUrl); // 只包含有音频的
+        const currentIndex = playlist.findIndex(m => m.id === musicId);
+
+        // 设置全局播放器
+        setCurrentPlaylist(playlist);
+        setCurrentPlaylistIndex(currentIndex);
+        setCurrentPlayingMusic({
+          id: music.id,
+          title: music.title || music.prompt || 'Untitled',
+          description: music.prompt || '',
+          coverUrl: music.coverUrl || undefined,
+          audioUrl: music.audioUrl,
+        });
+        setIsPlayerMinimized(false);
+        setCurrentTime(0);
+        // 设置需要自动播放的标志
+        setIsPlaying(true);
+      }
+      return;
+    }
+
+    // 原有的 generatedMusics 播放逻辑（用于示例音乐）
     console.log('[DEBUG handlePlayPause] Called with musicId:', musicId, 'currentPlayingId:', currentPlayingId);
-    console.log('[DEBUG handlePlayPause] audioElementsRef.current size:', audioElementsRef.current.size);
-    console.log('[DEBUG handlePlayPause] audioElementsRef.current keys:', Array.from(audioElementsRef.current.keys()));
     
     if (currentPlayingId === musicId) {
       // Pause current
-      console.log('[DEBUG handlePlayPause] Pausing current audio');
       const audio = audioElementsRef.current.get(musicId);
-      console.log('[DEBUG handlePlayPause] Got audio element:', !!audio);
       if (audio) {
         audio.pause();
-        console.log('[DEBUG handlePlayPause] Audio paused');
       }
       setCurrentPlayingId(null);
     } else {
       // Stop example audios when switching sections
-      console.log('[DEBUG handlePlayPause] Stopping all example audios');
       exampleAudioElementsRef.current.forEach((audio) => {
         audio.pause();
         audio.currentTime = 0;
@@ -1955,7 +2471,17 @@ export default function MusicGeneratorForm() {
       setExamplePlayingId(null);
 
       // Stop all other audio
-      console.log('[DEBUG handlePlayPause] Stopping all other main audios');
+      // 先暂停拆段音频
+      if (segmentAudioRef.current && !segmentAudioRef.current.paused) {
+        try {
+          segmentAudioRef.current.pause();
+          setIsPlayingSegment(false);
+          setPlayingSegmentIndex(null);
+        } catch (err) {
+          console.error('Error pausing segment audio:', err);
+        }
+      }
+      
       audioElementsRef.current.forEach((audio, id) => {
         if (id !== musicId) {
           audio.pause();
@@ -1963,52 +2489,17 @@ export default function MusicGeneratorForm() {
         }
       });
 
-      // Play new audio
-      const music = generatedMusics.find((m) => m.id === musicId);
-      console.log('[DEBUG handlePlayPause] Found music:', !!music, 'audioUrl:', !!music?.audioUrl);
-      console.log('[DEBUG handlePlayPause] Audio URL type:', music?.audioUrl ? (music.audioUrl.startsWith('data:audio') ? 'BASE64' : 'URL') : 'NONE');
-      console.log('[DEBUG handlePlayPause] Audio URL preview:', music?.audioUrl?.substring(0, 150));
-      
       if (music?.audioUrl) {
         const audio = audioElementsRef.current.get(musicId);
-        console.log('[DEBUG handlePlayPause] Got audio element for playback:', !!audio);
-        
         if (audio) {
-          console.log('[DEBUG handlePlayPause] Audio element details:', {
-            src: audio.src?.substring(0, 150),
-            srcMatches: audio.src === music.audioUrl,
-            isBase64: audio.src?.startsWith('data:audio'),
-            readyState: audio.readyState,
-            paused: audio.paused,
-            currentTime: audio.currentTime,
-            duration: audio.duration,
-            muted: audio.muted,
-            volume: audio.volume
-          });
-          
           setCurrentPlayingId(musicId);
           try {
-            console.log('[DEBUG handlePlayPause] Attempting to play audio');
             await playAudioElementSafely(audio);
-            console.log('[DEBUG handlePlayPause] Audio playback successful');
-            // 再次检查播放状态
-            setTimeout(() => {
-              console.log('[DEBUG handlePlayPause] Audio state 200ms after play:', {
-                paused: audio.paused,
-                currentTime: audio.currentTime,
-                readyState: audio.readyState
-              });
-            }, 200);
           } catch (error) {
             console.error("[DEBUG handlePlayPause] Error playing audio:", error);
             setCurrentPlayingId(null);
           }
-        } else {
-          console.error('[DEBUG handlePlayPause] No audio element found for musicId:', musicId);
-          console.error('[DEBUG handlePlayPause] Available audio element IDs:', Array.from(audioElementsRef.current.keys()));
         }
-      } else {
-        console.error('[DEBUG handlePlayPause] Music has no audioUrl:', music);
       }
     }
   };
@@ -2062,84 +2553,106 @@ export default function MusicGeneratorForm() {
   };
 
   const handleExamplePlayPause = async (musicId: string) => {
-    console.log('[DEBUG handleExamplePlayPause] Called with musicId:', musicId, 'examplePlayingId:', examplePlayingId);
-    console.log('[DEBUG handleExamplePlayPause] exampleAudioElementsRef.current size:', exampleAudioElementsRef.current.size);
-    console.log('[DEBUG handleExamplePlayPause] exampleAudioElementsRef.current keys:', Array.from(exampleAudioElementsRef.current.keys()));
+    const music = musicExamples.find((m) => m.id === musicId);
     
-    if (examplePlayingId === musicId) {
-      // Pause current
-      console.log('[DEBUG handleExamplePlayPause] Pausing current example audio');
-      const audio = exampleAudioElementsRef.current.get(musicId);
-      console.log('[DEBUG handleExamplePlayPause] Got audio element:', !!audio);
-      if (audio) {
-        audio.pause();
-        console.log('[DEBUG handleExamplePlayPause] Audio paused');
+    if (!music || !music.audioUrl) {
+      console.error('[handleExamplePlayPause] Music not found or no audioUrl');
+      return;
+    }
+
+    // 使用全局播放器
+    if (currentPlayingMusic?.id === musicId && isPlaying) {
+      // 暂停当前播放
+      if (globalAudioRef.current) {
+        globalAudioRef.current.pause();
       }
-      setExamplePlayingId(null);
+      setIsPlaying(false);
     } else {
-      // Stop generated/my music playback before starting example audio
-      console.log('[DEBUG handleExamplePlayPause] Stopping all main audios');
+      // 停止所有其他音频
+      if (globalAudioRef.current) {
+        globalAudioRef.current.pause();
+        globalAudioRef.current.currentTime = 0;
+      }
+      exampleAudioElementsRef.current.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+      setExamplePlayingId(null);
       audioElementsRef.current.forEach((audio) => {
         audio.pause();
         audio.currentTime = 0;
       });
       setCurrentPlayingId(null);
 
-      // Stop all other audio
-      console.log('[DEBUG handleExamplePlayPause] Stopping all other example audios');
-      exampleAudioElementsRef.current.forEach((audio, id) => {
-        if (id !== musicId) {
-          audio.pause();
-          audio.currentTime = 0;
-        }
-      });
+      // 构建播放列表（示例音乐）
+      const playlist = musicExamples.map(m => ({
+        id: m.id,
+        title: m.title || 'Untitled',
+        description: m.tags || '',
+        coverUrl: m.coverUrl,
+        audioUrl: m.audioUrl,
+      }));
+      const currentIndex = playlist.findIndex(m => m.id === musicId);
 
-      // Play new audio
-      const music = musicExamples.find((m) => m.id === musicId);
-      console.log('[DEBUG handleExamplePlayPause] Found music:', !!music, 'audioUrl:', !!music?.audioUrl);
-      console.log('[DEBUG handleExamplePlayPause] Audio URL type:', music?.audioUrl ? (music.audioUrl.startsWith('data:audio') ? 'BASE64' : 'URL') : 'NONE');
-      console.log('[DEBUG handleExamplePlayPause] Audio URL preview:', music?.audioUrl?.substring(0, 150));
-      
-      if (music?.audioUrl) {
-        const audio = exampleAudioElementsRef.current.get(musicId);
-        console.log('[DEBUG handleExamplePlayPause] Got audio element for playback:', !!audio);
-        
-        if (audio) {
-          console.log('[DEBUG handleExamplePlayPause] Audio element details:', {
-            src: audio.src?.substring(0, 150),
-            srcMatches: audio.src === music.audioUrl,
-            isBase64: audio.src?.startsWith('data:audio'),
-            readyState: audio.readyState,
-            paused: audio.paused,
-            currentTime: audio.currentTime,
-            duration: audio.duration,
-            muted: audio.muted,
-            volume: audio.volume
-          });
-          
-          setExamplePlayingId(musicId);
-          try {
-            console.log('[DEBUG handleExamplePlayPause] Attempting to play example audio');
-            await playAudioElementSafely(audio);
-            console.log('[DEBUG handleExamplePlayPause] Audio playback successful');
-            // 再次检查播放状态
-            setTimeout(() => {
-              console.log('[DEBUG handleExamplePlayPause] Audio state 200ms after play:', {
-                paused: audio.paused,
-                currentTime: audio.currentTime,
-                readyState: audio.readyState
-              });
-            }, 200);
-          } catch (error) {
-            console.error("[DEBUG handleExamplePlayPause] Error playing example audio:", error);
-            setExamplePlayingId(null);
-          }
-        } else {
-          console.error('[DEBUG handleExamplePlayPause] No audio element found for musicId:', musicId);
-          console.error('[DEBUG handleExamplePlayPause] Available audio element IDs:', Array.from(exampleAudioElementsRef.current.keys()));
-        }
-      } else {
-        console.error('[DEBUG handleExamplePlayPause] Music has no audioUrl:', music);
+      // 设置全局播放器
+      setCurrentPlaylist(playlist);
+      setCurrentPlaylistIndex(currentIndex);
+      setCurrentPlayingMusic({
+        id: music.id,
+        title: music.title || 'Untitled',
+        description: music.tags || '',
+        coverUrl: music.coverUrl,
+        audioUrl: music.audioUrl,
+      });
+      setIsPlayerMinimized(false);
+      setCurrentTime(0);
+    }
+  };
+
+  // 下一首功能
+  const handleNext = () => {
+    if (currentPlaylist.length === 0 || currentPlaylistIndex < 0) return;
+    
+    const nextIndex = (currentPlaylistIndex + 1) % currentPlaylist.length;
+    const nextMusic = currentPlaylist[nextIndex];
+    
+    if (nextMusic && nextMusic.audioUrl) {
+      setCurrentPlaylistIndex(nextIndex);
+      setCurrentPlayingMusic({
+        id: nextMusic.id,
+        title: nextMusic.title,
+        description: nextMusic.description,
+        coverUrl: nextMusic.coverUrl,
+        audioUrl: nextMusic.audioUrl,
+      });
+      setCurrentTime(0);
+      if (globalAudioRef.current) {
+        globalAudioRef.current.currentTime = 0;
+        globalAudioRef.current.play().catch(console.error);
+      }
+    }
+  };
+
+  // 上一首功能
+  const handlePrevious = () => {
+    if (currentPlaylist.length === 0 || currentPlaylistIndex < 0) return;
+    
+    const prevIndex = currentPlaylistIndex === 0 ? currentPlaylist.length - 1 : currentPlaylistIndex - 1;
+    const prevMusic = currentPlaylist[prevIndex];
+    
+    if (prevMusic && prevMusic.audioUrl) {
+      setCurrentPlaylistIndex(prevIndex);
+      setCurrentPlayingMusic({
+        id: prevMusic.id,
+        title: prevMusic.title,
+        description: prevMusic.description,
+        coverUrl: prevMusic.coverUrl,
+        audioUrl: prevMusic.audioUrl,
+      });
+      setCurrentTime(0);
+      if (globalAudioRef.current) {
+        globalAudioRef.current.currentTime = 0;
+        globalAudioRef.current.play().catch(console.error);
       }
     }
   };
@@ -2169,150 +2682,164 @@ export default function MusicGeneratorForm() {
 
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black text-white relative overflow-hidden">
+      {/* Background Decoration */}
+      <div className="absolute inset-0 bg-gradient-to-br from-yellow-600/5 via-amber-600/8 to-yellow-600/5" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff02_1px,transparent_1px),linear-gradient(to_bottom,#ffffff02_1px,transparent_1px)] bg-[size:60px_60px] [mask-image:radial-gradient(ellipse_80%_50%_at_50%_0%,#000_40%,transparent_100%)]" />
+      
       <Header />
       
-      <main className="container mx-auto px-4 py-8 max-w-6xl">
+      <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 lg:py-16 max-w-7xl relative z-10">
         {/* Hero Section */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="text-center mb-12"
+          className="text-center mb-8 sm:mb-12 lg:mb-16"
         >
-          <div className="flex items-center justify-center gap-3 mb-4">
-            <Music className="w-12 h-12 text-[#FFDA2A]" />
-            <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-[#FFDA2A] to-white bg-clip-text text-transparent">
-              Turn Your Ideas Into Original Songs in Minutes with AI Music Generator
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-yellow-500/10 backdrop-blur-sm border border-yellow-500/20 mb-4"
+          >
+            <Sparkles className="w-4 h-4 text-yellow-400" />
+            <span className="text-sm font-semibold text-yellow-300">AI Music Generator</span>
+          </motion.div>
+          
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 mb-4 sm:mb-6">
+            <Music className="w-10 h-10 sm:w-12 sm:h-12 text-yellow-400 flex-shrink-0" />
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black bg-gradient-to-r from-yellow-200 via-amber-200 to-yellow-300 bg-clip-text text-transparent leading-tight">
+              Turn Your Ideas Into Original Songs
             </h1>
           </div>
-          <p className="text-gray-400 text-lg max-w-2xl mx-auto">
+          <p className="text-gray-300 text-base sm:text-lg lg:text-xl max-w-3xl mx-auto leading-relaxed px-4">
             Transform your creative vision into complete, professional tracks with our cutting-edge AI music technology. Generate unlimited original music in any genre, style, or mood.
           </p>
         </motion.div>
 
-        <div className="max-w-4xl mx-auto space-y-6">
-          {/* Mode Tabs */}
-          <div className="w-full">
-            <div className="flex items-center justify-center gap-4 mb-6">
-              <Music className="w-8 h-8 text-gray-400 flex-shrink-0" />
-            </div>
-
-            {/* Generation Form - Reference Style */}
-            <div className="space-y-6">
-              <div className="space-y-6">
-            {/* Large Rounded Input Field with Random Button */}
-            <div className="relative">
-              <Textarea
-                placeholder="Upbeat electronic track for a summer beach party..."
-                value={promptValue}
-                onChange={(e) => handleInputChange("prompt", e.target.value)}
-                className="w-full bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 rounded-xl p-4 pr-12 text-base min-h-[80px] resize-none focus:border-gray-600 focus:ring-2 focus:ring-gray-600"
-              />
-              {/* Random Button - Only show when lyrics is false */}
-              {!formData.lyrics && (
-                <Button
-                  onClick={handleRandomPrompt}
-                  variant="ghost"
-                  size="sm"
-                  className="absolute bottom-2 right-2 h-8 w-8 p-0 text-gray-400 hover:text-[#FFDA2A] hover:bg-gray-700/50 rounded-lg"
-                  title="Random prompt"
-                >
-                  <Shuffle className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
-
-            {/* Lyrics Switch and Generate Button Row */}
-            <div className="flex items-center justify-between gap-4">
-              {/* Switches Group */}
-              <div className="flex items-center gap-6">
-                {/* Lyrics Switch */}
-                <div className="flex items-center gap-3">
-                  <label htmlFor="lyrics" className="text-sm font-medium text-gray-300 cursor-pointer">
-                    Lyrics
-                  </label>
-                  <Switch
-                    id="lyrics"
-                    checked={formData.lyrics}
-                    onCheckedChange={(checked) => handleInputChange("lyrics", checked)}
-                    className="data-[state=checked]:bg-green-500"
-                  />
-                </div>
-
-                {/* Instrumental Switch */}
-                <div className="flex items-center gap-3">
-                  <label htmlFor="instrumental" className="text-sm font-medium text-gray-300 cursor-pointer">
-                    Instrumental
-                  </label>
-                  <Switch
-                    id="instrumental"
-                    checked={formData.instrumental}
-                    onCheckedChange={(checked) => handleInputChange("instrumental", checked)}
-                    className="data-[state=checked]:bg-green-500"
-                  />
-                </div>
+        <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
+          {/* Generation Form - Premium Style */}
+          <Card className="bg-black/40 backdrop-blur-xl border-yellow-500/20 shadow-2xl">
+            <CardContent className="p-6 sm:p-8 space-y-6">
+              {/* Large Rounded Input Field with Random Button */}
+              <div className="relative">
+                <Textarea
+                  placeholder="Upbeat electronic track for a summer beach party..."
+                  value={promptValue}
+                  onChange={(e) => handleInputChange("prompt", e.target.value)}
+                  className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white placeholder:text-gray-400 rounded-2xl p-4 sm:p-6 pr-12 sm:pr-14 text-base sm:text-lg min-h-[100px] sm:min-h-[120px] resize-none focus:border-yellow-500/40 focus:ring-2 focus:ring-yellow-500/20 transition-all"
+                />
+                {/* Random Button - Only show when lyrics is false */}
+                {!formData.lyrics && (
+                  <Button
+                    onClick={handleRandomPrompt}
+                    variant="ghost"
+                    size="sm"
+                    className="absolute bottom-3 right-3 h-9 w-9 p-0 text-gray-400 hover:text-yellow-400 hover:bg-yellow-500/10 rounded-lg transition-all"
+                    title="Random prompt"
+                  >
+                    <Shuffle className="w-4 h-4" />
+                  </Button>
+                )}
               </div>
 
-              {/* Generate Button with Credits */}
-              <Button
-                onClick={handleGenerate}
-                disabled={isGenerating || !trimmedPromptValue}
-                className="text-gray-900 font-semibold px-4 rounded-lg flex items-center justify-center gap-2 h-8 disabled:opacity-50 disabled:cursor-not-allowed !bg-[#FFDA2A] hover:!bg-[#FFDA2A] active:!bg-[#FFDA2A] focus:!bg-[#FFDA2A]"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin text-gray-900" />
-                    <span className="text-xs">Generating...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-xs">Generate</span>
-                    <span className="text-xs font-bold">
-                      {formData.lyrics ? requiredCreditsForLyrics : requiredCreditsForMusic}
-                    </span>
-                  </>
-                )}
-              </Button>
-            </div>
+              {/* Lyrics Switch and Generate Button Row */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-6">
+                {/* Switches Group */}
+                <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
+                  {/* Lyrics Switch */}
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <label htmlFor="lyrics" className="text-sm sm:text-base font-medium text-gray-300 cursor-pointer whitespace-nowrap">
+                      Lyrics
+                    </label>
+                    <Switch
+                      id="lyrics"
+                      checked={formData.lyrics}
+                      onCheckedChange={(checked) => handleInputChange("lyrics", checked)}
+                      className="data-[state=checked]:bg-yellow-500"
+                    />
+                  </div>
 
-            {/* Five Dropdown Selectors Row */}
-            <div className={`grid gap-3 ${!formData.instrumental ? 'grid-cols-6' : 'grid-cols-5'}`}>
-              {/* Mood */}
-              <Select
-                value={formData.mood}
-                onValueChange={(value) => handleInputChange("mood", value)}
-              >
-                <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
-                  <SelectValue placeholder="Mood" />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 text-white">
-                  {MOODS.map((mood) => (
-                    <SelectItem
-                      key={mood.value}
-                      value={mood.value}
-                      className="hover:bg-gray-700"
-                    >
-                      {mood.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  {/* Instrumental Switch */}
+                  <div className="flex items-center gap-2 sm:gap-3">
+                    <label htmlFor="instrumental" className="text-sm sm:text-base font-medium text-gray-300 cursor-pointer whitespace-nowrap">
+                      Instrumental
+                    </label>
+                    <Switch
+                      id="instrumental"
+                      checked={formData.instrumental}
+                      onCheckedChange={(checked) => handleInputChange("instrumental", checked)}
+                      className="data-[state=checked]:bg-yellow-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Generate Button with Credits */}
+                <Button
+                  onClick={() => void handleGenerate()}
+                  disabled={isGenerating || !trimmedPromptValue}
+                  className="w-full sm:w-auto bg-gradient-to-r from-yellow-600 to-amber-600 text-black font-bold px-6 sm:px-8 py-3 sm:py-4 rounded-xl flex items-center justify-center gap-2 h-auto disabled:opacity-50 disabled:cursor-not-allowed hover:from-yellow-500 hover:to-amber-500 transition-all shadow-lg hover:shadow-yellow-500/50"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="text-sm sm:text-base">Generating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-5 h-5" />
+                      <span className="text-sm sm:text-base">Create Music</span>
+                      {formData.lyrics && (
+                        <>
+                          <Diamond className="w-4 h-4" />
+                          <span className="text-sm sm:text-base font-bold">
+                            {requiredCreditsForLyrics}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Dropdown Selectors - Responsive Grid */}
+              <div className={`grid gap-3 sm:gap-4 ${!formData.instrumental ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-6' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-5'}`}>
+                {/* Mood */}
+                <Select
+                  value={formData.mood}
+                  onValueChange={(value) => handleInputChange("mood", value)}
+                >
+                  <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
+                    <SelectValue placeholder="Mood" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
+                    {MOODS.map((mood) => (
+                      <SelectItem
+                        key={mood.value}
+                        value={mood.value}
+                        className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
+                      >
+                        {mood.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
               {/* Genre */}
               <Select
                 value={formData.genre}
                 onValueChange={(value) => handleInputChange("genre", value)}
               >
-                <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
+                <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
                   <SelectValue placeholder="Genre" />
                 </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
                   {GENRES.map((genre) => (
                     <SelectItem
                       key={genre.value}
                       value={genre.value}
-                      className="hover:bg-gray-700"
+                      className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
                     >
                       {genre.label}
                     </SelectItem>
@@ -2325,15 +2852,15 @@ export default function MusicGeneratorForm() {
                 value={formData.theme}
                 onValueChange={(value) => handleInputChange("theme", value)}
               >
-                <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
+                <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
                   <SelectValue placeholder="Theme" />
                 </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
                   {THEMES.map((theme) => (
                     <SelectItem
                       key={theme.value}
                       value={theme.value}
-                      className="hover:bg-gray-700"
+                      className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
                     >
                       {theme.label}
                     </SelectItem>
@@ -2346,15 +2873,15 @@ export default function MusicGeneratorForm() {
                 value={formData.tempo}
                 onValueChange={(value) => handleInputChange("tempo", value)}
               >
-                <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
+                <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
                   <SelectValue placeholder="Tempo" />
                 </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
                   {TEMPOS.map((tempo) => (
                     <SelectItem
                       key={tempo.value}
                       value={tempo.value}
-                      className="hover:bg-gray-700"
+                      className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
                     >
                       {tempo.label}
                     </SelectItem>
@@ -2367,15 +2894,15 @@ export default function MusicGeneratorForm() {
                 value={formData.energy}
                 onValueChange={(value) => handleInputChange("energy", value)}
               >
-                <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
+                <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
                   <SelectValue placeholder="Energy" />
                 </SelectTrigger>
-                <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
                   {ENERGY_LEVELS.map((energy) => (
                     <SelectItem
                       key={energy.value}
                       value={energy.value}
-                      className="hover:bg-gray-700"
+                      className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
                     >
                       {energy.label}
                     </SelectItem>
@@ -2389,15 +2916,15 @@ export default function MusicGeneratorForm() {
                   value={formData.voiceType}
                   onValueChange={(value) => handleInputChange("voiceType", value as 'male' | 'female' | 'duet')}
                 >
-                  <SelectTrigger className="w-full bg-gray-800/50 border-gray-700 text-white hover:bg-gray-800 rounded-lg h-12">
-                    <SelectValue placeholder="人物" />
+                  <SelectTrigger className="w-full bg-white/5 backdrop-blur-sm border-yellow-500/20 text-white hover:bg-white/10 hover:border-yellow-500/40 rounded-xl h-12 sm:h-14 transition-all">
+                    <SelectValue placeholder="Voice Type" />
                   </SelectTrigger>
-                  <SelectContent className="bg-gray-800 border-gray-700 text-white">
+                  <SelectContent className="bg-gray-900 border-yellow-500/20 text-white">
                     {VOICE_TYPES.map((voice) => (
                       <SelectItem
                         key={voice.value}
                         value={voice.value}
-                        className="hover:bg-gray-700"
+                        className="hover:bg-yellow-500/10 focus:bg-yellow-500/10"
                       >
                         {voice.label}
                       </SelectItem>
@@ -2405,30 +2932,29 @@ export default function MusicGeneratorForm() {
                   </SelectContent>
                 </Select>
               )}
-            </div>
-
-            {/* Progress Message */}
-            <AnimatePresence>
-              {generationProgress.status !== 'idle' && generationProgress.status !== 'generating' && (
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  className={`p-4 rounded-lg ${
-                    generationProgress.status === 'error'
-                      ? 'bg-red-900/20 border border-red-800 text-red-300'
-                      : generationProgress.status === 'completed'
-                      ? 'bg-green-900/20 border border-green-800 text-green-300'
-                      : 'bg-blue-900/20 border border-blue-800 text-blue-300'
-                  }`}
-                >
-                  {generationProgress.message}
-                </motion.div>
-              )}
-            </AnimatePresence>
               </div>
-            </div>
-          </div>
+
+              {/* Progress Message */}
+              <AnimatePresence>
+                {generationProgress.status !== 'idle' && generationProgress.status !== 'generating' && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className={`p-4 rounded-xl backdrop-blur-sm ${
+                      generationProgress.status === 'error'
+                        ? 'bg-red-900/30 border border-red-500/30 text-red-300'
+                        : generationProgress.status === 'completed'
+                        ? 'bg-yellow-900/20 border border-yellow-500/30 text-yellow-300'
+                        : 'bg-yellow-900/20 border border-yellow-500/30 text-yellow-300'
+                    }`}
+                  >
+                    {generationProgress.message}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Generation Result Section - Between Form and Music Examples */}
@@ -2442,222 +2968,39 @@ export default function MusicGeneratorForm() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.3 }}
-                className="relative overflow-hidden rounded-xl border border-gray-700 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-sm"
+                className="relative overflow-hidden rounded-2xl border border-yellow-500/30 bg-gradient-to-br from-black/80 via-gray-900/80 to-black/80 backdrop-blur-xl"
               >
                 {/* Animated Background - Shimmer/Flow Effect */}
                 <div className="absolute inset-0 overflow-hidden">
                   {/* Shimmer gradient animation - multiple layers for depth */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#FFDA2A]/15 to-transparent animate-shimmer" />
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#FFDA2A]/8 to-transparent animate-shimmer" style={{ animationDelay: '0.5s' }} />
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-yellow-500/15 to-transparent animate-shimmer" />
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-yellow-500/8 to-transparent animate-shimmer" style={{ animationDelay: '0.5s' }} />
                   {/* Flowing wave effect */}
                   <div className="absolute inset-0 opacity-40">
-                    <div className="absolute w-[150%] h-[150%] bg-gradient-to-br from-[#FFDA2A]/8 via-transparent to-[#FFDA2A]/8 animate-flow" />
+                    <div className="absolute w-[150%] h-[150%] bg-gradient-to-br from-yellow-500/8 via-transparent to-yellow-500/8 animate-flow" />
                   </div>
                   {/* Pulsing glow effect */}
-                  <div className="absolute inset-0 bg-[#FFDA2A]/5 animate-pulse" />
+                  <div className="absolute inset-0 bg-yellow-500/5 animate-pulse" />
                 </div>
 
                 {/* Content */}
-                <div className="relative z-10 flex flex-col items-center justify-center py-16 px-8">
-                  <div className="mb-4">
-                    <Loader2 className="w-12 h-12 text-[#FFDA2A] animate-spin" />
+                <div className="relative z-10 flex flex-col items-center justify-center py-12 sm:py-16 px-6 sm:px-8">
+                  <div className="flex flex-col items-center justify-center">
+                    <div className="mb-4">
+                      <Loader2 className="w-12 h-12 sm:w-16 sm:h-16 text-yellow-400 animate-spin" />
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-semibold text-white mb-2">Generating, please wait...</h3>
+                    <p className="text-gray-300 text-sm sm:text-base text-center">
+                      {formData.lyrics 
+                        ? 'Creating your music with lyrics and cover art' 
+                        : 'Creating your unique music track'}
+                    </p>
                   </div>
-                  <h3 className="text-xl font-semibold text-white mb-2">Generating, please wait...</h3>
-                  <p className="text-gray-400 text-sm">
-                    {formData.lyrics 
-                      ? 'Creating your music with lyrics and cover art' 
-                      : 'Creating your unique music track'}
-                  </p>
                 </div>
               </motion.div>
             )}
 
-            {/* Generated Results */}
-            {!isGenerating && generatedMusics.length > 0 && (
-              <motion.div
-                key="results"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-              >
-                <Card className="bg-gray-900 border-gray-800">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Music className="w-5 h-5 text-[#FFDA2A]" />
-                      Generated Music
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {generatedMusics.map((music) => (
-                      <div
-                        key={music.id}
-                        className="p-4 bg-gray-800 rounded-lg border border-gray-700 hover:border-gray-600 transition-all"
-                      >
-                        <div className="flex gap-4">
-                          {/* Cover Image */}
-                          <div className="flex-shrink-0 w-24 h-24 bg-gray-700 rounded-lg overflow-hidden relative">
-                            {music.coverUrl ? (
-                              <img
-                                src={music.coverUrl}
-                                alt={music.title || music.prompt}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center">
-                                <Music className="w-8 h-8 text-gray-500" />
-                              </div>
-                            )}
-                            {/* Professional Audio Visualizer Overlay - Only visible when playing */}
-                            {currentPlayingId === music.id && (
-                              <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
-                                <div className="w-full h-full p-4">
-                                  <ProfessionalAudioVisualizer
-                                    isPlaying={currentPlayingId === music.id}
-                                    audioElement={audioElementsRef.current.get(music.id) || undefined}
-                                    variant="bars"
-                                    barCount={20}
-                                    color="#FFDA2A"
-                                    className="w-full h-full"
-                                  />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            {/* Audio Progress Bar - Only show when playing */}
-                            {currentPlayingId === music.id && (() => {
-                              const progress = audioProgress.get(music.id) || { currentTime: 0, duration: 0 };
-                              return (
-                                <ProfessionalProgressBar
-                                  currentTime={progress.currentTime}
-                                  duration={progress.duration}
-                                  onSeek={(time) => handleSeek(music.id, time)}
-                                  showTime={true}
-                                  color="#FFDA2A"
-                                  className="mb-3"
-                                />
-                              );
-                            })()}
-                            <div className="flex items-start justify-between mb-2">
-                              <div className="flex-1 min-w-0">
-                                <h3 className="text-white font-medium mb-1 truncate">
-                                  {music.title || music.prompt}
-                                </h3>
-                                <div className="flex items-center gap-3 text-xs text-gray-400 flex-wrap">
-                                  {music.style && (
-                                    <>
-                                      <span>{GENRES.find(g => g.value === music.style)?.label || music.style}</span>
-                                      <span>•</span>
-                                    </>
-                                  )}
-                                  {music.mood && (
-                                    <>
-                                      <span>{MOODS.find(m => m.value === music.mood)?.label || music.mood}</span>
-                                      <span>•</span>
-                                    </>
-                                  )}
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3" />
-                                    {music.duration}s
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2 ml-2">
-                                {music.hasLyrics && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => {
-                                      const musicData = generatedMusics.find(m => m.id === music.id);
-                                      setLyricsEditDialog({
-                                        isOpen: true,
-                                        lyrics: musicData?.lyrics || '',
-                                        musicId: music.id,
-                                        isNewGeneration: false,
-                                      });
-                                    }}
-                                    className="text-white hover:bg-gray-700"
-                                    title="View/Edit Lyrics"
-                                  >
-                                    <FileText className="w-4 h-4" />
-                                  </Button>
-                                )}
-                                {/* <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleNavigateToMusicVideo(music.id)}
-                                  className="text-white hover:bg-gray-700"
-                                  title="Create Music Video"
-                                  disabled={videoPreparingId === music.id}
-                                >
-                                  {videoPreparingId === music.id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Video className="w-4 h-4" />
-                                  )}
-                                </Button> */}
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    void handlePlayPause(music.id);
-                                  }}
-                                  className="text-white hover:bg-gray-700"
-                                  disabled={!music.audioUrl}
-                                >
-                                  {currentPlayingId === music.id ? (
-                                    <Pause className="w-4 h-4" />
-                                  ) : (
-                                    <Play className="w-4 h-4" />
-                                  )}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDownload(music.id)}
-                                  className="text-white hover:bg-gray-700"
-                                  disabled={!music.audioUrl}
-                                >
-                                  <Download className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                        {music.audioUrl && (
-                          <audio
-                            ref={(el) => attachMainAudioElement(music.id, el)}
-                            src={music.audioUrl}
-                            preload="metadata"
-                            onEnded={() => {
-                              setCurrentPlayingId(null);
-                              setAudioProgress(prev => {
-                                const newMap = new Map(prev);
-                                const current = newMap.get(music.id);
-                                if (current) {
-                                  newMap.set(music.id, { ...current, currentTime: 0 });
-                                }
-                                return newMap;
-                              });
-                            }}
-                            className="hidden"
-                          />
-                        )}
-                        {!music.audioUrl && (
-                          <div className="text-xs text-yellow-500 flex items-center gap-1">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            Processing audio...
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
+            {/* Generated Results - 已移除，不再显示生成的音乐 */}
           </AnimatePresence>
         </div>
 
@@ -2670,35 +3013,35 @@ export default function MusicGeneratorForm() {
           transition={{ duration: 0.6 }}
           className="max-w-7xl mx-auto mt-24 mb-12"
         >
-          <div className="text-center mb-8">
+          <div className="text-center mb-8 sm:mb-12">
             {/* Tab Switcher */}
-            <div className="flex items-center justify-center gap-4 mb-6">
+            <div className="flex items-center justify-center gap-3 sm:gap-4 mb-6 sm:mb-8">
               <button
                 onClick={() => setActiveTab('examples')}
-                className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                className={`px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-all ${
                   activeTab === 'examples'
-                    ? 'bg-[#FFDA2A] text-gray-900'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    ? 'bg-gradient-to-r from-yellow-600 to-amber-600 text-black shadow-lg shadow-yellow-500/50'
+                    : 'bg-white/5 backdrop-blur-sm border border-yellow-500/20 text-gray-300 hover:bg-white/10 hover:border-yellow-500/40 hover:text-yellow-400'
                 }`}
               >
                 Music Examples
               </button>
               <button
                 onClick={() => setActiveTab('my-music')}
-                className={`px-6 py-2 rounded-lg font-medium transition-all ${
+                className={`px-5 sm:px-6 py-2.5 sm:py-3 rounded-xl font-semibold transition-all ${
                   activeTab === 'my-music'
-                    ? 'bg-[#FFDA2A] text-gray-900'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    ? 'bg-gradient-to-r from-yellow-600 to-amber-600 text-black shadow-lg shadow-yellow-500/50'
+                    : 'bg-white/5 backdrop-blur-sm border border-yellow-500/20 text-gray-300 hover:bg-white/10 hover:border-yellow-500/40 hover:text-yellow-400'
                 }`}
               >
                 My Music
               </button>
             </div>
             
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
+            <h2 className="text-2xl sm:text-3xl md:text-4xl font-black bg-gradient-to-r from-yellow-200 via-amber-200 to-yellow-300 bg-clip-text text-transparent mb-3 sm:mb-4">
               {activeTab === 'examples' ? 'Music Examples' : 'My Music'}
             </h2>
-            <p className="text-gray-400 text-lg">
+            <p className="text-gray-300 text-base sm:text-lg max-w-2xl mx-auto px-4">
               {activeTab === 'examples' 
                 ? 'Explore AI-generated music samples'
                 : 'Your generated music collection'}
@@ -2722,10 +3065,10 @@ export default function MusicGeneratorForm() {
                     whileInView={{ opacity: 1, y: 0 }}
                     viewport={{ once: true }}
                     transition={{ duration: 0.5, delay: index * 0.05 }}
-                    className="bg-gray-900 rounded-lg overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group"
+                    className="bg-black/40 backdrop-blur-sm rounded-xl overflow-hidden border border-yellow-500/20 hover:border-yellow-500/40 hover:bg-white/5 transition-all group shadow-lg hover:shadow-yellow-500/20"
                   >
                     {/* Cover Image */}
-                    <div className="relative aspect-square bg-gray-800 overflow-hidden">
+                    <div className="relative aspect-square bg-gray-900 overflow-hidden">
                       <img
                         src={music.coverUrl}
                         alt={music.title || "Music cover"}
@@ -2734,98 +3077,83 @@ export default function MusicGeneratorForm() {
                           (e.target as HTMLImageElement).src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Crect fill='%231f2937' width='400' height='400'/%3E%3Ctext fill='%239ca3af' font-family='sans-serif' font-size='20' x='50%25' y='50%25' text-anchor='middle' dy='.3em'%3ENo Cover%3C/text%3E%3C/svg%3E";
                         }}
                       />
-                      {/* Professional Audio Visualizer Overlay - Only visible when playing */}
-                      {examplePlayingId === music.id && (
-                        <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
-                          <div className="w-full h-full p-6">
-                            <ProfessionalAudioVisualizer
-                              isPlaying={examplePlayingId === music.id}
-                                  audioElement={exampleAudioElementsRef.current.get(music.id) || undefined}
-                              variant="circle"
-                              barCount={24}
-                              color="#FFDA2A"
-                              className="w-full h-full"
-                            />
-                          </div>
-                        </div>
-                      )}
-                      {/* Play Button Overlay - Always visible */}
-                      <div className="absolute inset-0 flex items-center justify-center">
+                      {/* Play Button Overlay - Hover visible */}
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => {
                             void handleExamplePlayPause(music.id);
                           }}
-                          className="w-14 h-14 rounded-full bg-white hover:bg-gray-100 transition-all flex items-center justify-center shadow-lg z-10"
+                          className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-500 hover:to-amber-500 transition-all flex items-center justify-center shadow-lg shadow-yellow-500/50 z-10"
                         >
-                          {examplePlayingId === music.id ? (
-                            <Pause className="w-5 h-5 text-black" />
-                          ) : (
-                            <Play className="w-5 h-5 text-black ml-0.5" />
-                          )}
+                          <Play className="w-5 h-5 sm:w-6 sm:h-6 text-black ml-0.5" />
                         </button>
                       </div>
-                      {/* Audio Element */}
-                      <audio
-                        ref={(el) => attachExampleAudioElement(music.id, el)}
-                        src={music.audioUrl}
-                        preload="metadata"
-                        onEnded={() => {
-                          setExamplePlayingId(null);
-                          setExampleAudioProgress(prev => {
-                            const newMap = new Map(prev);
-                            const current = newMap.get(music.id);
-                            if (current) {
-                              newMap.set(music.id, { ...current, currentTime: 0 });
+                      {/* Hidden Audio Element for duration detection */}
+                      {music.audioUrl && (
+                        <audio
+                          src={music.audioUrl}
+                          preload="metadata"
+                          onLoadedMetadata={(e) => {
+                            const audio = e.currentTarget;
+                            if (audio.duration && isFinite(audio.duration)) {
+                              setMusicDurations(prev => {
+                                const newMap = new Map(prev);
+                                newMap.set(music.id, audio.duration);
+                                return newMap;
+                              });
                             }
-                            return newMap;
-                          });
-                        }}
-                        className="hidden"
-                      />
+                          }}
+                          className="hidden"
+                        />
+                      )}
                     </div>
 
                     {/* Content */}
-                    <div className="p-4 space-y-3">
+                    <div className="p-4 sm:p-5 space-y-3">
                       {/* Title */}
-                      <h3 className="text-white font-medium text-sm line-clamp-1">
+                      <h3 className="text-white font-semibold text-sm sm:text-base line-clamp-1">
                         {music.title || "Untitled"}
                       </h3>
 
-                      {/* Audio Progress Bar - Only show when playing */}
-                      {examplePlayingId === music.id && (() => {
-                        const progress = exampleAudioProgress.get(music.id) || { currentTime: 0, duration: 0 };
-                        return (
-                          <ProfessionalProgressBar
-                            currentTime={progress.currentTime}
-                            duration={progress.duration}
-                            onSeek={(time) => handleExampleSeek(music.id, time)}
-                            color="#FFDA2A"
-                            showTime={false}
-                            className="mt-2"
-                          />
-                        );
-                      })()}
 
                       {/* Tags */}
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className="flex flex-wrap gap-1.5 sm:gap-2">
                         {displayTags.map((tag, tagIndex) => (
                           <span
                             key={tagIndex}
-                            className="px-2 py-0.5 bg-gray-800 text-gray-300 text-xs rounded-md"
+                            className="px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-xs rounded-lg"
                           >
                             {tag}
                           </span>
                         ))}
                         {remainingTags > 0 && (
-                          <span className="px-2 py-0.5 bg-gray-800 text-gray-400 text-xs rounded-md">
+                          <span className="px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs rounded-lg">
                             +{remainingTags}
                           </span>
                         )}
                       </div>
 
-                      {/* Timestamp */}
-                      <div className="text-gray-500 text-xs">
-                        {music.createdAt}
+                      {/* Duration and Timestamp */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1 text-xs text-gray-400">
+                          <Clock className="w-3 h-3" />
+                          <span>
+                            {(() => {
+                              const actualDuration = musicDurations.get(music.id);
+                              if (actualDuration && isFinite(actualDuration)) {
+                                return formatTime(actualDuration);
+                              }
+                              // 如果还没有加载，尝试从 duration 字段解析
+                              if (music.duration && typeof music.duration === 'number') {
+                                return formatTime(music.duration);
+                              }
+                              return '--:--';
+                            })()}
+                          </span>
+                        </div>
+                        <div className="text-gray-400 text-xs">
+                          {music.createdAt}
+                        </div>
                       </div>
                     </div>
                   </motion.div>
@@ -2834,8 +3162,8 @@ export default function MusicGeneratorForm() {
                 </div>
               ) : (
                 <div className="text-center py-16">
-                  <Music className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-                  <p className="text-gray-400 text-lg">No examples available</p>
+                  <Music className="w-16 h-16 text-yellow-500/30 mx-auto mb-4" />
+                  <p className="text-gray-300 text-lg">No examples available</p>
                 </div>
               )}
             </>
@@ -2846,11 +3174,11 @@ export default function MusicGeneratorForm() {
             <>
               {isLoadingMyMusic ? (
                 <div className="text-center py-16">
-                  <Loader2 className="w-8 h-8 animate-spin text-[#FFDA2A] mx-auto mb-4" />
-                  <p className="text-gray-400">Loading your music...</p>
+                  <Loader2 className="w-8 h-8 animate-spin text-yellow-400 mx-auto mb-4" />
+                  <p className="text-gray-300">Loading your music...</p>
                 </div>
               ) : myMusicList.length > 0 ? (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6">
                   {myMusicList.map((music, index) => {
                     const tags: string[] = [];
                     if (music.style) tags.push(music.style);
@@ -2865,10 +3193,10 @@ export default function MusicGeneratorForm() {
                         whileInView={{ opacity: 1, y: 0 }}
                         viewport={{ once: true }}
                         transition={{ duration: 0.5, delay: index * 0.05 }}
-                        className="bg-gray-900 rounded-lg overflow-hidden border border-gray-800 hover:border-gray-700 transition-all group"
+                        className="bg-black/40 backdrop-blur-sm rounded-xl overflow-hidden border border-yellow-500/20 hover:border-yellow-500/40 hover:bg-white/5 transition-all group shadow-lg hover:shadow-yellow-500/20"
                       >
                         {/* Cover Image */}
-                        <div className="relative aspect-square bg-gray-800 overflow-hidden">
+                        <div className="relative aspect-square bg-gray-900 overflow-hidden">
                           {music.coverUrl ? (
                             <img
                               src={music.coverUrl}
@@ -2880,53 +3208,32 @@ export default function MusicGeneratorForm() {
                               <Music className="w-16 h-16 text-gray-600" />
                             </div>
                           )}
-                          {/* Professional Audio Visualizer Overlay - Only visible when playing */}
-                          {currentPlayingId === music.id && (
-                            <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/60 to-black/70 backdrop-blur-sm flex items-center justify-center">
-                              <div className="w-full h-full p-6">
-                                <ProfessionalAudioVisualizer
-                                  isPlaying={currentPlayingId === music.id}
-                                  audioElement={audioElementsRef.current.get(music.id) || undefined}
-                                  variant="circle"
-                                  barCount={24}
-                                  color="#FFDA2A"
-                                  className="w-full h-full"
-                                />
-                              </div>
-                            </div>
-                          )}
                           {/* Play Button Overlay */}
-                          <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <button
                               onClick={() => {
                                 void handlePlayPause(music.id);
                               }}
-                              className="w-14 h-14 rounded-full bg-white hover:bg-gray-100 transition-all flex items-center justify-center shadow-lg z-10"
+                              className="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-gradient-to-r from-yellow-600 to-amber-600 hover:from-yellow-500 hover:to-amber-500 transition-all flex items-center justify-center shadow-lg shadow-yellow-500/50 z-10"
                               disabled={!music.audioUrl}
                             >
-                              {currentPlayingId === music.id ? (
-                                <Pause className="w-5 h-5 text-black" />
-                              ) : (
-                                <Play className="w-5 h-5 text-black ml-0.5" />
-                              )}
+                              <Play className="w-5 h-5 sm:w-6 sm:h-6 text-black ml-0.5" />
                             </button>
                           </div>
-                          {/* Audio Element */}
+                          {/* Hidden Audio Element for duration detection */}
                           {music.audioUrl && (
                             <audio
-                              ref={(el) => attachMainAudioElement(music.id, el)}
                               src={music.audioUrl}
                               preload="metadata"
-                              onEnded={() => {
-                                setCurrentPlayingId(null);
-                                setAudioProgress(prev => {
-                                  const newMap = new Map(prev);
-                                  const current = newMap.get(music.id);
-                                  if (current) {
-                                    newMap.set(music.id, { ...current, currentTime: 0 });
-                                  }
-                                  return newMap;
-                                });
+                              onLoadedMetadata={(e) => {
+                                const audio = e.currentTarget;
+                                if (audio.duration && isFinite(audio.duration)) {
+                                  setMusicDurations(prev => {
+                                    const newMap = new Map(prev);
+                                    newMap.set(music.id, audio.duration);
+                                    return newMap;
+                                  });
+                                }
                               }}
                               className="hidden"
                             />
@@ -2934,26 +3241,11 @@ export default function MusicGeneratorForm() {
                         </div>
 
                         {/* Content */}
-                        <div className="p-4 space-y-3">
+                        <div className="p-4 sm:p-5 space-y-3">
                           {/* Title */}
-                          <h3 className="text-white font-medium text-sm line-clamp-2">
+                          <h3 className="text-white font-semibold text-sm sm:text-base line-clamp-2">
                             {music.title || music.prompt || "Untitled"}
                           </h3>
-                          
-                          {/* Audio Progress Bar - Only show when playing */}
-                          {currentPlayingId === music.id && (() => {
-                            const progress = audioProgress.get(music.id) || { currentTime: 0, duration: 0 };
-                            return (
-                              <ProfessionalProgressBar
-                                currentTime={progress.currentTime}
-                                duration={progress.duration}
-                                onSeek={(time) => handleSeek(music.id, time)}
-                                showTime={false}
-                                color="#FFDA2A"
-                                className="mt-2"
-                              />
-                            );
-                          })()}
                           
                           {/* Lyrics Icon and Info */}
                           <div className="flex items-center justify-between">
@@ -2967,32 +3259,45 @@ export default function MusicGeneratorForm() {
                                     isNewGeneration: false,
                                   });
                                 }}
-                                className="flex items-center gap-1 text-xs text-[#FFDA2A] hover:text-[#FFDA2A]/80 transition-colors"
+                                className="flex items-center gap-1 text-xs text-yellow-400 hover:text-yellow-300 transition-colors"
                                 title="View/Edit Lyrics"
                               >
                                 <FileText className="w-3 h-3" />
                                 <span>Lyrics</span>
                               </button>
                             )}
-                            <div className="flex items-center gap-1 text-xs text-gray-500">
+                            <div className="flex items-center gap-1 text-xs text-gray-400">
                               <Clock className="w-3 h-3" />
-                              <span>{music.duration}s</span>
+                              <span>
+                                {(() => {
+                                  const actualDuration = musicDurations.get(music.id);
+                                  if (actualDuration && isFinite(actualDuration)) {
+                                    return formatTime(actualDuration);
+                                  }
+                                  // 如果还没有加载，尝试从 duration 字符串解析
+                                  const parsedDuration = parseFloat(music.duration);
+                                  if (!isNaN(parsedDuration) && parsedDuration > 0) {
+                                    return formatTime(parsedDuration);
+                                  }
+                                  return '--:--';
+                                })()}
+                              </span>
                             </div>
                           </div>
 
                           {/* Tags */}
                           {displayTags.length > 0 && (
-                            <div className="flex flex-wrap gap-1.5">
+                            <div className="flex flex-wrap gap-1.5 sm:gap-2">
                               {displayTags.map((tag, tagIndex) => (
                                 <span
                                   key={tagIndex}
-                                  className="px-2 py-0.5 bg-gray-800 text-gray-300 text-xs rounded-md"
+                                  className="px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 text-yellow-300 text-xs rounded-lg"
                                 >
                                   {tag}
                                 </span>
                               ))}
                               {remainingTags > 0 && (
-                                <span className="px-2 py-0.5 bg-gray-800 text-gray-400 text-xs rounded-md">
+                                <span className="px-2 py-1 bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs rounded-lg">
                                   +{remainingTags}
                                 </span>
                               )}
@@ -3000,19 +3305,35 @@ export default function MusicGeneratorForm() {
                           )}
 
                           {/* Timestamp */}
-                          <div className="text-gray-500 text-xs">
+                          <div className="text-gray-400 text-xs">
                             {music.createdAt.toLocaleDateString()}
                           </div>
 
-                          {/* Download Button */}
+                          {/* Action Buttons */}
                           {music.audioUrl && (
-                            <button
-                              onClick={() => handleDownload(music.id)}
-                              className="w-full mt-2 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white text-xs rounded-md transition-colors flex items-center justify-center gap-2"
-                            >
-                              <Download className="w-3 h-3" />
-                              Download
-                            </button>
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={() => handleDownload(music.id)}
+                                className="flex-1 px-3 py-2 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20 hover:border-yellow-500/40 text-yellow-300 hover:text-yellow-200 text-xs rounded-lg transition-all flex items-center justify-center gap-2"
+                              >
+                                <Download className="w-3 h-3" />
+                                Download
+                              </button>
+                              <button
+                                onClick={() => {
+                                  // 直接打开选择音频片段对话框
+                                  setSelectedMusicForVideo(music);
+                                  // 清空之前的拆段结果，准备重新拆段
+                                  setAutoSegments([]);
+                                  setMusicFeatures(null);
+                                  setShowAudioSegmentDialog(true);
+                                }}
+                                className="flex-1 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 hover:border-blue-500/40 text-blue-300 hover:text-blue-200 text-xs rounded-lg transition-all flex items-center justify-center gap-2"
+                              >
+                                <Mic className="w-3 h-3" />
+                                对口型
+                              </button>
+                            </div>
                           )}
 
                           {/* Processing Status */}
@@ -3028,10 +3349,10 @@ export default function MusicGeneratorForm() {
                   })}
                 </div>
               ) : (
-                <div className="text-center py-16">
-                  <Music className="w-16 h-16 text-gray-600 mx-auto mb-4" />
-                  <p className="text-gray-400 text-lg mb-2">No music yet</p>
-                  <p className="text-gray-500 text-sm">Start creating your first AI-generated music above!</p>
+                <div className="text-center py-16 sm:py-20">
+                  <Music className="w-16 h-16 sm:w-20 sm:h-20 text-yellow-500/30 mx-auto mb-4" />
+                  <p className="text-gray-300 text-lg sm:text-xl mb-2">No music yet</p>
+                  <p className="text-gray-400 text-sm sm:text-base">Start creating your first AI-generated music above!</p>
                 </div>
               )}
             </>
@@ -3385,7 +3706,880 @@ export default function MusicGeneratorForm() {
         )}
       </AnimatePresence>
 
+      {/* 全局音乐播放器 - 固定在屏幕底部 */}
+      <AnimatePresence>
+        {currentPlayingMusic && (
+          <motion.div
+            key={currentPlayingMusic.id}
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: "spring", damping: 25, stiffness: 200 }}
+            className={`fixed z-[100] bg-[#f5f5f0] border border-gray-300 shadow-lg ${
+              isPlayerMinimized 
+                ? 'bottom-4 right-4 w-80 rounded-lg' 
+                : 'bottom-0 left-0 right-0 border-t'
+            }`}
+            style={{ backgroundImage: 'radial-gradient(circle, #e0e0d8 1px, transparent 1px)', backgroundSize: '20px 20px' }}
+          >
+            <div className={`${isPlayerMinimized ? 'p-3' : 'max-w-7xl mx-auto px-4 py-3'}`}>
+              <div className={`flex items-center ${isPlayerMinimized ? 'flex-col gap-3' : 'gap-4'}`}>
+                {/* 左侧：专辑封面 */}
+                <div className={`${isPlayerMinimized ? 'w-20 h-20' : 'w-16 h-16'} rounded-lg overflow-hidden flex-shrink-0 bg-gray-200`}>
+                  {currentPlayingMusic.coverUrl ? (
+                    <img
+                      src={currentPlayingMusic.coverUrl}
+                      alt={currentPlayingMusic.title}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-gray-300">
+                      <Music className="w-8 h-8 text-gray-500" />
+                    </div>
+                  )}
+                </div>
+
+                {/* 中间：歌曲信息和进度条 */}
+                <div className={`${isPlayerMinimized ? 'w-full' : 'flex-1 min-w-0'}`}>
+                  {/* 标题和类型 */}
+                  <div className={`flex items-center justify-between ${isPlayerMinimized ? 'mb-3' : 'mb-2'}`}>
+                    <div className="flex-1 min-w-0">
+                      <h4 className={`${isPlayerMinimized ? 'text-sm' : 'text-base'} font-bold text-black truncate`}>
+                        {currentPlayingMusic.title}
+                      </h4>
+                      {!isPlayerMinimized && (
+                        <p className="text-xs text-gray-600 truncate">
+                          {currentPlayingMusic.description.substring(0, 30)}...
+                        </p>
+                      )}
+                    </div>
+                    {/* 全屏/最小化切换图标 */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-gray-600 hover:text-black hover:bg-gray-200"
+                      onClick={() => setIsPlayerMinimized(!isPlayerMinimized)}
+                    >
+                      <Maximize2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+
+                  {/* 进度条 */}
+                  <div className={`flex items-center ${isPlayerMinimized ? 'flex-col gap-2' : 'gap-2'}`}>
+                    {!isPlayerMinimized && (
+                      <span className="text-xs text-gray-600 min-w-[40px]">
+                        {formatTime(currentTime)}
+                      </span>
+                    )}
+                    <div 
+                      className="flex-1 h-1 bg-gray-300 rounded-full relative cursor-pointer"
+                      onClick={(e) => {
+                        if (globalAudioRef.current && duration > 0) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const percent = (e.clientX - rect.left) / rect.width;
+                          const newTime = percent * duration;
+                          globalAudioRef.current.currentTime = newTime;
+                          setCurrentTime(newTime);
+                        }
+                      }}
+                    >
+                      <div
+                        className="h-full bg-gray-600 rounded-full transition-all"
+                        style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <div className={`flex items-center ${isPlayerMinimized ? 'w-full justify-between' : 'gap-2'}`}>
+                      {isPlayerMinimized && (
+                        <span className="text-xs text-gray-600">
+                          {formatTime(currentTime)} / {formatTime(duration)}
+                        </span>
+                      )}
+                      {!isPlayerMinimized && (
+                        <span className="text-xs text-gray-600 min-w-[40px]">
+                          {formatTime(duration)}
+                        </span>
+                      )}
+                      {/* 音量控制 */}
+                      <div 
+                        className="relative flex items-center"
+                        onMouseEnter={() => setShowVolumeSlider(true)}
+                        onMouseLeave={() => setShowVolumeSlider(false)}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-gray-600 hover:text-black"
+                          onClick={() => {
+                            if (globalAudioRef.current) {
+                              if (isMuted) {
+                                globalAudioRef.current.muted = false;
+                                setIsMuted(false);
+                              } else {
+                                globalAudioRef.current.muted = true;
+                                setIsMuted(true);
+                              }
+                            }
+                          }}
+                        >
+                          {isMuted || volume === 0 ? (
+                            <VolumeX className="w-4 h-4" />
+                          ) : volume < 0.5 ? (
+                            <Volume1 className="w-4 h-4" />
+                          ) : (
+                            <Volume2 className="w-4 h-4" />
+                          )}
+                        </Button>
+                        {/* 音量滑块 */}
+                        {showVolumeSlider && (
+                          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-50">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={isMuted ? 0 : volume}
+                                onChange={(e) => {
+                                  const newVolume = parseFloat(e.target.value);
+                                  setVolume(newVolume);
+                                  setIsMuted(newVolume === 0);
+                                  if (globalAudioRef.current) {
+                                    globalAudioRef.current.volume = newVolume;
+                                    globalAudioRef.current.muted = newVolume === 0;
+                                  }
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                className="w-24 h-1 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-gray-600"
+                                style={{
+                                  background: `linear-gradient(to right, #4b5563 0%, #4b5563 ${(isMuted ? 0 : volume) * 100}%, #d1d5db ${(isMuted ? 0 : volume) * 100}%, #d1d5db 100%)`
+                                }}
+                              />
+                              <span className="text-xs text-gray-600 min-w-[30px] text-right">
+                                {Math.round((isMuted ? 0 : volume) * 100)}%
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 右侧：播放控制 */}
+                <div className={`flex items-center ${isPlayerMinimized ? 'w-full justify-center' : 'gap-2 flex-shrink-0'}`}>
+                  {!isPlayerMinimized && (
+                    <>
+                      {/* 分享图标 */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-gray-600 hover:text-black hover:bg-gray-200"
+                      >
+                        <Share2 className="w-4 h-4" />
+                      </Button>
+                      {/* 上一首 */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-gray-600 hover:text-black hover:bg-gray-200"
+                        onClick={handlePrevious}
+                        disabled={currentPlaylist.length === 0}
+                      >
+                        <ChevronLeft className="w-5 h-5" />
+                      </Button>
+                    </>
+                  )}
+                  {/* 播放/暂停 */}
+                  <Button
+                    size={isPlayerMinimized ? "default" : "lg"}
+                    className={`${isPlayerMinimized ? 'h-10 w-10' : 'h-12 w-12'} rounded-full bg-black text-white hover:bg-gray-800 p-0`}
+                    onClick={async () => {
+                      if (globalAudioRef.current) {
+                        if (isPlaying) {
+                          try {
+                            globalAudioRef.current.pause();
+                            setIsPlaying(false);
+                          } catch (error) {
+                            console.error('Error pausing global audio:', error);
+                          }
+                        } else {
+                          // 先暂停拆段音频
+                          if (segmentAudioRef.current && !segmentAudioRef.current.paused) {
+                            try {
+                              segmentAudioRef.current.pause();
+                              setIsPlayingSegment(false);
+                              setPlayingSegmentIndex(null);
+                            } catch (err) {
+                              console.error('Error pausing segment audio:', err);
+                            }
+                          }
+                          
+                          try {
+                            await globalAudioRef.current.play();
+                            setIsPlaying(true);
+                          } catch (error) {
+                            console.error('Error playing audio:', error);
+                            setIsPlaying(false);
+                          }
+                        }
+                      }
+                    }}
+                  >
+                    {isPlaying ? (
+                      <Pause className={isPlayerMinimized ? "w-5 h-5" : "w-6 h-6"} />
+                    ) : (
+                      <Play className={`${isPlayerMinimized ? "w-5 h-5" : "w-6 h-6"} ${!isPlayerMinimized ? "ml-0.5" : ""}`} />
+                    )}
+                  </Button>
+                  {!isPlayerMinimized && (
+                    <>
+                      {/* 下一首 */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-gray-600 hover:text-black hover:bg-gray-200"
+                        onClick={handleNext}
+                        disabled={currentPlaylist.length === 0}
+                      >
+                        <ChevronRight className="w-5 h-5" />
+                      </Button>
+                    </>
+                  )}
+                  {/* 更多选项 - 下拉菜单 */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-gray-600 hover:text-black hover:bg-gray-200"
+                      >
+                        <MoreHorizontal className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40 bg-white border border-gray-200 shadow-lg">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          if (currentPlayingMusic.audioUrl) {
+                            // 下载歌曲
+                            const link = document.createElement('a');
+                            link.href = currentPlayingMusic.audioUrl;
+                            link.download = `${currentPlayingMusic.title || 'music'}.mp3`;
+                            document.body.appendChild(link);
+                            link.click();
+                            document.body.removeChild(link);
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        下载
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          // 找到对应的音乐
+                          const music = myMusicList.find(m => m.id === currentPlayingMusic.id);
+                          if (music) {
+                            setLyricsEditDialog({
+                              isOpen: true,
+                              lyrics: music.lyrics || '',
+                              musicId: music.id,
+                              isNewGeneration: false,
+                            });
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <Edit className="w-4 h-4 mr-2" />
+                        编辑歌词
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          // 找到对应的音乐并打开选择音频片段对话框
+                          const music = myMusicList.find(m => m.id === currentPlayingMusic.id);
+                          if (music) {
+                            setSelectedMusicForVideo(music);
+                            // 清空之前的拆段结果，准备重新拆段
+                            setAutoSegments([]);
+                            setMusicFeatures(null);
+                            setShowAudioSegmentDialog(true);
+                          }
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <Mic className="w-4 h-4 mr-2" />
+                        对口型
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </div>
+            </div>
+
+            {/* 隐藏的音频元素 */}
+            {currentPlayingMusic.audioUrl && (
+              <audio
+                ref={globalAudioRef}
+                src={currentPlayingMusic.audioUrl}
+                volume={volume}
+                muted={isMuted}
+                onTimeUpdate={(e) => {
+                  const audio = e.currentTarget;
+                  setCurrentTime(audio.currentTime);
+                }}
+                onLoadedMetadata={(e) => {
+                  const audio = e.currentTarget;
+                  const newDuration = audio.duration;
+                  setDuration(newDuration);
+                  // 设置初始音量
+                  if (audio.volume !== volume) {
+                    audio.volume = volume;
+                  }
+                  if (audio.muted !== isMuted) {
+                    audio.muted = isMuted;
+                  }
+                }}
+                onCanPlay={(e) => {
+                  // 当音频可以播放时，如果 isPlaying 为 true 且音频处于暂停状态，则自动播放
+                  const audio = e.currentTarget;
+                  if (isPlaying && audio.paused) {
+                    // 使用 requestAnimationFrame 确保在下一帧播放
+                    requestAnimationFrame(() => {
+                      audio.play().catch((error) => {
+                        console.error('Error auto-playing audio on canPlay:', error);
+                        setIsPlaying(false);
+                      });
+                    });
+                  }
+                }}
+                onLoadedData={(e) => {
+                  // 当音频数据加载完成时，如果 isPlaying 为 true，也尝试播放
+                  const audio = e.currentTarget;
+                  if (isPlaying && audio.paused && audio.readyState >= 2) {
+                    requestAnimationFrame(() => {
+                      audio.play().catch((error) => {
+                        console.error('Error auto-playing audio on loadedData:', error);
+                        setIsPlaying(false);
+                      });
+                    });
+                  }
+                }}
+                onEnded={() => {
+                  setIsPlaying(false);
+                  setCurrentTime(0);
+                  // 自动播放下一首
+                  if (currentPlaylist.length > 0) {
+                    handleNext();
+                  }
+                }}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                autoPlay
+              />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Conversation Modal */}
+      {showConversation && (
+        <MusicConversation
+          initialPrompt={conversationPrompt}
+          isLyricsMode={formData.lyrics}
+          mvParams={conversationMvParams}
+          onGenerate={(finalPrompt) => {
+            setShowConversation(false);
+            // Update form data with final prompt
+            setFormData(prev => ({ ...prev, prompt: finalPrompt }));
+            // Trigger generation with final prompt
+            handleGenerate(finalPrompt);
+          }}
+          onClose={() => {
+            setShowConversation(false);
+            setIsGenerating(false);
+            setGenerationProgress({ status: 'idle', message: '' });
+            setConversationMvParams(undefined);
+          }}
+        />
+      )}
+
+      {/* 选择音频片段对话框 */}
+      <Dialog open={showAudioSegmentDialog} onOpenChange={(open) => {
+        setShowAudioSegmentDialog(open);
+        if (!open) {
+          if (segmentAudioRef.current) {
+            segmentAudioRef.current.pause();
+            setIsPlayingSegment(false);
+            setPlayingSegmentIndex(null);
+          }
+          // 不清空 autoSegments，保留拆段结果
+          // setSelectedMusicForVideo(null);
+        } else {
+          // 打开对话框时，如果有音频URL，自动触发智能拆段
+          // 等待音频元数据加载完成后再触发
+          if (selectedMusicForVideo?.audioUrl && autoSegments.length === 0 && !isAnalyzing) {
+            // 延迟执行，确保对话框完全打开和音频元数据加载
+            const checkAndSegment = () => {
+              if (audioDuration > 0) {
+                handleAutoSegment();
+              } else {
+                // 如果音频时长还未加载，再等待一下
+                setTimeout(checkAndSegment, 200);
+              }
+            };
+            setTimeout(checkAndSegment, 500);
+          }
+        }
+      }}>
+        <DialogContent className="sm:max-w-[90vw] max-w-[95vw] w-full bg-white p-0 overflow-y-auto max-h-[90vh] flex flex-col">
+          <DialogTitle className="sr-only">Step 1: Select Audio Segment</DialogTitle>
+          <div className="flex flex-col">
+            {/* 头部 */}
+            <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-200 flex-shrink-0 pr-12 sm:pr-16">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Step 1: Select Audio Segment</h2>
+              </div>
+              <Button
+                className="bg-black text-white hover:bg-gray-800 px-6 sm:px-8"
+                onClick={async () => {
+                  if (!selectedMusicForVideo?.audioUrl) return;
+                  
+                  // 先关闭当前对话框，避免卡顿
+                  setShowAudioSegmentDialog(false);
+                  
+                  // 直接使用原始音频URL，不调用截取API（避免卡顿）
+                  // 实际截取可以在生成MV时进行
+                  setTrimmedAudioData({
+                    audioUrl: selectedMusicForVideo.audioUrl,
+                    startTime: selectedStartTime,
+                    endTime: selectedEndTime,
+                    musicId: selectedMusicForVideo.id,
+                    musicTitle: selectedMusicForVideo.title || selectedMusicForVideo.prompt || '',
+                    musicFeatures: musicFeatures || undefined,
+                  });
+                  
+                  // 延迟一点打开新对话框，确保前一个对话框完全关闭
+                  setTimeout(() => {
+                    setShowMVCustomizeDialog(true);
+                  }, 100);
+                }}
+              >
+                Next
+              </Button>
+            </div>
+
+            {/* 内容区域 */}
+            <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+              {/* 音频特征信息和拆段结果优先显示 */}
+              {isAnalyzing && (
+                <div className="flex items-center gap-3 p-4 bg-purple-50 rounded-lg border border-purple-200">
+                  <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
+                  <span className="text-sm text-purple-700">Analyzing audio features and segmenting...</span>
+                </div>
+              )}
+              
+              {musicFeatures && !isAnalyzing && (
+                <div className="flex items-center gap-4 p-3 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-purple-600" />
+                    <span className="text-sm font-medium text-gray-700">Audio Features:</span>
+                  </div>
+                  <div className="text-xs text-gray-600">
+                    <span className="font-medium">BPM: {musicFeatures.bpm}</span>
+                    {musicFeatures.key && <span className="ml-3">Key: {musicFeatures.key}</span>}
+                  </div>
+                </div>
+              )}
+
+              {/* 自动拆段结果 - 优先显示 */}
+              {autoSegments.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-700">Segmentation Results ({autoSegments.length} segments):</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAutoSegment}
+                      disabled={isAnalyzing}
+                      className="text-xs"
+                    >
+                      {isAnalyzing ? (
+                        <>
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                          Re-analyzing
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3 h-3 mr-1" />
+                          Re-segment
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {autoSegments.map((segment, index) => {
+                      const isSelected = Math.abs(segment.start - selectedStartTime) < 0.1 && 
+                                        Math.abs(segment.end - selectedEndTime) < 0.1;
+                      const isPlaying = playingSegmentIndex === index && isPlayingSegment;
+                      return (
+                        <div
+                          key={index}
+                          onClick={() => {
+                            setSelectedStartTime(segment.start);
+                            setSelectedEndTime(segment.end);
+                            setSelectedSegmentIndex(index);
+                          }}
+                          className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                            isSelected
+                              ? 'border-purple-600 bg-purple-50 shadow-md'
+                              : 'border-gray-200 bg-white hover:border-purple-300 hover:shadow-sm'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-sm font-semibold text-gray-900">Segment {index + 1}</span>
+                                {isSelected && (
+                                  <span className="text-xs px-2 py-0.5 bg-purple-600 text-white rounded-full">Selected</span>
+                                )}
+                              </div>
+                              <div className="text-xs text-gray-600 mb-1">
+                                {formatTime(segment.start)} - {formatTime(segment.end)}
+                              </div>
+                              <div className="text-xs font-medium text-gray-500">
+                                Duration: {formatTime(segment.end - segment.start)}
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 w-8 p-0 flex-shrink-0"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                if (isPlaying && segmentAudioRef.current) {
+                                  // 暂停当前播放
+                                  try {
+                                    segmentAudioRef.current.pause();
+                                    // 移除事件监听器
+                                    if (segmentProgressListenerRef.current) {
+                                      segmentAudioRef.current.removeEventListener('timeupdate', segmentProgressListenerRef.current);
+                                      segmentProgressListenerRef.current = null;
+                                    }
+                                  } catch (err) {
+                                    console.error('Error pausing segment audio:', err);
+                                  }
+                                  setIsPlayingSegment(false);
+                                  setPlayingSegmentIndex(null);
+                                } else {
+                                  // 使用公共函数播放段落
+                                  await playSegment(segment, index);
+                                }
+                              }}
+                            >
+                              {isPlaying ? (
+                                <Pause className="w-4 h-4" />
+                              ) : (
+                                <Play className="w-4 h-4 ml-0.5" />
+                              )}
+                            </Button>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              // 使用公共函数播放段落
+                              await playSegment(segment, index);
+                            }}
+                            className="w-full mt-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all"
+                                  style={{ width: `${segment.energy * 100}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-gray-500 min-w-[60px] text-right">
+                                Energy: {(segment.energy * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 音频波形和时间轴 - 仅在未拆段时显示 */}
+              {autoSegments.length === 0 && !isAnalyzing && (
+                <div className="space-y-3 sm:space-y-4">
+                {/* 时间轴标签 */}
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>{formatTime(0)}</span>
+                  <span>{formatTime(audioDuration)}</span>
+                </div>
+
+                {/* 波形容器 */}
+                <div className="relative waveform-container" ref={waveformContainerRef}>
+                  {/* 背景波形（灰色） */}
+                  <div className="h-16 sm:h-20 bg-gray-100 rounded-lg relative overflow-hidden">
+                    {/* 模拟波形 */}
+                    <div className="absolute inset-0 flex items-center justify-around px-2">
+                      {Array.from({ length: 50 }).map((_, i) => {
+                        const height = Math.random() * 60 + 20;
+                        return (
+                          <div
+                            key={i}
+                            className="w-0.5 sm:w-1 bg-gray-300 rounded-full"
+                            style={{ height: `${height}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    {/* 选中片段（紫色）- 固定30秒，可整体拖动 */}
+                    <div
+                      className="absolute top-0 bottom-0 bg-purple-500/30 border-l-2 border-r-2 border-purple-600 cursor-move z-10"
+                      style={{
+                        left: `${(selectedStartTime / audioDuration) * 100}%`,
+                        width: `${(30 / audioDuration) * 100}%`,
+                      }}
+                      onMouseDown={(e) => {
+                        setIsDragging(true);
+                        setDragType('segment');
+                        e.preventDefault();
+                      }}
+                    >
+                      {/* 进度线 - 显示当前播放位置 */}
+                      {isPlayingSegment && (
+                        <div
+                          className="absolute top-0 bottom-0 w-0.5 bg-yellow-400 z-20"
+                          style={{
+                            left: `${((segmentCurrentTime - selectedStartTime) / 30) * 100}%`,
+                          }}
+                        >
+                          <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-yellow-400" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 时间标签 - 显示选中片段的开始和结束时间 */}
+                    <div
+                      className="absolute -top-6 left-0 text-xs font-medium text-black whitespace-nowrap"
+                      style={{
+                        left: `${(selectedStartTime / audioDuration) * 100}%`,
+                      }}
+                    >
+                      {formatTime(selectedStartTime)}
+                    </div>
+                    <div
+                      className="absolute -top-6 text-xs font-medium text-black whitespace-nowrap"
+                      style={{
+                        left: `${(selectedEndTime / audioDuration) * 100}%`,
+                      }}
+                    >
+                      {formatTime(selectedEndTime)}
+                    </div>
+                  </div>
+
+                  {/* 拖动处理 */}
+                  {isDragging && (
+                    <div
+                      className="fixed inset-0 z-50 cursor-move"
+                      onMouseMove={(e) => {
+                        if (!isDragging || !dragType || !waveformContainerRef.current || audioDuration === 0) return;
+                        const containerRect = waveformContainerRef.current.getBoundingClientRect();
+                        const x = e.clientX - containerRect.left;
+                        const percentage = Math.max(0, Math.min(1, x / containerRect.width));
+                        const time = percentage * audioDuration;
+
+                        if (dragType === 'segment') {
+                          // 拖动整个选择框，保持30秒宽度
+                          const newStartTime = Math.max(0, Math.min(audioDuration - 30, time - 15));
+                          const newEndTime = newStartTime + 30;
+                          setSelectedStartTime(newStartTime);
+                          setSelectedEndTime(newEndTime);
+                        }
+                      }}
+                      onMouseUp={() => {
+                        setIsDragging(false);
+                        setDragType(null);
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* 播放按钮和信息 - 仅在未拆段时显示 */}
+                {autoSegments.length === 0 && (
+                  <div className="flex items-center justify-between flex-wrap gap-3">
+                    <div className="flex items-center gap-3 sm:gap-4">
+                      <Button
+                        size="lg"
+                        className="h-10 w-10 sm:h-12 sm:w-12 rounded-full bg-black text-white hover:bg-gray-800 p-0 flex-shrink-0"
+                        onClick={() => {
+                          if (!selectedMusicForVideo?.audioUrl) return;
+                          
+                          if (isPlayingSegment && segmentAudioRef.current) {
+                            segmentAudioRef.current.pause();
+                            setIsPlayingSegment(false);
+                            setPlayingSegmentIndex(null);
+                          } else {
+                            if (segmentAudioRef.current) {
+                              segmentAudioRef.current.currentTime = selectedStartTime;
+                              segmentAudioRef.current.play();
+                              setIsPlayingSegment(true);
+                              
+                              // 监听播放进度，更新进度线和检查是否到达结束时间
+                              const updateProgress = () => {
+                                if (segmentAudioRef.current) {
+                                  const currentTime = segmentAudioRef.current.currentTime;
+                                  setSegmentCurrentTime(currentTime);
+                                  
+                                  if (currentTime >= selectedEndTime) {
+                                    segmentAudioRef.current.pause();
+                                    setIsPlayingSegment(false);
+                                    setPlayingSegmentIndex(null);
+                                    setSegmentCurrentTime(selectedStartTime);
+                                    segmentAudioRef.current.removeEventListener('timeupdate', updateProgress);
+                                  }
+                                }
+                              };
+                              segmentAudioRef.current.addEventListener('timeupdate', updateProgress);
+                            }
+                          }
+                        }}
+                      >
+                        {isPlayingSegment ? (
+                          <Pause className="w-5 h-5 sm:w-6 sm:h-6" />
+                        ) : (
+                          <Play className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />
+                        )}
+                      </Button>
+                      <div>
+                        <div className="text-sm text-gray-600">Selected Duration: {formatTime(selectedEndTime - selectedStartTime)}</div>
+                        <div className="text-xs text-gray-500">{formatTime(selectedStartTime)} - {formatTime(selectedEndTime)}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                </div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 隐藏的片段播放音频元素 */}
+      {showAudioSegmentDialog && selectedMusicForVideo?.audioUrl && (
+        <audio
+          ref={segmentAudioRef}
+          src={selectedMusicForVideo.audioUrl}
+          onEnded={() => {
+            setIsPlayingSegment(false);
+            setPlayingSegmentIndex(null);
+          }}
+          onPause={() => {
+            setIsPlayingSegment(false);
+            setPlayingSegmentIndex(null);
+          }}
+          onLoadedMetadata={(e) => {
+            const audio = e.currentTarget;
+            const duration = audio.duration;
+            setAudioDuration(duration);
+            // 固定30秒，从0开始
+            setSelectedStartTime(0);
+            setSelectedEndTime(30);
+            
+            // 如果还没有拆段结果，且不在分析中，自动触发智能拆段
+            if (autoSegments.length === 0 && !isAnalyzing && duration > 0 && selectedMusicForVideo?.audioUrl) {
+              setTimeout(() => {
+                handleAutoSegment();
+              }, 300);
+            }
+          }}
+          onTimeUpdate={(e) => {
+            if (isPlayingSegment) {
+              setSegmentCurrentTime(e.currentTarget.currentTime);
+            }
+          }}
+        />
+      )}
+
+      {/* MV自定义对话框 */}
+      {trimmedAudioData && (
+        <MVCustomizeDialog
+          open={showMVCustomizeDialog}
+          onOpenChange={setShowMVCustomizeDialog}
+          audioUrl={trimmedAudioData.audioUrl}
+          startTime={trimmedAudioData.startTime}
+          endTime={trimmedAudioData.endTime}
+          musicTitle={trimmedAudioData.musicTitle}
+          musicId={trimmedAudioData.musicId}
+          sceneDescription={trimmedAudioData.sceneDescription}
+          musicFeatures={trimmedAudioData.musicFeatures}
+          autoSegments={autoSegments}
+          selectedSegmentIndex={selectedSegmentIndex}
+          onBack={() => {
+            setShowMVCustomizeDialog(false);
+            setShowAudioSegmentDialog(true);
+          }}
+          onGenerate={async (mvParams) => {
+            // 关闭MV自定义对话框
+            setShowMVCustomizeDialog(false);
+            
+            // 获取音乐的歌词
+            let lyrics = '';
+            if (mvParams.musicId) {
+              const music = myMusicList.find(m => m.id === mvParams.musicId);
+              if (music?.lyrics) {
+                lyrics = music.lyrics;
+              }
+            }
+            
+            // 构建初始提示词，包含MV参数
+            const visualStyleLabel = [
+              { id: 'black-white', label: '黑白光影' },
+              { id: 'tokyo-neon', label: '东京霓虹夜' },
+              { id: 'macaron-love', label: '马卡龙恋爱' },
+              { id: '3d-animation', label: '3D动画' },
+              { id: 'dreamy-sky', label: '梦幻天空' },
+              { id: 'soft-focus', label: '柔焦电影' },
+            ].find(s => s.id === mvParams.visualStyle)?.label || mvParams.visualStyle;
+            
+            const mvTypeLabel = mvParams.mvType === 'narrative' ? '叙事' : '舞蹈';
+            const orientationLabel = mvParams.orientation === '16:9' ? '横屏' : '竖屏';
+            
+            // 构建提示词
+            let prompt = `生成MV：\n`;
+            prompt += `音乐标题：${mvParams.musicTitle || '未命名'}\n`;
+            if (lyrics) {
+              prompt += `歌词：${lyrics}\n`;
+            }
+            prompt += `MV类型：${mvTypeLabel}\n`;
+            prompt += `视觉风格：${visualStyleLabel}\n`;
+            prompt += `画面比例：${orientationLabel}\n`;
+            if (mvParams.inspiration) {
+              prompt += `创意灵感：${mvParams.inspiration}\n`;
+            }
+            
+            // 打开对话页面，传递autoSegments
+            setConversationPrompt(prompt);
+            setConversationMvParams({
+              ...mvParams,
+              autoSegments: autoSegments, // 传递音频段数据，包含shotPlan
+            });
+            setShowConversation(true);
+          }}
+        />
+      )}
+
       <Footer />
     </div>
   );
+}
+
+// 格式化时间函数
+function formatTime(seconds: number): string {
+  if (!isFinite(seconds) || isNaN(seconds)) return "00:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
