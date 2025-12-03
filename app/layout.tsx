@@ -8,11 +8,35 @@ import { ToastProvider } from "@/components/ui/toast-notification";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Animation AI Generator & Video Maker | Animaker AI | Create 2D & 3D Animations",
-  description: "Create stunning animated videos with our AI-powered 2D and 3D animation tools. Optimized for short-form video creators on TikTok, Reels, and more. Try Animation AI Generator free today!",
+  // Base URL for all absolute URLs (canonical, OG, etc.)
+  metadataBase: new URL("https://videoaimusic.com"),
+  title: "Video AI Music – Create Music Videos from Your Songs Online",
+  description:
+    "Create stunning music videos in minutes with AI! Transform songs into visually synced videos with lip sync and cinematic styles.",
+  keywords: [
+    "AI music video creation",
+    "lip sync videos",
+    "music to video",
+    "auto storyboard",
+    "professional music video quality",
+    "cinematic storyboards",
+    "video styles for music",
+    "export and share music videos",
+  ],
+  // Canonical URL for SEO
+  alternates: {
+    canonical: "/",
+  },
+  // Robots meta directive (will render <meta name=\"robots\" ...>)
+  robots: {
+    index: true,
+    follow: true,
+  },
   icons: {
+    // Ensure favicon is exposed in SSR <head>
     icon: [
-      { url: "/images/versemovie-logo.png", sizes: "any" },
+      // Standard favicon path some scanners expect
+      { url: "/favicon.ico", sizes: "any" },
       { url: "/images/versemovie-logo.png", sizes: "32x32", type: "image/png" },
       { url: "/images/versemovie-logo.png", sizes: "16x16", type: "image/png" },
     ],

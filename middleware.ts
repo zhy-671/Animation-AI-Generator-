@@ -7,13 +7,21 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
   const search = request.nextUrl.search
   
+  // Helper to run Supabase session update and attach common headers
+  const withSeoHeaders = async () => {
+    const response = await updateSession(request)
+    // Expose crawl directives via HTTP header for SEO tools (X-Robots-Tag)
+    response.headers.set('X-Robots-Tag', 'index, follow')
+    return response
+  }
+
   // Skip redirects for localhost and internal Next.js paths
   if (
     hostname.includes('localhost') ||
     hostname.includes('127.0.0.1') ||
     hostname.includes('0.0.0.0')
   ) {
-    return await updateSession(request)
+    return await withSeoHeaders()
   }
 
   // Check if we need to redirect
@@ -24,11 +32,13 @@ export async function middleware(request: NextRequest) {
   if (needsHttpsRedirect || needsWwwRedirect) {
     const targetHostname = needsWwwRedirect ? hostname.replace('www.', '') : hostname
     const targetUrl = `https://${targetHostname}${pathname}${search}`
-    return NextResponse.redirect(targetUrl, 301)
+    const redirectResponse = NextResponse.redirect(targetUrl, 301)
+    redirectResponse.headers.set('X-Robots-Tag', 'index, follow')
+    return redirectResponse
   }
 
   // Continue with Supabase session update
-  return await updateSession(request)
+  return await withSeoHeaders()
 }
 
 export const config = {

@@ -52,13 +52,13 @@ export default function HomeClient() {
             "@context": "https://schema.org",
             "@type": "WebSite",
             "name": "VerseMovie - AI Music Video Generator",
-            "url": "https://animationaigenerator.com",
+            "url": "https://videoaimusic.com",
             "description": "Turn lyrics into cinematic AI music videos. Create professional MV videos from song lyrics instantly with our AI-powered music video generator.",
             "potentialAction": {
               "@type": "SearchAction",
               "target": {
                 "@type": "EntryPoint",
-                "urlTemplate": "https://animationaigenerator.com/animation-ai-generator/text-to-video"
+                "urlTemplate": "https://videoaimusic.com/animation-ai-generator/text-to-video"
               },
               "query-input": "required name=search_term_string"
             }
@@ -72,8 +72,8 @@ export default function HomeClient() {
             "@context": "https://schema.org",
             "@type": "Organization",
             "name": "VerseMovie",
-            "url": "https://animationaigenerator.com",
-            "logo": "https://animationaigenerator.com/images/versemovie-logo.png",
+            "url": "https://videoaimusic.com",
+            "logo": "https://videoaimusic.com/images/versemovie-logo.png",
             "description": "AI-powered music video generator that transforms lyrics into cinematic music videos instantly",
             "sameAs": []
           })
@@ -113,7 +113,7 @@ export default function HomeClient() {
           })
         }}
       />
-      <div className="min-h-screen bg-white dark:bg-gray-900">
+      <div className="min-h-screen bg-transparent">
         <Header />
         <MusicVideoHero />
         <FeaturesShowcase />
@@ -135,10 +135,10 @@ export default function HomeClient() {
             className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 md:hidden"
           >
             <Button
-              onClick={() => router.push(`/animation-ai-generator/text-to-video`)}
+              onClick={() => router.push(`/ai-music-video-generator`)}
               className="w-full h-12 text-base font-medium bg-[#FFDA2A] text-gray-900 hover:bg-[#FFDA2A]/90 transition-all duration-200 rounded-full shadow-lg"
             >
-              Generate Video Free
+              Start Free Now
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
           </motion.div>
