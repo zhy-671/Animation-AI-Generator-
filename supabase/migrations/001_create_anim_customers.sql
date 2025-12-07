@@ -18,11 +18,13 @@ CREATE INDEX IF NOT EXISTS idx_anim_customers_creem_customer_id ON public.anim_c
 ALTER TABLE public.anim_customers ENABLE ROW LEVEL SECURITY;
 
 -- 创建 RLS 策略：用户只能查看和更新自己的记录
+DROP POLICY IF EXISTS "Users can view own customer record" ON public.anim_customers;
 CREATE POLICY "Users can view own customer record"
   ON public.anim_customers
   FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update own customer record" ON public.anim_customers;
 CREATE POLICY "Users can update own customer record"
   ON public.anim_customers
   FOR UPDATE
@@ -51,6 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_credits_history_type ON public.anim_credits_histo
 ALTER TABLE public.anim_credits_history ENABLE ROW LEVEL SECURITY;
 
 -- 创建 RLS 策略：用户只能查看自己的积分历史
+DROP POLICY IF EXISTS "Users can view own credits history" ON public.anim_credits_history;
 CREATE POLICY "Users can view own credits history"
   ON public.anim_credits_history
   FOR SELECT
@@ -103,16 +106,16 @@ BEGIN
     created_at,
     updated_at,
     metadata
-  ) VALUES (
+  )   VALUES (
     NEW.id,
     NEW.email,
-    5, -- 新用户赠送5积分
+    15, -- 新用户赠送15积分
     'auto_' || NEW.id::text, -- 自动生成的creem_customer_id
     NOW(),
     NOW(),
     jsonb_build_object(
       'source', 'auto_registration',
-      'initial_credits', 5,
+      'initial_credits', 15,
       'registration_date', NOW()
     )
   ) RETURNING id INTO new_customer_id;
@@ -127,7 +130,7 @@ BEGIN
     metadata
   ) VALUES (
     new_customer_id,
-    5,
+    15,
     'add',
     'Welcome bonus for new user registration',
     NOW(),
@@ -160,13 +163,13 @@ INSERT INTO public.anim_customers (
 SELECT 
   au.id,
   au.email,
-  5, -- 赠送5积分
+  15, -- 赠送15积分
   'existing_' || au.id::text,
   au.created_at,
   NOW(),
   jsonb_build_object(
     'source', 'existing_user_migration',
-    'initial_credits', 5,
+    'initial_credits', 15,
     'migration_date', NOW()
   )
 FROM auth.users au
@@ -184,7 +187,7 @@ INSERT INTO public.anim_credits_history (
 )
 SELECT 
   c.id,
-  5,
+  15,
   'add',
   'Welcome bonus for existing user',
   NOW(),

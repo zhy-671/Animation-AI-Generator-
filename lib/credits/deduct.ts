@@ -4,31 +4,47 @@
 
 import { getImageCredits, getVideoCredits } from './rules';
 import { calculateVideoCredits, type SubscriptionPlan } from '../subscription/rules';
+import { getApiUrlWithSubdomain, getSubdomainFetchOptions } from '../api/config';
 
 /**
  * 扣除积分
  * @param amount 积分数量
  * @param description 描述
  * @param metadata 元数据
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
 export async function deductCredits(
   amount: number,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  token?: string
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
   try {
-    const response = await fetch('/api/credits/operate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount,
-        type: 'subtract',
-        description,
-        metadata,
-      }),
-    });
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/operate'),
+      getSubdomainFetchOptions({
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          type: 'subtract',
+          description,
+          metadata,
+        }),
+      }, accessToken)
+    );
 
     const result = await response.json();
     if (!response.ok || !result.success) {
@@ -63,10 +79,29 @@ export async function deductCredits(
 /**
  * 检查积分余额是否足够
  * @param required 需要的积分数量
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
-export async function checkCreditsBalance(required: number): Promise<{ sufficient: boolean; balance?: number; error?: string }> {
+export async function checkCreditsBalance(required: number, token?: string): Promise<{ sufficient: boolean; balance?: number; error?: string }> {
   try {
-    const response = await fetch('/api/credits/balance');
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/balance'),
+      getSubdomainFetchOptions({
+        method: 'GET',
+      }, accessToken)
+    );
     const result = await response.json();
 
     if (!response.ok) {
@@ -103,25 +138,40 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
  * @param amount 积分数量
  * @param description 描述
  * @param metadata 元数据
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
 export async function addCredits(
   amount: number,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  token?: string
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
   try {
-    const response = await fetch('/api/credits/operate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount,
-        type: 'add',
-        description,
-        metadata,
-      }),
-    });
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/operate'),
+      getSubdomainFetchOptions({
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          type: 'add',
+          description,
+          metadata,
+        }),
+      }, accessToken)
+    );
 
     const result = await response.json();
 

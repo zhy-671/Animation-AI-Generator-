@@ -62,14 +62,28 @@ export async function getCreditsHistory(limit: number = 50): Promise<CreditsHist
 /**
  * 操作积分（添加、扣除等）
  * 注意：这个函数需要服务端权限，应该通过 API Route 调用
+ * @param params 积分操作参数
+ * @param token 可选的 Bearer token，如果不提供则从 cookie 获取（向后兼容）
  */
-export async function operateCredits(params: CreditOperationParams): Promise<{ success: boolean; error?: string }> {
+export async function operateCredits(params: CreditOperationParams, token?: string): Promise<{ success: boolean; error?: string }> {
   const supabase = await createClient()
   
   // 验证用户身份
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return { success: false, error: 'User not authenticated' }
+  let user;
+  if (token) {
+    // 使用提供的 token 验证用户
+    const { data, error } = await supabase.auth.getUser(token)
+    if (error || !data.user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    user = data.user
+  } else {
+    // 向后兼容：从 cookie 获取用户（如果 token 未提供）
+    const { data: { user: cookieUser } } = await supabase.auth.getUser()
+    if (!cookieUser) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    user = cookieUser
   }
 
   // 获取客户信息（验证 customerId 属于当前用户）
@@ -106,7 +120,16 @@ export async function operateCredits(params: CreditOperationParams): Promise<{ s
 
   // 记录积分历史（使用服务端权限，绕过RLS）
   // 使用服务端权限客户端来插入历史记录，避免RLS策略问题
-  const serviceClient = createServiceClient();
+  let serviceClient;
+  try {
+    serviceClient = createServiceClient();
+  } catch (clientError) {
+    return { 
+      success: false, 
+      error: `Failed to create service client: ${clientError instanceof Error ? clientError.message : 'Unknown error'}. Please check SUPABASE_SERVICE_ROLE_KEY configuration.` 
+    };
+  }
+  
   const { error: historyError } = await serviceClient
     .from('anim_credits_history')
     .insert({
@@ -119,14 +142,24 @@ export async function operateCredits(params: CreditOperationParams): Promise<{ s
 
   if (historyError) {
     // 如果历史记录失败，回滚积分更新（使用服务端客户端）
-    await serviceClient
-      .from('anim_customers')
-      .update({ credits: customer.credits })
-      .eq('id', customer.id)
+    try {
+      await serviceClient
+        .from('anim_customers')
+        .update({ credits: customer.credits })
+        .eq('id', customer.id);
+    } catch (rollbackError) {
+      console.error('[Credits] Failed to rollback credits update:', rollbackError);
+    }
+    
+    // 提供更详细的错误信息
+    let errorMessage = `Failed to record credits history: ${historyError.message}`;
+    if (historyError.message.includes('Invalid API key') || historyError.message.includes('JWT')) {
+      errorMessage += '. Please check if SUPABASE_SERVICE_ROLE_KEY is correctly configured in your environment variables.';
+    }
     
     return { 
       success: false, 
-      error: `Failed to record credits history: ${historyError.message}` 
+      error: errorMessage
     }
   }
 

@@ -6,7 +6,7 @@ import { cookies } from 'next/headers'
  * Optimized for Supabase connection stability
  */
 function createFetchWithTimeout(timeoutMs: number = 60000) { // Increased to 60 seconds
-  return async (url: RequestInfo | URL, options: RequestInit = {}, retries: number = 2): Promise<Response> => {
+  return async (url: RequestInfo | URL, options: RequestInit = {}, retries: number = 3): Promise<Response> => {
     const maxRetries = retries;
     let lastError: Error | null = null;
 
@@ -64,11 +64,27 @@ function createFetchWithTimeout(timeoutMs: number = 60000) { // Increased to 60 
 
         // If it's the last attempt or not a network error, throw
         if (attempt === maxRetries || !isNetworkError) {
+          // Log detailed error information for debugging
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[Supabase] Network error after ${attempt + 1} attempts:`, {
+              url: typeof url === 'string' ? url : url.toString(),
+              error: lastError.message,
+              errorName: lastError.name,
+              stack: lastError.stack,
+            });
+          }
+          
           if (lastError.name === 'AbortError') {
             throw new Error(`Request timeout after ${timeoutMs}ms: ${url}`);
           }
           if (lastError.message.includes('fetch failed')) {
-            throw new Error(`Network error connecting to Supabase: ${lastError.message}`);
+            // Provide more helpful error message
+            const errorMsg = lastError.message;
+            const isEnvIssue = !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+            if (isEnvIssue) {
+              throw new Error(`Network error connecting to Supabase: Missing environment variables (NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY)`);
+            }
+            throw new Error(`Network error connecting to Supabase: ${errorMsg}. Please check your network connection and Supabase service status.`);
           }
           throw lastError;
         }
@@ -81,6 +97,17 @@ function createFetchWithTimeout(timeoutMs: number = 60000) { // Increased to 60 
 }
 
 export async function createClient() {
+  // Check environment variables
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    const missingVars = [];
+    if (!supabaseUrl) missingVars.push('NEXT_PUBLIC_SUPABASE_URL');
+    if (!supabaseKey) missingVars.push('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
+  }
+
   // Increased timeout to 60 seconds and added retry logic for better stability
   const customFetch = createFetchWithTimeout(60000);
 
@@ -88,8 +115,8 @@ export async function createClient() {
     const cookieStore = await cookies()
 
     return createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      supabaseUrl,
+      supabaseKey,
       {
         cookies: {
           getAll() {
@@ -97,9 +124,19 @@ export async function createClient() {
           },
           setAll(cookiesToSet) {
             try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
+              cookiesToSet.forEach(({ name, value, options }) => {
+                // Configure cookies for main domain
+                // All requests use the main domain (videoaimusic.com)
+                // we need sameSite: 'none' and secure: true
+                const cookieOptions = {
+                  ...options,
+                  domain: process.env.NODE_ENV === 'production' ? '.videoaimusic.com' : undefined,
+                  sameSite: (process.env.NODE_ENV === 'production' ? 'none' : 'lax') as 'none' | 'lax' | 'strict',
+                  secure: process.env.NODE_ENV === 'production',
+                  path: '/',
+                }
+                cookieStore.set(name, value, cookieOptions)
+              })
             } catch {
               // The `setAll` method was called from a Server Component.
               // This can be ignored if you have middleware refreshing
@@ -116,8 +153,8 @@ export async function createClient() {
     // If cookies() fails (e.g., in static generation or edge runtime),
     // create a client without cookie persistence
     return createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      supabaseUrl,
+      supabaseKey,
       {
         cookies: {
           getAll() {
