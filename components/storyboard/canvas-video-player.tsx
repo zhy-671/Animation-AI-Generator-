@@ -33,7 +33,56 @@ interface CanvasVideoPlayerProps {
   isMuted?: boolean;
   onEnded?: () => void;
   onPlayRequest?: () => void; // Callback when play is requested (for user interaction)
+  showSubtitles?: boolean; // Whether to show subtitles
 }
+
+const wrapSubtitleText = (
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines = Infinity
+) => {
+  const sanitized = text?.trim();
+  if (!sanitized) {
+    return [];
+  }
+
+  const hasSpaces = /\s/.test(sanitized);
+  const units = hasSpaces ? sanitized.split(/\s+/) : sanitized.split("");
+  const separator = hasSpaces ? " " : "";
+  const lines: string[] = [];
+  let currentLine = "";
+
+  for (let i = 0; i < units.length; i += 1) {
+    const unit = units[i];
+    const testLine = currentLine ? `${currentLine}${separator}${unit}` : unit;
+    const metrics = ctx.measureText(testLine);
+
+    if (metrics.width > maxWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = unit;
+
+      if (lines.length === maxLines - 1 && i < units.length - 1) {
+        const remaining = units.slice(i + 1).join(separator);
+        currentLine = remaining ? `${currentLine}${separator}${remaining}` : currentLine;
+        break;
+      }
+    } else {
+      currentLine = testLine;
+    }
+
+    const isLastUnit = i === units.length - 1;
+    if (isLastUnit && currentLine) {
+      lines.push(currentLine);
+    }
+
+    if (lines.length >= maxLines) {
+      break;
+    }
+  }
+
+  return lines.slice(0, maxLines);
+};
 
 const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlayerProps>(({
   clips,
@@ -46,6 +95,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
   isMuted = false,
   onEnded,
   onPlayRequest,
+  showSubtitles = true, // Default to showing subtitles
 }, ref) => {
   const canvasARef = useRef<HTMLCanvasElement>(null);
   const canvasBRef = useRef<HTMLCanvasElement>(null);
@@ -59,26 +109,100 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
   const isPlayingRef = useRef<boolean>(false);
   const lastFrameDrawnRef = useRef<{ video: HTMLVideoElement | null; time: number }>({ video: null, time: 0 });
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [isAVisible, setIsAVisible] = useState(true);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<number | null>(null); // Store video aspect ratio
 
-  // Initialize canvas size
+  // Update video aspect ratio when video loads or changes
+  useEffect(() => {
+    const videoA = videoARef.current;
+    const videoB = videoBRef.current;
+    
+    const updateAspectRatio = (video: HTMLVideoElement) => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        const aspectRatio = video.videoWidth / video.videoHeight;
+        setVideoAspectRatio(aspectRatio);
+      }
+    };
+
+    const handleVideoALoadedMetadata = () => {
+      if (videoA) updateAspectRatio(videoA);
+    };
+    const handleVideoBLoadedMetadata = () => {
+      if (videoB) updateAspectRatio(videoB);
+    };
+
+    // Check current active video and update aspect ratio
+    const checkActiveVideo = () => {
+      const activeVideo = isVideoAPlayingRef.current ? videoA : videoB;
+      if (activeVideo && activeVideo.videoWidth > 0) {
+        updateAspectRatio(activeVideo);
+      }
+    };
+
+    if (videoA) {
+      videoA.addEventListener("loadedmetadata", handleVideoALoadedMetadata);
+      if (videoA.videoWidth > 0) {
+        updateAspectRatio(videoA);
+      }
+    }
+    if (videoB) {
+      videoB.addEventListener("loadedmetadata", handleVideoBLoadedMetadata);
+      if (videoB.videoWidth > 0) {
+        updateAspectRatio(videoB);
+      }
+    }
+
+    // Also check when clips change
+    if (clips.length > 0) {
+      checkActiveVideo();
+    }
+
+    return () => {
+      if (videoA) videoA.removeEventListener("loadedmetadata", handleVideoALoadedMetadata);
+      if (videoB) videoB.removeEventListener("loadedmetadata", handleVideoBLoadedMetadata);
+    };
+  }, [clips]);
+
+  // Initialize canvas size based on video aspect ratio
   useEffect(() => {
     const updateCanvasSize = () => {
       const container = canvasARef.current?.parentElement;
       if (container && canvasARef.current && canvasBRef.current) {
-        const width = container.clientWidth || 1280; // Default width if 0
-        const height = Math.floor(width * 9 / 16); // 16:9 aspect ratio
-        setCanvasSize({ width, height });
-        canvasARef.current.width = width;
-        canvasARef.current.height = height;
-        canvasBRef.current.width = width;
-        canvasBRef.current.height = height;
-        console.log("📐 Canvas size updated:", { width, height, containerWidth: container.clientWidth, containerHeight: container.clientHeight });
-      } else {
-        console.warn("⚠️ Canvas refs not ready:", {
-          hasContainer: !!container,
-          hasCanvasA: !!canvasARef.current,
-          hasCanvasB: !!canvasBRef.current
-        });
+        const containerWidth = container.clientWidth || 1280;
+        const containerHeight = container.clientHeight || 720;
+        
+        // Use video aspect ratio if available, otherwise default to 16:9
+        const aspectRatio = videoAspectRatio || 16 / 9;
+        
+        // Calculate canvas size to fit container while maintaining aspect ratio
+        let canvasWidth: number;
+        let canvasHeight: number;
+        
+        if (aspectRatio > containerWidth / containerHeight) {
+          // Video is wider than container - fit to width
+          canvasWidth = containerWidth;
+          canvasHeight = Math.floor(containerWidth / aspectRatio);
+        } else {
+          // Video is taller than container - fit to height
+          canvasHeight = containerHeight;
+          canvasWidth = Math.floor(containerHeight * aspectRatio);
+        }
+        
+        // Ensure canvas doesn't exceed container
+        if (canvasWidth > containerWidth) {
+          canvasWidth = containerWidth;
+          canvasHeight = Math.floor(containerWidth / aspectRatio);
+        }
+        if (canvasHeight > containerHeight) {
+          canvasHeight = containerHeight;
+          canvasWidth = Math.floor(containerHeight * aspectRatio);
+        }
+        
+        setCanvasSize({ width: canvasWidth, height: canvasHeight });
+        canvasARef.current.width = canvasWidth;
+        canvasARef.current.height = canvasHeight;
+        canvasBRef.current.width = canvasWidth;
+        canvasBRef.current.height = canvasHeight;
       }
     };
 
@@ -97,7 +221,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       timeoutIds.forEach(id => clearTimeout(id));
       window.removeEventListener("resize", updateCanvasSize);
     };
-  }, []);
+  }, [videoAspectRatio]);
 
   // Render function - defined early so it can be used in useEffect
   const render = useCallback(() => {
@@ -120,27 +244,48 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     const inactiveCtx = inactiveCanvas.getContext("2d");
     if (!activeCtx || !inactiveCtx) return;
 
+    // Update aspect ratio if video dimensions are available
+    if (activeVideo.videoWidth > 0 && activeVideo.videoHeight > 0) {
+      const currentAspectRatio = activeVideo.videoWidth / activeVideo.videoHeight;
+      if (videoAspectRatio !== currentAspectRatio) {
+        setVideoAspectRatio(currentAspectRatio);
+      }
+    }
+
     // Render active video frame only if ready (readyState >= 2)
     if (activeVideo.readyState >= 2 && activeCanvas.width > 0 && activeCanvas.height > 0) {
       try {
-        // Clear and draw new frame
+        // Clear and draw new frame - maintain video aspect ratio
         activeCtx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
-        activeCtx.drawImage(activeVideo, 0, 0, activeCanvas.width, activeCanvas.height);
+        
+        // Calculate drawing dimensions to maintain video aspect ratio
+        const videoAspect = activeVideo.videoWidth > 0 && activeVideo.videoHeight > 0
+          ? activeVideo.videoWidth / activeVideo.videoHeight
+          : 16 / 9; // Default to 16:9 if video dimensions not available
+        const canvasAspect = activeCanvas.width / activeCanvas.height;
+        
+        let drawWidth = activeCanvas.width;
+        let drawHeight = activeCanvas.height;
+        let drawX = 0;
+        let drawY = 0;
+        
+        if (videoAspect > canvasAspect) {
+          // Video is wider than canvas - fit to width
+          drawHeight = activeCanvas.width / videoAspect;
+          drawY = (activeCanvas.height - drawHeight) / 2;
+        } else {
+          // Video is taller than canvas - fit to height
+          drawWidth = activeCanvas.height * videoAspect;
+          drawX = (activeCanvas.width - drawWidth) / 2;
+        }
+        
+        activeCtx.drawImage(activeVideo, drawX, drawY, drawWidth, drawHeight);
         lastFrameDrawnRef.current = { video: activeVideo, time: activeVideo.currentTime };
         
         // Debug log every 30 frames (about once per second at 30fps)
         if (Math.random() < 0.033) {
-          console.log("🎨 Rendering frame:", {
-            canvasSize: `${activeCanvas.width}x${activeCanvas.height}`,
-            videoTime: activeVideo.currentTime.toFixed(2),
-            paused: activeVideo.paused,
-            readyState: activeVideo.readyState,
-            isAVisible: currentIsAVisible,
-            isVideoAPlayingRef: isVideoAPlayingRef.current,
-          });
         }
       } catch (e) {
-        console.error("❌ Error drawing active video:", e);
       }
     } else {
       // Video not ready - keep last frame if available, don't clear to black
@@ -169,32 +314,57 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     // Calculate global time from active video
     const globalTime = activeVideo.currentTime + globalOffsetRef.current;
 
-    // Draw subtitles on active canvas
-    const activeSubtitles = subtitles.filter(
-      (sub) => globalTime >= sub.start && globalTime < sub.end
-    );
+    // Draw subtitles on active canvas (only if showSubtitles is true)
+    const activeSubtitles = showSubtitles
+      ? subtitles.filter(
+          (sub) => globalTime >= sub.start && globalTime < sub.end
+        )
+      : [];
 
     activeSubtitles.forEach((subtitle) => {
-      const x = subtitle.x ?? 100;
-      // If y is not provided, default to bottom area (800px from top, or canvas height - 100)
-      const y = subtitle.y ?? (activeCanvas.height > 800 ? 800 : activeCanvas.height - 100);
+      const aspectRatio = activeCanvas.width && activeCanvas.height
+        ? activeCanvas.width / activeCanvas.height
+        : 16 / 9;
+      const isPortrait = aspectRatio < 1;
+      const fontSize = Math.max(
+        Math.min(activeCanvas.width * (isPortrait ? 0.036 : 0.028), 40),
+        14
+      );
+      const lineHeight = fontSize * 1.25;
+      const maxSubtitleWidth = activeCanvas.width * (isPortrait ? 0.88 : 0.72);
+      const shouldCenter = subtitle.x === undefined;
+      // 确保 x 是 number 类型
+      const canvasWidth = activeCanvas.width || 0;
+      const x: number = shouldCenter ? canvasWidth / 2 : (subtitle.x ?? 0);
+      const baseY = subtitle.y ?? (activeCanvas.height || 0) - 10;
 
-      // Measure text width first
-      activeCtx.font = "24px Arial";
-      activeCtx.textAlign = "left";
-      activeCtx.textBaseline = "middle";
-      const textMetrics = activeCtx.measureText(subtitle.text);
-      const textWidth = textMetrics.width;
-      const textHeight = 30;
+      activeCtx.font = `600 ${fontSize}px "Noto Sans", "Microsoft YaHei", "Arial", sans-serif`;
+      activeCtx.textAlign = shouldCenter ? "center" : "left";
+      activeCtx.textBaseline = "alphabetic";
+      activeCtx.lineJoin = "round";
+      activeCtx.shadowColor = "rgba(0, 0, 0, 0.9)";
+      activeCtx.shadowBlur = fontSize * 0.4;
+      activeCtx.strokeStyle = "rgba(0, 0, 0, 0.9)";
+      activeCtx.lineWidth = Math.max(fontSize * 0.1, 1.8);
 
-      // Draw text background (optional)
-      activeCtx.fillStyle = "rgba(0, 0, 0, 0.7)";
-      activeCtx.fillRect(x - 10, y - textHeight / 2 - 5, textWidth + 20, textHeight + 10);
+      const lines = wrapSubtitleText(activeCtx, subtitle.text, maxSubtitleWidth, 2);
+      const firstLineY = baseY - (lines.length - 1) * lineHeight;
 
-      // Draw text
-      activeCtx.fillStyle = "#ffffff";
-      activeCtx.fillText(subtitle.text, x, y);
+      lines.forEach((line, lineIndex) => {
+        const lineY: number = firstLineY + lineIndex * lineHeight;
+        activeCtx.fillStyle = "#ffffff";
+        if (line) {
+          activeCtx.strokeText(line, x, lineY);
+          activeCtx.fillText(line, x, lineY);
+        }
+      });
     });
+
+    if (activeSubtitles.length > 0) {
+      activeCtx.shadowBlur = 0;
+      activeCtx.shadowColor = "transparent";
+      activeCtx.lineWidth = 1;
+    }
 
     // Update time - throttle updates to avoid excessive state changes
     // Only update if playing to avoid triggering seek during pause
@@ -253,11 +423,9 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
                 // Note: preloadVideo is now the new activeVideo after swap
                 const newActiveVideo = preloadVideo; // This is the video we just started playing
                 if (newActiveVideo.paused && isPlaying) {
-                  console.warn("⚠️ Video paused after switch, resuming...");
                   newActiveVideo.play().catch((err) => {
                     // Ignore AbortError - it's expected when play() is interrupted
                     if (err.name !== 'AbortError') {
-                      console.error("❌ Error resuming video:", err);
                     }
                   });
                 }
@@ -271,9 +439,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
                 setTimeout(() => {
                   onClipChange?.(nextIndex);
                 }, 0);
-                
-                console.log("🔄 Video ended, switched to next:", nextIndex, "globalTime:", newGlobalTime, "isPlaying:", isPlaying, "newVideoPaused:", newActiveVideo.paused, "newVideoSrc:", newActiveVideo.src.substring(0, 50));
-                
                 // Preload video after next
                 const afterNextIndex = nextIndex + 1;
                 if (afterNextIndex < clips.length) {
@@ -283,12 +448,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
                     oldActiveVideo.preload = "auto";
                     oldActiveVideo.muted = isMuted;
                     oldActiveVideo.load();
-                    console.log("📥 Preloading video after next:", afterNextIndex);
                   }
                 }
               })
               .catch((err) => {
-                console.error("❌ Failed to play next video after end:", err);
               });
           } else {
             // Preload video not ready, call switchToNextVideo to handle loading
@@ -296,7 +459,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           }
         } else {
           // All videos finished, call onEnded
-          console.log("✅ All videos finished, calling onEnded");
           activeVideo.pause();
           onEnded?.();
         }
@@ -317,7 +479,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           preloadVideo.preload = "auto";
           preloadVideo.muted = isMuted;
           preloadVideo.load(); // Force load to start preloading
-          console.log("📥 Preloading next video:", nextIndex, nextClip.url.substring(0, 50));
         }
         
         // Start playing next video when remaining time is very small (0.1s)
@@ -358,11 +519,9 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
               
               // Double-check video is playing
               if (newActiveVideo.paused && isPlaying) {
-                console.warn("⚠️ Video paused after switch, resuming...");
                 newActiveVideo.play().catch((err: Error) => {
                   // Ignore AbortError - it's expected when play() is interrupted by pause()
                   if (err.name !== 'AbortError') {
-                    console.error("❌ Error resuming video:", err);
                   }
                 });
               }
@@ -371,9 +530,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
               if (animationFrameRef.current === null) {
                 animationFrameRef.current = requestAnimationFrame(render);
               }
-              
-              console.log("🔄 Switched to next video:", nextIndex, "globalTime:", newGlobalTime, "isPlaying:", isPlaying, "newVideoPaused:", newActiveVideo.paused, "isAVisible:", isVideoAPlayingRef.current, "newVideoSrc:", newActiveVideo.src.substring(0, 50));
-              
               // Call onClipChange AFTER all state updates to avoid triggering re-render during switch
               setTimeout(() => {
                 onClipChange?.(nextIndex);
@@ -391,12 +547,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
                   oldActiveVideo.preload = "auto";
                   oldActiveVideo.muted = isMuted;
                   oldActiveVideo.load(); // Force load
-                  console.log("📥 Preloading video after next:", afterNextIndex, afterNextClip.url.substring(0, 50));
                 }
               }
             })
             .catch((err) => {
-              console.error("❌ Failed to play next video:", err);
             });
         }
       }
@@ -421,14 +575,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     const nextClip = clips[nextIndex];
     const currentVideo = isVideoAPlayingRef.current ? videoA : videoB;
     const inactiveVideo = isVideoAPlayingRef.current ? videoB : videoA;
-
-    console.log("🔄 switchToNextVideo called:", {
-      currentIndex: currentClipIndexRef.current,
-      nextIndex,
-      nextClipUrl: nextClip.url.substring(0, 50),
-      isVideoAPlaying: isVideoAPlayingRef.current
-    });
-
     // Check if inactive video already has the next clip loaded
     if (inactiveVideo.src === nextClip.url && inactiveVideo.readyState >= 2) {
       // Pause current video first
@@ -461,8 +607,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           // Note: inactiveVideo is now the new activeVideo after swap
           const newActiveVideo = inactiveVideo; // This is the video we just started playing
           if (newActiveVideo.paused && isPlaying) {
-            console.warn("⚠️ Video paused after switch, resuming...");
-            newActiveVideo.play().catch(console.error);
+            newActiveVideo.play().catch(() => {});
           }
           
           // Ensure render loop continues
@@ -474,9 +619,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           setTimeout(() => {
             onClipChange?.(nextIndex);
           }, 0);
-          
-          console.log("✅ Switched to next video (already loaded):", nextIndex, "globalTime:", newGlobalTime, "newVideoPaused:", newActiveVideo.paused, "newVideoSrc:", newActiveVideo.src.substring(0, 50));
-          
           // Preload the video after next
           const afterNextIndex = nextIndex + 1;
           if (afterNextIndex < clips.length) {
@@ -487,12 +629,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
               currentVideo.preload = "auto";
               currentVideo.muted = isMuted;
               currentVideo.load();
-              console.log("📥 Preloading video after next:", afterNextIndex);
             }
           }
         })
         .catch((err) => {
-          console.error("❌ Failed to play next video:", err);
         });
     } else {
       // Need to load the next video
@@ -501,7 +641,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       inactiveVideo.muted = isMuted;
       
       const handleCanPlay = () => {
-        console.log("📼 Next video ready, switching:", nextIndex);
         // Pause current video first
         currentVideo.pause();
         
@@ -529,8 +668,7 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
             // Note: inactiveVideo is now the new activeVideo after swap
             const newActiveVideo = inactiveVideo; // This is the video we just started playing
             if (newActiveVideo.paused && isPlaying) {
-              console.warn("⚠️ Video paused after switch, resuming...");
-              newActiveVideo.play().catch(console.error);
+              newActiveVideo.play().catch(() => {});
             }
             
             // Ensure render loop continues
@@ -542,9 +680,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
             setTimeout(() => {
               onClipChange?.(nextIndex);
             }, 0);
-            
-            console.log("✅ Switched to next video (loaded):", nextIndex, "globalTime:", newGlobalTime, "newVideoPaused:", newActiveVideo.paused, "newVideoSrc:", newActiveVideo.src.substring(0, 50));
-            
             // Preload the video after next
             const afterNextIndex = nextIndex + 1;
             if (afterNextIndex < clips.length) {
@@ -555,14 +690,12 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
                 currentVideo.preload = "auto";
                 currentVideo.muted = isMuted;
                 currentVideo.load();
-                console.log("📥 Preloading video after next:", afterNextIndex);
               }
             }
           })
           .catch((err: Error) => {
             // Ignore AbortError - it's expected when play() is interrupted by pause()
             if (err.name !== 'AbortError') {
-              console.error("❌ Failed to play next video:", err);
             }
           });
       };
@@ -593,19 +726,8 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       currentClipIndexRef.current > 0; // If we've already switched videos, don't reinitialize
     
     if (isAlreadyInitialized) {
-      console.log("⏭️ Videos already initialized, skipping", {
-        videoASrc: videoA.src.substring(0, 50),
-        firstClipUrl: firstClip.url.substring(0, 50),
-        currentClipIndex: currentClipIndexRef.current
-      });
       return;
     }
-    
-    console.log("🎥 Initializing videos:", { 
-      firstClipUrl: firstClip.url, 
-      clipsCount: clips.length 
-    });
-    
     videoA.src = firstClip.url;
     videoA.volume = volume;
     videoA.muted = isMuted;
@@ -624,13 +746,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     currentClipIndexRef.current = 0;
     globalOffsetRef.current = firstClip.startTime;
     isVideoAPlayingRef.current = true;
-    
-    console.log("✅ Videos initialized:", {
-      videoAReady: videoA.readyState,
-      videoBReady: videoB.readyState,
-      isVideoAPlaying: isVideoAPlayingRef.current,
-    });
-
     // Setup video event listeners
     const handleVideoAEnded = () => {
       switchToNextVideo();
@@ -641,7 +756,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     };
 
     const handleVideoALoaded = () => {
-      console.log("📼 Video A loaded, readyState:", videoA.readyState);
       // Trigger initial render when first video is loaded
       if (animationFrameRef.current === null) {
         animationFrameRef.current = requestAnimationFrame(render);
@@ -649,7 +763,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     };
 
     const handleVideoBLoaded = () => {
-      console.log("📼 Video B loaded, readyState:", videoB.readyState);
     };
 
     videoA.addEventListener("ended", handleVideoAEnded);
@@ -686,12 +799,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     if (!videoA || !videoB) return;
 
     const currentVideo = isVideoAPlayingRef.current ? videoA : videoB;
-    
-    console.log("👆 User interaction - starting playback:", {
-      readyState: currentVideo.readyState,
-      paused: currentVideo.paused,
-      src: currentVideo.src.substring(0, 50)
-    });
 
     // Ensure video is muted for autoplay policy (if needed)
     currentVideo.muted = isMuted;
@@ -700,7 +807,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     if (currentVideo.readyState >= 2) {
       currentVideo.play()
         .then(() => {
-          console.log("✅ Video playing from user interaction");
           // Ensure render loop is running
           if (animationFrameRef.current === null) {
             animationFrameRef.current = requestAnimationFrame(render);
@@ -709,23 +815,19 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
         .catch((err: Error) => {
           // Ignore AbortError - it's expected when play() is interrupted by pause()
           if (err.name !== 'AbortError') {
-            console.error("❌ Video play error:", err);
           }
         });
     } else {
       // Wait for video to be ready
       const handleCanPlay = () => {
-        console.log("📼 Video can play, starting playback from user interaction");
         currentVideo.muted = isMuted;
         currentVideo.play()
           .then(() => {
-            console.log("✅ Video playing after ready");
             if (animationFrameRef.current === null) {
               animationFrameRef.current = requestAnimationFrame(render);
             }
           })
           .catch((err) => {
-            console.error("❌ Video play error after ready:", err);
           });
       };
       currentVideo.addEventListener("canplay", handleCanPlay, { once: true });
@@ -753,7 +855,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       if (!videoB.paused) {
         videoB.pause();
       }
-      console.log("⏸️ Videos paused");
     }
     // Note: Actual play() should be called from user interaction handler
     // This prevents browser autoplay policy blocking
@@ -796,9 +897,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     // Update visibility state
     setIsAVisible(true);
     
-    // Reset time to 0 (start of first video)
-    onTimeUpdate(0);
-    lastSeekTimeRef.current = 0;
+    // Reset time to first clip's startTime (which should be 0 for the first clip)
+    const resetTime = firstClip.startTime;
+    onTimeUpdate(resetTime);
+    lastSeekTimeRef.current = resetTime;
     lastUpdateTimeRef.current = Date.now();
     
     // Clear last frame reference
@@ -808,8 +910,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     setTimeout(() => {
       onClipChange?.(0);
     }, 0);
-    
-    console.log("🔄 Reset to first video:", firstClip.url.substring(0, 50));
   }, [clips, isMuted, onTimeUpdate, onClipChange]);
 
   // Expose play function and reset function via ref
@@ -895,7 +995,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           videoA.play().catch((err: Error) => {
             // Ignore AbortError - it's expected when play() is interrupted by pause()
             if (err.name !== 'AbortError') {
-              console.error("❌ Error playing videoA:", err);
             }
           });
         }
@@ -906,7 +1005,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           videoB.play().catch((err: Error) => {
             // Ignore AbortError - it's expected when play() is interrupted by pause()
             if (err.name !== 'AbortError') {
-              console.error("❌ Error playing videoB:", err);
             }
           });
         }
@@ -936,7 +1034,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
           currentVideo.play().catch((err: Error) => {
             // Ignore AbortError - it's expected when play() is interrupted by pause()
             if (err.name !== 'AbortError') {
-              console.error("❌ Error resuming video:", err);
             }
           });
         }
@@ -954,7 +1051,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     // Always start rendering loop to show video frames
     const startRender = () => {
       if (animationFrameRef.current === null) {
-        console.log("🎨 Starting render loop");
         animationFrameRef.current = requestAnimationFrame(render);
       }
     };
@@ -964,7 +1060,6 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     // Also ensure render loop continues even if it stops
     const checkRenderLoop = setInterval(() => {
       if (animationFrameRef.current === null) {
-        console.log("🔄 Restarting render loop");
         startRender();
       }
     }, 1000);
@@ -978,17 +1073,15 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
     };
   }, [render]);
 
-
-  // Use state to track which canvas is visible for React rendering
-  const [isAVisible, setIsAVisible] = useState(true);
-
   return (
     <div className="relative w-full h-full flex items-center justify-center bg-black">
       {/* Dual Canvas - CanvasA for videoA, CanvasB for videoB */}
       <canvas
         ref={canvasARef}
-        className="absolute w-full h-full object-contain"
+        className="absolute object-contain"
         style={{ 
+          width: canvasSize.width > 0 ? `${canvasSize.width}px` : '100%',
+          height: canvasSize.height > 0 ? `${canvasSize.height}px` : '100%',
           maxWidth: "100%", 
           maxHeight: "100%",
           zIndex: isAVisible ? 2 : 1,
@@ -999,8 +1092,10 @@ const CanvasVideoPlayer = React.forwardRef<CanvasVideoPlayerRef, CanvasVideoPlay
       />
       <canvas
         ref={canvasBRef}
-        className="absolute w-full h-full object-contain"
+        className="absolute object-contain"
         style={{ 
+          width: canvasSize.width > 0 ? `${canvasSize.width}px` : '100%',
+          height: canvasSize.height > 0 ? `${canvasSize.height}px` : '100%',
           maxWidth: "100%", 
           maxHeight: "100%",
           zIndex: isAVisible ? 1 : 2,

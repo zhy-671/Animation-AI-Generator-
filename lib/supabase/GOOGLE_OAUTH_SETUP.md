@@ -31,11 +31,26 @@
 
 ### 3. 配置重定向 URL
 
-在 Supabase Dashboard 中：
+#### 3.1 在 Supabase Dashboard 中配置 Site URL 和 Redirect URLs
+
 1. 进入 **Authentication** > **URL Configuration**
-2. 添加以下重定向 URL：
+2. 设置 **Site URL**：
+   - 开发环境：`http://localhost:3000`
+   - 生产环境：`https://animationaigenerator.com`（或你的实际域名）
+3. 在 **Redirect URLs** 中添加以下 URL：
    - `http://localhost:3000/auth/callback` (开发环境)
-   - `https://yourdomain.com/auth/callback` (生产环境)
+   - `https://animationaigenerator.com/auth/callback` (生产环境，替换为你的实际域名)
+   - `https://gzkckdxwxxczxzyatbsy.supabase.co/auth/v1/callback` (Supabase 默认回调，通常会自动添加)
+
+#### 3.2 在 Google Cloud Console 中配置授权重定向 URI
+
+1. 进入 [Google Cloud Console](https://console.cloud.google.com/)
+2. 选择你的项目
+3. 进入 **APIs & Services** > **Credentials**
+4. 找到你的 OAuth 2.0 Client ID，点击编辑
+5. 在 **Authorized redirect URIs** 中添加：
+   - `https://gzkckdxwxxczxzyatbsy.supabase.co/auth/v1/callback` (Supabase 的回调 URL)
+   - ⚠️ **重要**：这里应该添加 Supabase 的回调 URL，而不是你应用的 URL
 
 ### 4. 测试 Google 登录
 

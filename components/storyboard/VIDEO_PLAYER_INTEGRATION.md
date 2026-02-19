@@ -68,7 +68,7 @@
       type: 'video/mp4'
     }]
   }}
-  onReady={(player) => console.log('Player ready', player)}
+  onReady={(player) => {}}
   onPlay={() => setIsPlaying(true)}
   onPause={() => setIsPlaying(false)}
 />

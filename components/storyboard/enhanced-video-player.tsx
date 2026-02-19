@@ -13,7 +13,7 @@ const ReactPlayer = dynamic(() => import("react-player"), {
       <div className="text-white">Loading player...</div>
     </div>
   )
-});
+}) as any;
 
 interface EnhancedVideoPlayerProps {
   url: string;
@@ -28,6 +28,7 @@ interface EnhancedVideoPlayerProps {
   onError?: (error: any) => void;
   onReady?: () => void;
   onEnded?: () => void;
+  onVideoDimensions?: (payload: { width: number; height: number; aspectRatio: number }) => void;
   className?: string;
   style?: React.CSSProperties;
   controls?: boolean;
@@ -53,6 +54,7 @@ export default function EnhancedVideoPlayer({
   onError,
   onReady,
   onEnded,
+  onVideoDimensions,
   className = "",
   style,
   controls = false,
@@ -64,7 +66,7 @@ export default function EnhancedVideoPlayer({
   width = "100%",
   height = "100%",
 }: EnhancedVideoPlayerProps) {
-  const playerRef = useRef<ReactPlayer>(null);
+  const playerRef = useRef<any>(null);
   const [ready, setReady] = useState(false);
   const durationFetchedRef = useRef(false);
 
@@ -79,16 +81,16 @@ export default function EnhancedVideoPlayer({
         if (internalPlayer) {
           const player = internalPlayer as HTMLVideoElement;
           if (player && Math.abs(player.currentTime - currentTime) > 0.5) {
-            playerRef.current.seekTo(currentTime, "seconds");
+            (playerRef.current as any).seekTo(currentTime, "seconds");
           }
         } else {
           // Fallback: use seekTo directly without checking current time
-          playerRef.current.seekTo(currentTime, "seconds");
+          (playerRef.current as any).seekTo(currentTime, "seconds");
         }
       } catch (err) {
         // Fallback: use seekTo directly
         try {
-          playerRef.current.seekTo(currentTime, "seconds");
+          (playerRef.current as any).seekTo(currentTime, "seconds");
         } catch (seekErr) {
           // Ignore seek errors
         }
@@ -174,71 +176,33 @@ export default function EnhancedVideoPlayer({
                               error.code === 3 ? 'MEDIA_ERR_DECODE' :
                               error.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' : 'Unknown'
             } : null;
-            
-            console.log('🔍 Video element check:', {
-              readyState: videoElement.readyState,
-              networkState: videoElement.networkState,
-              networkStateText: videoElement.networkState === 0 ? 'NETWORK_EMPTY' :
-                                videoElement.networkState === 1 ? 'NETWORK_IDLE' :
-                                videoElement.networkState === 2 ? 'NETWORK_LOADING' :
-                                videoElement.networkState === 3 ? 'NETWORK_NO_SOURCE' : 'Unknown',
-              videoWidth: videoElement.videoWidth,
-              videoHeight: videoElement.videoHeight,
-              duration: videoElement.duration,
-              src: videoElement.src?.substring(0, 50) + '...',
-              currentSrc: videoElement.currentSrc?.substring(0, 50) + '...',
-              error: errorInfo,
-              paused: videoElement.paused,
-              method: 'found',
-              hasSrc,
-              hasCurrentSrc,
-              sourcesCount: sources.length,
-              sources: sources.slice(0, 3) // Show first 3 sources
-            });
-            
             // If networkState is 3 (NETWORK_NO_SOURCE), try to reload
             if (videoElement.networkState === 3 && hasSrc) {
-              console.log('⚠️ Network state is NETWORK_NO_SOURCE, trying to reload video...');
-              console.log('⚠️ This usually means CORS issue or video URL is not accessible');
               try {
                 // Remove crossOrigin attribute if present (may cause CORS issues)
                 if (videoElement.hasAttribute('crossorigin')) {
                   videoElement.removeAttribute('crossorigin');
-                  console.log('✅ Removed crossorigin attribute');
                 }
                 // Try to reload
                 videoElement.load();
-                console.log('✅ Called videoElement.load()');
               } catch (err) {
-                console.error('❌ Error reloading video:', err);
               }
             }
             
             // If video has no src and we have a URL, try to set it manually
             if (!hasSrc && !hasCurrentSrc && url && sources.length === 0) {
-              console.log('⚠️ Video element has no src, trying to set it manually');
               try {
                 videoElement.src = url;
                 videoElement.load();
-                console.log('✅ Manually set video src:', url.substring(0, 50) + '...');
               } catch (err) {
-                console.error('❌ Error setting video src:', err);
               }
             } else if (hasSrc || hasCurrentSrc || sources.length > 0) {
-              console.log('✅ Video element has src, waiting for load...');
             }
           } else {
-            console.log('🔍 No internal player yet', {
-              hasPlayerRef: !!playerRef.current,
-              playerType: player?.constructor?.name,
-              playerKeys: player ? Object.keys(player).slice(0, 10) : []
-            });
           }
         } catch (err) {
-          console.warn('🔍 Error checking video:', err);
         }
       } else {
-        console.log('🔍 No playerRef.current');
       }
     };
 
@@ -284,94 +248,48 @@ export default function EnhancedVideoPlayer({
   };
 
   const handleReady = () => {
-    console.log('🎉 EnhancedVideoPlayer: handleReady called');
     setReady(true);
     durationFetchedRef.current = false; // Reset when new video loads
     
     // Try to get video dimensions for aspect ratio
     try {
       const internalPlayer = (playerRef.current as any).getInternalPlayer?.();
-      console.log('EnhancedVideoPlayer: Internal player:', {
-        hasInternalPlayer: !!internalPlayer,
-        playerType: internalPlayer?.constructor?.name
-      });
-      
       if (internalPlayer) {
         const videoElement = internalPlayer as HTMLVideoElement;
-        console.log('EnhancedVideoPlayer: Video element info:', {
-          videoWidth: videoElement.videoWidth,
-          videoHeight: videoElement.videoHeight,
-          duration: videoElement.duration,
-          readyState: videoElement.readyState,
-          networkState: videoElement.networkState,
-          src: videoElement.src,
-          currentSrc: videoElement.currentSrc
-        });
-        
         if (videoElement && videoElement.videoWidth > 0 && videoElement.videoHeight > 0) {
           const aspectRatio = videoElement.videoWidth / videoElement.videoHeight;
-          console.log('EnhancedVideoPlayer: Aspect ratio:', aspectRatio);
+          onVideoDimensions?.({
+            width: videoElement.videoWidth,
+            height: videoElement.videoHeight,
+            aspectRatio,
+          });
           // Note: We can't directly set aspect ratio here, but the parent component
           // can listen to onReady and get dimensions if needed
         }
       }
     } catch (err) {
-      console.error('EnhancedVideoPlayer: Error getting internal player:', err);
     }
     
     onReady?.();
   };
 
   const handleError = (error: any) => {
-    console.error("❌ ReactPlayer error:", error);
-    console.error("❌ ReactPlayer error details:", {
-      url: url.substring(0, 50) + '...',
-      error: error,
-      errorType: typeof error,
-      errorString: String(error),
-      errorKeys: error ? Object.keys(error) : []
-    });
-    
     // Try to get more error details from internal player
     try {
       const internalPlayer = (playerRef.current as any).getInternalPlayer?.();
-      console.log('EnhancedVideoPlayer: Checking internal player for errors:', {
-        hasInternalPlayer: !!internalPlayer
-      });
-      
       if (internalPlayer) {
         const videoElement = internalPlayer as HTMLVideoElement;
         const mediaError = videoElement.error;
-        console.log('EnhancedVideoPlayer: Video element state:', {
-          error: mediaError,
-          errorCode: mediaError?.code,
-          errorMessage: mediaError?.message,
-          networkState: videoElement.networkState,
-          readyState: videoElement.readyState,
-          src: videoElement.src,
-          currentSrc: videoElement.currentSrc,
-          videoWidth: videoElement.videoWidth,
-          videoHeight: videoElement.videoHeight
-        });
-        
         if (mediaError) {
-          console.error("❌ Video element error:", {
-            code: mediaError.code,
-            message: mediaError.message,
-            networkState: videoElement.networkState,
-            readyState: videoElement.readyState
-          });
         }
       }
     } catch (err) {
-      console.warn("Could not get error details:", err);
     }
     
     onError?.(error);
   };
 
   const handleEnded = () => {
-    console.log('🎬 EnhancedVideoPlayer: Video ended', { url: url.substring(0, 50) + '...' });
     onEnded?.();
   };
 
@@ -392,7 +310,6 @@ export default function EnhancedVideoPlayer({
           }
         }
       } catch (err) {
-        console.warn("Could not enter fullscreen:", err);
       }
     }
   };
@@ -407,15 +324,6 @@ export default function EnhancedVideoPlayer({
       </div>
     );
   }
-
-  console.log('EnhancedVideoPlayer render:', {
-    url: url.substring(0, 50) + '...',
-    isPlaying,
-    hasRef: !!playerRef.current,
-    className,
-    style
-  });
-
   return (
     <div 
       className={`relative w-full h-full ${className}`} 
@@ -438,18 +346,15 @@ export default function EnhancedVideoPlayer({
           progressInterval={50}
           onPlay={handlePlay}
           onPause={handlePause}
-          onProgress={handleProgress}
-          onReady={handleReady}
-          onError={handleError}
+          onProgress={handleProgress as any}
+          onReady={handleReady as any}
+          onError={handleError as any}
           onEnded={handleEnded}
           onStart={() => {
-            console.log('🎬 ReactPlayer: Video started');
           }}
           onLoadStart={() => {
-            console.log('📥 ReactPlayer: Load started');
           }}
           onLoadedMetadata={() => {
-            console.log('📊 ReactPlayer: Metadata loaded');
           }}
           config={{
             file: {
@@ -463,7 +368,7 @@ export default function EnhancedVideoPlayer({
               forceHLS: false,
               forceDASH: false,
             },
-          }}
+          } as any}
         />
       </div>
       

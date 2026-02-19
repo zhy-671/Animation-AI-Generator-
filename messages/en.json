@@ -101,32 +101,128 @@
     }
   },
   "faq": {
-    "title": "Frequently asked questions",
+    "title": "Frequently Asked Questions",
     "subtitle": "Everything you need to know",
     "items": [
       {
-        "q": "How does it work?",
-        "a": "Describe what you want to see in text, or upload an image. Choose your style and duration, then create. Your animation appears in seconds."
+        "q": "How does the Animation AI Generator work?",
+        "a": "Our platform uses AI to transform your story ideas into complete animated videos. Start by entering your story concept, and our AI will generate a complete script with chapters. Then customize your project settings including visual style, aspect ratio, and character designs. The AI generates storyboards with detailed shots, and finally creates animated video clips. You can edit, add subtitles, voiceovers, and compose your final video."
       },
       {
-        "q": "What can I create?",
-        "a": "Any animated scene you imagine. Characters, objects, landscapes, abstract concepts—if you can describe it or show an image, you can animate it."
+        "q": "What is the complete workflow?",
+        "a": "The workflow consists of four main steps: 1) Story Script - Enter your idea and AI generates a complete story with chapters. 2) Settings - Configure visual style (2D Animation, 3D Animation, Japanese Anime, etc.), aspect ratio (16:9, 9:16, 1:1, etc.), and design characters with AI-generated images. 3) Storyboard - AI generates detailed shots with camera angles, movements, and compositions. 4) Create Video - Generate video clips for each shot, then edit and compose your final video with subtitles and voiceovers."
       },
       {
-        "q": "How long does it take?",
-        "a": "Most animations are ready in 30-60 seconds. Complex scenes or higher quality settings may take a bit longer."
+        "q": "What visual styles are available?",
+        "a": "We support multiple visual styles including: 2D Animation (hand-drawn style), 3D Animation (CGI rendered), Japanese Anime (cel-shaded), Cyberpunk, Clay Animation, Comic Book, Cartoon Style, and 3D Cartoon. Each style affects the overall look of your characters and scenes."
       },
       {
-        "q": "Can I use these commercially?",
-        "a": "Yes. All animations you create are yours to use however you want—social media, marketing, presentations, or personal projects."
+        "q": "How do I design characters?",
+        "a": "In the Settings step, you can add characters and click 'Design' to generate AI character images. Enter character details including name, age, gender, appearance description (hair, eyes, height, build, etc.), and clothing description. The AI will generate character images based on your selected visual style and aspect ratio. You can regenerate images until you're satisfied."
       },
       {
-        "q": "What formats are supported?",
-        "a": "We support MP4, MOV, and AVI formats. You can choose from 720p, 1080p, or 4K quality depending on your plan."
+        "q": "What aspect ratios can I choose?",
+        "a": "We support multiple aspect ratios: 16:9 (Landscape) for widescreen videos, 9:16 (Portrait) for mobile/social media, 1:1 (Square) for Instagram posts, 4:3 (Traditional) for classic format, and 21:9 (Ultrawide) for cinematic content. Your choice affects both character images and final video output."
       },
       {
-        "q": "Do I need an account?",
-        "a": "No account needed to start. You can create animations immediately. Signing up lets you save your work and access your history."
+        "q": "How long does storyboard generation take?",
+        "a": "Storyboard generation typically takes 1-3 minutes. The AI analyzes your scene story and generates 5-10 detailed shots per scene, including camera angles, movements, compositions, lighting, and mood. Each shot includes detailed image and video prompts optimized for AI generation."
+      },
+      {
+        "q": "How long does video generation take?",
+        "a": "Video generation for each shot typically takes 2-3 minutes. You can generate videos for individual shots or multiple shots. The system supports resolutions from 480P to 1080P and durations of 5 or 10 seconds per clip. You'll see a progress indicator during generation."
+      },
+      {
+        "q": "Can I edit shots after generation?",
+        "a": "Yes! You can edit shot details including description, composition, camera angle, camera movement, lighting, mood, characters, dialogue, and narration. You can also regenerate images for shots, choosing from up to 4 generated options. All edits are saved to your project."
+      },
+      {
+        "q": "What video editing features are available?",
+        "a": "The video editor includes: Timeline editing with playhead control, subtitle tracks for adding text overlays, voiceover tracks for narration, shot track showing all video clips, video preview with playback controls, and export functionality. You can arrange clips, add timing, and compose your final video."
+      },
+      {
+        "q": "How are credits used?",
+        "a": "Credits are consumed for AI operations: story script generation, character image generation, storyboard generation, shot image generation, and video generation. Different operations consume different amounts of credits. You can purchase credits or subscribe to a plan that includes credits."
+      },
+      {
+        "q": "Can I save my projects?",
+        "a": "Yes! All projects are automatically saved. You can access your projects from 'My Projects' to continue working on them later. Projects save your story script, settings, characters, storyboards, and generated videos. You can edit any step at any time."
+      },
+      {
+        "q": "What happens if generation fails?",
+        "a": "If generation fails, you'll see an error message. Common issues include content moderation (inappropriate content), API timeouts, or network errors. You can retry the generation. For image generation, you can regenerate up to 4 times. For videos, you can regenerate individual shots."
+      },
+      {
+        "q": "Can I use generated content commercially?",
+        "a": "Yes, all content you generate is yours to use commercially. You can use it for social media, marketing, presentations, or any commercial projects. However, please review our Terms of Service for complete usage rights and restrictions."
+      },
+      {
+        "q": "Do I need to complete all steps in order?",
+        "a": "Yes, steps must be completed in order: Story Script → Settings → Storyboard → Create Video. Each step unlocks the next. However, you can return to previous steps to edit. The navigation bar shows your progress and which steps are available."
+      },
+      {
+        "q": "What video formats and resolutions are supported?",
+        "a": "Videos are generated in MP4 format. Supported resolutions include 480P, 720P, and 1080P. Duration options are 5 seconds or 10 seconds per clip. The final composed video maintains your selected aspect ratio and can be exported for download."
+      },
+      {
+        "q": "Can AI generate animations?",
+        "a": "Yes! AI can generate animations from text descriptions or images. Our Animation AI Generator uses advanced AI technology to create professional animated videos in seconds. Simply describe your idea or upload an image, and our AI will transform it into a captivating animated video."
+      },
+      {
+        "q": "Can ChatGPT animate?",
+        "a": "ChatGPT is a text-based AI that can help with animation scripts and ideas, but it cannot directly create animated videos. Our Animation AI Generator specializes in creating actual animated videos from text or images, bringing your ideas to life visually."
+      },
+      {
+        "q": "Is there a free AI cartoon generator?",
+        "a": "Yes! Our Animation AI Generator offers free cartoon and animation generation. You can create animated videos and cartoons from text or images without any cost. Basic features are free, and you can upgrade for more advanced options."
+      },
+      {
+        "q": "How to animate a picture using AI free?",
+        "a": "Simply upload your image to our Image-to-Video Animation Generator, and our AI will automatically transform it into an animated video. The process is free and takes just seconds. You can customize styles, add effects, and create professional animations without any expertise needed."
+      },
+      {
+        "q": "Can CapCut animate photos?",
+        "a": "CapCut is primarily a video editing tool, not an AI animation generator. Our Animation AI Generator specializes in creating animated videos from static images using AI technology, transforming photos into dynamic animated sequences automatically."
+      },
+      {
+        "q": "How to convert picture to animation?",
+        "a": "Upload your picture to our Image-to-Video Animation Generator. Our AI analyzes your image and creates an animated video version. You can choose from various animation styles (2D, 3D, Anime, Cartoon, etc.) and customize the animation to match your vision."
+      },
+      {
+        "q": "Can ChatGPT cartoonize a photo?",
+        "a": "ChatGPT cannot directly cartoonize photos or create images. Our Animation AI Generator can transform photos into animated videos with various cartoon styles. Upload your photo and select a cartoon animation style to create animated content."
+      },
+      {
+        "q": "Is AI animation free?",
+        "a": "Yes! Our basic AI animation features are completely free. You can create animated videos from text or images without any cost. We offer free credits to get started, and you can purchase additional credits or subscribe to plans for more advanced features."
+      },
+      {
+        "q": "Is Animaker actually free?",
+        "a": "Our Animation AI Generator offers free basic features for creating animations. You can generate animated videos from text or images at no cost. We provide free credits to help you get started, with optional paid plans for extended usage and premium features."
+      },
+      {
+        "q": "Which AI animation tool is best?",
+        "a": "Our Animation AI Generator stands out with its ease of use, fast generation times, and high-quality results. We support multiple animation styles (2D, 3D, Anime, Cartoon), offer both text-to-video and image-to-video options, and provide a complete storyboard workflow. Try it free and see why creators choose us!"
+      },
+      {
+        "q": "How to animate a picture using ChatGPT free?",
+        "a": "ChatGPT cannot animate pictures directly. However, you can use our free Image-to-Video Animation Generator to animate your pictures. Simply upload your image, and our AI will create an animated video version in seconds - completely free to get started."
+      },
+      {
+        "q": "Is Disney using AI to animate?",
+        "a": "Major animation studios are exploring AI tools for various production tasks. Our Animation AI Generator brings professional-grade AI animation capabilities to everyone, allowing creators to produce Disney-quality animated content quickly and affordably."
+      },
+      {
+        "q": "Can I make 3D animation for free?",
+        "a": "Yes! Our Animation AI Generator includes free 3D animation capabilities. You can create 3D animated videos from text descriptions or images without any cost. Select the 3D animation style and watch your ideas come to life in three dimensions."
+      },
+      {
+        "q": "Is AI replacing animators?",
+        "a": "AI is a powerful tool that enhances animators' capabilities rather than replacing them. Our Animation AI Generator helps creators bring ideas to life faster, allowing animators to focus on creative direction and refinement. It's a collaborative tool that empowers creators."
+      },
+      {
+        "q": "What are the 4 types of animation?",
+        "a": "The four main types of animation are: 1) Traditional/2D Animation - hand-drawn frame-by-frame animation, 2) 3D Animation - computer-generated three-dimensional animation, 3) Stop Motion - physical objects photographed frame-by-frame, and 4) Motion Graphics - animated graphic design elements. Our tool supports 2D, 3D, and various modern animation styles."
       }
     ],
     "contactTitle": "Still have questions?",

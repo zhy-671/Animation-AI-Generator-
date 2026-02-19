@@ -6,9 +6,12 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, Info } from "lucide-react";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
+import { useToast } from "@/components/ui/toast-notification";
 
 export default function StoryboardProjectsList() {
   const router = useRouter();
+  const { showError, showSuccess } = useToast();
   const [myProjects, setMyProjects] = useState<Array<{
     id: string;
     title: string;
@@ -18,6 +21,9 @@ export default function StoryboardProjectsList() {
     updated_at: string;
   }>>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     loadMyProjects();
@@ -27,8 +33,26 @@ export default function StoryboardProjectsList() {
     setLoadingProjects(true);
     try {
       const response = await fetch("/api/storyboard/projects");
+      
       if (!response.ok) {
-        throw new Error("Failed to fetch projects");
+        const errorData = await response.json().catch(() => ({}));
+        
+        // 如果是 503 Service Unavailable，可能是网络连接问题
+        if (response.status === 503 || errorData.isNetworkError) {
+          showError("Network connection timeout. Please check your internet connection and try again.");
+          return;
+        }
+        
+        // 如果是 401 Unauthorized，可能是会话过期
+        if (response.status === 401) {
+          showError("Your session has expired. Please refresh the page or log in again.");
+          setTimeout(() => {
+            router.push("/login");
+          }, 2000);
+          return;
+        }
+        
+        throw new Error(errorData.error || `Failed to fetch projects (${response.status})`);
       }
       
       const result = await response.json();
@@ -44,7 +68,8 @@ export default function StoryboardProjectsList() {
         })));
       }
     } catch (error) {
-      console.error("Error loading projects:", error);
+      const errorMessage = error instanceof Error ? error.message : "Failed to load projects";
+      showError(errorMessage);
     } finally {
       setLoadingProjects(false);
     }
@@ -60,26 +85,33 @@ export default function StoryboardProjectsList() {
     router.push(`/storyboard/project/${projectId}/create`);
   };
 
-  const handleDeleteProject = async (projectId: string, e: React.MouseEvent) => {
+  const handleDeleteClick = (projectId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("确定要删除这个项目吗？")) {
-      return;
-    }
+    setProjectToDelete(projectId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!projectToDelete) return;
     
+    setIsDeleting(true);
     try {
-      const response = await fetch(`/api/storyboard/projects/${projectId}`, {
+      const response = await fetch(`/api/storyboard/projects/${projectToDelete}`, {
         method: "DELETE",
       });
       
       if (response.ok) {
-        setMyProjects(prev => prev.filter(p => p.id !== projectId));
+        setMyProjects(prev => prev.filter(p => p.id !== projectToDelete));
+        showSuccess("Project deleted successfully");
       } else {
         const error = await response.json();
         throw new Error(error.error || "Failed to delete project");
       }
     } catch (error) {
-      console.error("Error deleting project:", error);
-      alert(error instanceof Error ? error.message : "删除项目失败");
+      showError(error instanceof Error ? error.message : "Failed to delete project");
+    } finally {
+      setIsDeleting(false);
+      setProjectToDelete(null);
     }
   };
 
@@ -165,7 +197,7 @@ export default function StoryboardProjectsList() {
                 >
                   {/* 删除按钮 */}
                   <button
-                    onClick={(e) => handleDeleteProject(project.id, e)}
+                    onClick={(e) => handleDeleteClick(project.id, e)}
                     className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -217,6 +249,17 @@ export default function StoryboardProjectsList() {
       </div>
 
       <Footer />
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Project"
+        description="Are you sure you want to delete this project? This action cannot be undone and all associated data (scenes, storyboards, characters, etc.) will be permanently removed."
+        itemName="project"
+        isLoading={isDeleting}
+      />
     </div>
   );
 }

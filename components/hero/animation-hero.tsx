@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Sparkles, ArrowRight, Play } from "lucide-react";
+import { Sparkles, ArrowRight } from "lucide-react";
 import { useTranslation } from "@/hooks/use-translation";
 
 export default function AnimationHero() {
@@ -16,7 +16,6 @@ export default function AnimationHero() {
     // 确保视频播放
     if (videoRef.current) {
       videoRef.current.play().catch((error) => {
-        console.error('Video play error:', error);
       });
     }
   }, []);
@@ -35,10 +34,8 @@ export default function AnimationHero() {
           className="absolute inset-0 w-full h-full object-cover"
           aria-hidden="true"
           onError={(e) => {
-            console.error('Video load error:', e);
           }}
           onLoadedData={() => {
-            console.log('Video loaded successfully');
           }}
         >
           <source src="/videos/The-Jungle-Book.mp4" type="video/mp4" />
@@ -71,7 +68,7 @@ export default function AnimationHero() {
             className="space-y-4"
           >
             <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl md:text-6xl lg:text-7xl drop-shadow-lg">
-              Animation AI Generator | Animaker AI - Unleash Your Creativity
+              Animation AI Generator
             </h1>
             
             <h2 className="text-lg font-normal text-gray-100 sm:text-xl md:text-2xl max-w-3xl mx-auto leading-relaxed drop-shadow-md">
@@ -97,21 +94,6 @@ export default function AnimationHero() {
             >
               Start Creating Free
               <ArrowRight className="w-5 h-5 ml-2" />
-            </Button>
-            
-            <Button
-              onClick={() => {
-                const examplesSection = document.querySelector('#examples');
-                if (examplesSection) {
-                  examplesSection.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-              variant="outline"
-              size="lg"
-              className="h-14 px-8 text-lg font-medium border-2 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-full"
-            >
-              <Play className="w-5 h-5 mr-2" />
-              See examples
             </Button>
           </motion.div>
 

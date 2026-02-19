@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Diamond } from "lucide-react";
@@ -10,12 +10,29 @@ import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import { useToast } from "@/components/ui/toast-notification";
 import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 export default function IdeaInputForm() {
   const router = useRouter();
   const { showError, showWarning } = useToast();
   const [ideaText, setIdeaText] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
+
+  // Clear old project data when starting a new project
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      // Clear old project ID to ensure we create a new project, not update an old one
+      sessionStorage.removeItem("storyboardProjectId");
+    }
+  }, []);
 
   const handleBackToProjects = () => {
     router.push("/storyboard");
@@ -30,38 +47,54 @@ export default function IdeaInputForm() {
     // Check credits balance before generating
     const creditsCheck = await checkCreditsBalance(2);
     if (!creditsCheck.sufficient) {
-      showWarning(
-        `Insufficient credits. You need 2 credits to generate a story script. Please purchase credits to continue.`,
-        5000
-      );
-      // Navigate to pricing page after a short delay
-      setTimeout(() => {
-        router.push("/pricing");
-      }, 2000);
+      setInsufficientCreditsData({
+        required: 2,
+        current: creditsCheck.balance || 0,
+        action: "generate a story script"
+      });
+      setShowInsufficientCreditsDialog(true);
       return;
     }
 
     setIsGenerating(true);
 
     try {
+      // 打印客户端请求参数（浏览器控制台）
+      const requestData = {
+        prompt: ideaText.trim(),
+      };
       // 调用 API 生成故事内容（纯文本剧本）
       const response = await fetch("/api/storyboard/generate-content", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: ideaText.trim(),
-        }),
+        body: JSON.stringify(requestData),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate story content");
+        // Check if response is JSON
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate story content");
+        } else {
+          // Response is HTML (error page)
+          const errorText = await response.text();
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
-
+      
+      // 打印客户端响应结果（浏览器控制台）
       if (result.success && result.data) {
         // Deduct credits after successful generation
         const deductResult = await deductCredits(
@@ -71,7 +104,6 @@ export default function IdeaInputForm() {
         );
 
         if (!deductResult.success) {
-          console.error("Failed to deduct credits:", deductResult.error);
           // Still proceed even if credit deduction fails, but log the error
         } else {
           // Trigger credits update event to refresh header balance
@@ -92,7 +124,6 @@ export default function IdeaInputForm() {
         throw new Error(result.error || "Failed to generate story content");
       }
     } catch (error) {
-      console.error("Error generating story content:", error);
       showError(
         error instanceof Error
           ? error.message
@@ -226,6 +257,17 @@ export default function IdeaInputForm() {
       </div>
 
       <Footer />
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

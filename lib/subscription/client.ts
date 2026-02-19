@@ -29,7 +29,6 @@ export async function getUserSubscriptionPlan(): Promise<{
       expiresAt: result.data.expiresAt,
     };
   } catch (error) {
-    console.error('Error fetching subscription plan:', error);
     return {
       plan: null,
       expiresAt: null,

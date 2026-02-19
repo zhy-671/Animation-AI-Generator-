@@ -39,7 +39,7 @@ const SplitButtonSide = forwardRef<
   return (
     <Button
       ref={ref}
-      variant="text"
+      variant="ghost"
       className={cn(
         "h-full rounded-none bg-panel-accent !opacity-100 border-0 gap-0 font-normal transition-colors disabled:text-muted-foreground",
         onClick

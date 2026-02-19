@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Upload, Sparkles, Loader2 } from "lucide-react";
+import { X, Upload, Sparkles, Loader2, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import { useToast } from "@/components/ui/toast-notification";
 
 interface CharacterAppearance {
   hair_color: string;
@@ -58,6 +61,7 @@ interface CharacterEditModalProps {
   initialImageUrl?: string | null; // 初始图片URL
   visualStyle?: string; // 画面风格
   artSetting?: string; // 美术设定（比例）
+  projectId?: string; // 项目ID，用于API获取项目设置
 }
 
 export default function CharacterEditModal({
@@ -71,27 +75,29 @@ export default function CharacterEditModal({
   initialImageUrl = null,
   visualStyle = "2d",
   artSetting = "16:9",
+  projectId,
 }: CharacterEditModalProps) {
+  const { showError, showInfo } = useToast();
   const [formData, setFormData] = useState<CharacterDetail | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]); // 生成的4张图片
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   useEffect(() => {
     if (character) {
       // 调试：打印接收到的角色数据
-      console.log('CharacterEditModal received character:', {
-        id: character.id,
-        name: character.name,
-        appearance: character.appearance,
-        appearanceType: typeof character.appearance,
-        clothing: character.clothing,
-      });
-      
       // 确保所有字段都有默认值，特别是嵌套对象
       const formDataToSet = {
         id: character.id || "",
@@ -123,14 +129,6 @@ export default function CharacterEditModal({
       };
       
       // 调试：打印设置的表单数据
-      console.log('CharacterEditModal setting formData:', {
-        name: formDataToSet.name,
-        age: formDataToSet.age,
-        gender: formDataToSet.gender,
-        appearance: formDataToSet.appearance,
-        clothing: formDataToSet.clothing,
-      });
-      
       setFormData(formDataToSet);
       // 使用传入的初始图片URL
       setImageUrl(initialImageUrl);
@@ -154,54 +152,80 @@ export default function CharacterEditModal({
       return;
     }
     
-    // 构建图片生成提示词并保存到角色数据中
-    const imageGenerationPrompt = buildImagePrompt(formData);
-    console.log("保存角色时构建的图片生成提示词:", imageGenerationPrompt);
-
-    // 检查是否选择了图片（包括已上传的图片或选择了生成的图片）
-    // imageUrl: 已上传的图片URL
-    // selectedImageIndex: 用户选择了生成的图片（但可能还没上传完成）
-    const hasSelectedImage = imageUrl || (selectedImageIndex !== null && generatedImages.length > 0);
+    // 显示保存中的提示
+    setIsSaving(true);
+    showInfo("Saving...");
     
-    if (!hasSelectedImage) {
-      const shouldContinue = confirm("Character has no image selected. Continue saving?\n\nClick \"OK\" to continue saving (without image)\nClick \"Cancel\" to return and select image");
-      if (!shouldContinue) {
-        return; // 用户取消，不保存
+    try {
+      // 构建图片生成提示词并保存到角色数据中
+      const imageGenerationPrompt = buildImagePrompt(formData);
+      // 检查是否选择了图片（包括已上传的图片或选择了生成的图片）
+      // imageUrl: 已上传的图片URL
+      // selectedImageIndex: 用户选择了生成的图片（但可能还没上传完成）
+      const hasSelectedImage = imageUrl || (selectedImageIndex !== null && generatedImages.length > 0);
+      
+      if (!hasSelectedImage) {
+        showError("Please create a character image before saving. Generate or upload an image first.");
+        setIsSaving(false);
+        return; // 阻止保存，要求用户先创建图片
       }
-    }
 
-    // 如果用户选择了生成的图片但还没上传，先上传
-    let finalImageUrl = imageUrl;
-    if (!imageUrl && selectedImageIndex !== null && generatedImages.length > 0) {
-      try {
-        const selectedImageUrl = generatedImages[selectedImageIndex];
-        const uploadedUrl = await onImageUploadFromUrl(selectedImageUrl);
-        if (uploadedUrl) {
-          finalImageUrl = uploadedUrl;
-          setImageUrl(uploadedUrl);
+      // 如果用户选择了生成的图片但还没上传，先上传
+      // 优先使用用户最新选择的图片（selectedImageIndex），而不是旧的 imageUrl
+      let finalImageUrl = imageUrl;
+      // 如果用户选择了生成的图片，优先使用选择的图片（即使 imageUrl 不为空，也要使用新选择的）
+      if (selectedImageIndex !== null && generatedImages.length > 0) {
+        try {
+          const selectedImageUrl = generatedImages[selectedImageIndex];
+          // 如果 imageUrl 为空或者是旧的图片，需要上传新选择的图片
+          if (!imageUrl || imageUrl !== selectedImageUrl) {
+            const uploadedUrl = await onImageUploadFromUrl(selectedImageUrl);
+            if (uploadedUrl) {
+              finalImageUrl = uploadedUrl;
+              setImageUrl(uploadedUrl);
+            } else {
+              // 如果上传失败，使用生成的图片URL（可能是临时URL）
+              finalImageUrl = selectedImageUrl;
+              // 也更新 imageUrl 状态，以便后续显示
+              setImageUrl(selectedImageUrl);
+            }
+          } else {
+            // imageUrl 已经是选中的图片，直接使用
+            finalImageUrl = imageUrl;
+          }
+        } catch (error) {
+          // 如果上传失败，使用生成的图片URL（至少可以显示）
+          if (selectedImageIndex !== null && generatedImages.length > 0) {
+            finalImageUrl = generatedImages[selectedImageIndex];
+            setImageUrl(finalImageUrl);
+            // 不阻止保存，至少图片可以显示
+          } else {
+            // 如果没有选择的图片，才阻止保存
+            alert('Image upload failed. Please try again');
+            setIsSaving(false);
+            return;
+          }
         }
-      } catch (error) {
-        console.error('Error uploading selected image:', error);
-        alert('Image upload failed. Please try again');
+      } else if (!imageUrl) {
+        // 如果没有选择图片且 imageUrl 为空，阻止保存
+        alert('Please select or generate an image before saving');
+        setIsSaving(false);
         return;
       }
+      // 保存时，将当前选中的图片URL和图片生成提示词一起保存
+      const dataToSave = {
+        ...formData,
+        imageUrl: finalImageUrl || null, // 将图片URL添加到保存的数据中
+        imageGenerationPrompt: imageGenerationPrompt, // 保存图片生成提示词
+      };
+      // 调用父组件的保存回调（这可能是异步的）
+      await onSave(dataToSave);
+      onClose();
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "Failed to save character");
+    } finally {
+      setIsSaving(false);
     }
-
-    // 保存时，将当前选中的图片URL和图片生成提示词一起保存
-    const dataToSave = {
-      ...formData,
-      imageUrl: finalImageUrl || null, // 将图片URL添加到保存的数据中
-      imageGenerationPrompt: imageGenerationPrompt, // 保存图片生成提示词
-    };
-    
-    console.log("保存的角色数据（包含图片生成提示词）:", {
-      ...dataToSave,
-      imageGenerationPrompt: imageGenerationPrompt.substring(0, 100) + '...',
-    });
-    
-    // 调用父组件的保存回调
-    onSave(dataToSave);
-    onClose();
   };
 
   const handleImageUpload = async (file: File) => {
@@ -212,7 +236,6 @@ export default function CharacterEditModal({
         setImageUrl(url);
       }
     } catch (error) {
-      console.error("Error uploading image:", error);
       alert("Image upload failed");
     } finally {
       setIsUploading(false);
@@ -222,9 +245,9 @@ export default function CharacterEditModal({
   // 清理和过滤敏感内容
   const sanitizeText = (text: string): string => {
     if (!text) return "";
-    // 移除可能触发内容审核的敏感词汇和符号
+    // 保留引号（用于身高等），移除其他可能触发内容审核的敏感词汇和符号
     return text
-      .replace(/[^\w\s\u4e00-\u9fa5.,!?;:()\-]/g, '') // 只保留字母、数字、中文和基本标点
+      .replace(/[^\w\s\u4e00-\u9fa5.,!?;:()\-'"]/g, '') // 保留字母、数字、中文、基本标点和引号
       .trim()
       .substring(0, 200); // 限制长度
   };
@@ -232,159 +255,53 @@ export default function CharacterEditModal({
   // 根据角色信息构建图片生成提示词
   // 注意：使用传入的 visualStyle 和 artSetting props（来自设置页面）
   const buildImagePrompt = (character: CharacterDetail): string => {
-    console.log("=== buildImagePrompt - 使用的风格和比例 ===");
-    console.log("visualStyle (来自设置页面):", visualStyle);
-    console.log("artSetting (来自设置页面):", artSetting);
     const parts: string[] = [];
     
+    // 角色基本信息：名称、年龄、性别
+    if (character.name && character.name.trim()) {
+      const name = String(character.name).trim();
+      if (name) {
+        parts.push(name);
+      }
+    }
+    
+    // 添加年龄和性别信息（如果有）
+    const basicInfo: string[] = [];
+    if (character.age !== undefined && character.age !== null && character.age !== '') {
+      const ageStr = String(character.age).trim();
+      if (ageStr) {
+        basicInfo.push(`${ageStr}-year-old`);
+      }
+    }
+    if (character.gender && typeof character.gender === 'string' && character.gender.trim()) {
+      const genderStr = character.gender.trim();
+      basicInfo.push(genderStr);
+    }
+    if (basicInfo.length > 0) {
+      parts.push(basicInfo.join(' '));
+    }
+    
     // 只使用外观和服装信息，避免包含敏感内容的背景故事和性格描述
-    // 外观信息：优先使用组合好的 facial_features（如果包含完整描述）
+    // 外观信息：直接使用 Appearance Description（facial_features 字段）
     const appearance = character.appearance;
-    let appearanceText = "";
-    
-    // 检查 facial_features 是否包含完整的外观描述（新格式）
     if (appearance.facial_features && appearance.facial_features.trim()) {
-      // 如果 facial_features 包含完整描述（不是简单的字段值），直接使用
-      const facialFeaturesText = appearance.facial_features.trim();
-      // 检查是否包含多个特征（说明是组合好的文本）
-      if (facialFeaturesText.includes(',') || facialFeaturesText.includes('.') || 
-          facialFeaturesText.length > 50 || 
-          (!appearance.hair_color && !appearance.eye_color && !appearance.hair_style)) {
-        // 这是组合好的完整描述，直接使用
-        appearanceText = sanitizeText(facialFeaturesText);
-      } else {
-        // 否则，从各个字段组合
-        const appearanceParts: string[] = [];
-        if (appearance.hair_color) {
-          const sanitized = sanitizeText(appearance.hair_color);
-          if (sanitized) appearanceParts.push(`${sanitized} hair`);
-        }
-        if (appearance.hair_style) {
-          const sanitized = sanitizeText(appearance.hair_style);
-          if (sanitized) appearanceParts.push(sanitized);
-        }
-        if (appearance.eye_color) {
-          const sanitized = sanitizeText(appearance.eye_color);
-          if (sanitized) appearanceParts.push(`${sanitized} eyes`);
-        }
-        if (appearance.height) {
-          const sanitized = sanitizeText(appearance.height);
-          if (sanitized) appearanceParts.push(`height: ${sanitized}`);
-        }
-        if (appearance.build) {
-          const sanitized = sanitizeText(appearance.build);
-          if (sanitized) appearanceParts.push(`build: ${sanitized}`);
-        }
-        if (appearance.skin_tone) {
-          const sanitized = sanitizeText(appearance.skin_tone);
-          if (sanitized) appearanceParts.push(`skin tone: ${sanitized}`);
-        }
-        if (facialFeaturesText) {
-          const sanitized = sanitizeText(facialFeaturesText);
-          if (sanitized) appearanceParts.push(sanitized);
-        }
-        if (appearance.distinct_marks) {
-          const sanitized = sanitizeText(appearance.distinct_marks);
-          if (sanitized) appearanceParts.push(`distinct marks: ${sanitized}`);
-        }
-        appearanceText = appearanceParts.join(', ');
+      const appearanceText = sanitizeText(appearance.facial_features.trim());
+      if (appearanceText) {
+        parts.push(appearanceText);
       }
-    } else {
-      // 从各个字段组合
-      const appearanceParts: string[] = [];
-      if (appearance.hair_color) {
-        const sanitized = sanitizeText(appearance.hair_color);
-        if (sanitized) appearanceParts.push(`${sanitized} hair`);
-      }
-      if (appearance.hair_style) {
-        const sanitized = sanitizeText(appearance.hair_style);
-        if (sanitized) appearanceParts.push(sanitized);
-      }
-      if (appearance.eye_color) {
-        const sanitized = sanitizeText(appearance.eye_color);
-        if (sanitized) appearanceParts.push(`${sanitized} eyes`);
-      }
-      if (appearance.height) {
-        const sanitized = sanitizeText(appearance.height);
-        if (sanitized) appearanceParts.push(`height: ${sanitized}`);
-      }
-      if (appearance.build) {
-        const sanitized = sanitizeText(appearance.build);
-        if (sanitized) appearanceParts.push(`build: ${sanitized}`);
-      }
-      if (appearance.skin_tone) {
-        const sanitized = sanitizeText(appearance.skin_tone);
-        if (sanitized) appearanceParts.push(`skin tone: ${sanitized}`);
-      }
-      if (appearance.facial_features) {
-        const sanitized = sanitizeText(appearance.facial_features);
-        if (sanitized) appearanceParts.push(sanitized);
-      }
-      if (appearance.distinct_marks) {
-        const sanitized = sanitizeText(appearance.distinct_marks);
-        if (sanitized) appearanceParts.push(`distinct marks: ${sanitized}`);
-      }
-      appearanceText = appearanceParts.join(', ');
     }
     
-    if (appearanceText) {
-      parts.push(appearanceText);
-    }
-    
-    // 服装信息：优先使用组合好的 style（如果包含完整描述）
+    // 服装信息：直接使用 Clothing Description（style 字段）
     const clothing = character.clothing;
-    let clothingText = "";
-    
     if (clothing.style && clothing.style.trim()) {
-      const styleText = clothing.style.trim();
-      // 检查是否是组合好的完整描述
-      if (styleText.includes(',') || styleText.includes(':') || 
-          styleText.length > 30 ||
-          (!clothing.accessories && !clothing.footwear)) {
-        // 这是组合好的完整描述，直接使用
-        clothingText = sanitizeText(styleText);
-      } else {
-        // 否则，从各个字段组合
-        const clothingParts: string[] = [];
-        if (styleText) {
-          const sanitized = sanitizeText(styleText);
-          if (sanitized) clothingParts.push(sanitized);
-        }
-        if (clothing.accessories) {
-          const sanitized = sanitizeText(clothing.accessories);
-          if (sanitized) clothingParts.push(`accessories: ${sanitized}`);
-        }
-        if (clothing.footwear) {
-          const sanitized = sanitizeText(clothing.footwear);
-          if (sanitized) clothingParts.push(`footwear: ${sanitized}`);
-        }
-        clothingText = clothingParts.join(', ');
+      const clothingText = sanitizeText(clothing.style.trim());
+      if (clothingText) {
+        parts.push(clothingText);
       }
-    } else {
-      // 从各个字段组合
-      const clothingParts: string[] = [];
-      if (clothing.style) {
-        const sanitized = sanitizeText(clothing.style);
-        if (sanitized) clothingParts.push(sanitized);
-      }
-      if (clothing.accessories) {
-        const sanitized = sanitizeText(clothing.accessories);
-        if (sanitized) clothingParts.push(`accessories: ${sanitized}`);
-      }
-      if (clothing.footwear) {
-        const sanitized = sanitizeText(clothing.footwear);
-        if (sanitized) clothingParts.push(`footwear: ${sanitized}`);
-      }
-      clothingText = clothingParts.join(', ');
-    }
-    
-    if (clothingText) {
-      parts.push(clothingText);
     }
     
     // 组合成完整的英文提示词
     let prompt = parts.join(', ');
-    
     // 如果没有任何外观信息，使用默认描述
     if (!prompt.trim()) {
       prompt = "character design";
@@ -408,12 +325,7 @@ export default function CharacterEditModal({
     const stylePrompt = styleMap[visualStyle] || styleMap["2d"] || "2D animation style";
     
     // 打印映射信息用于调试
-    console.log("=== 画风映射检查 ===");
-    console.log("选择的画风值 (visualStyle):", visualStyle);
-    console.log("对应的提示词:", stylePrompt);
-    console.log("可用的画风选项:", Object.keys(styleMap));
     prompt += `, ${stylePrompt}`;
-    
     // 添加美术设定（artSetting - 比例）- 使用设置页面的比例
     // 注意：artSetting 是从设置页面传递过来的 props
     const aspectRatioMap: Record<string, string> = {
@@ -426,13 +338,11 @@ export default function CharacterEditModal({
     // 使用设置页面的 artSetting（来自 props）
     const aspectRatioPrompt = aspectRatioMap[artSetting] || aspectRatioMap["16:9"] || "16:9 aspect ratio";
     prompt += `, ${aspectRatioPrompt}`;
-    
     // 添加通用质量提示
-    prompt += ', cinematic lighting, ultra detailed, 4k illustration, consistent tone, professional character design, safe for work';
-    
-    console.log('Generated image prompt:', prompt);
-    
-    return prompt.trim();
+    const qualityPrompt = 'cinematic lighting, ultra detailed, 4k illustration, consistent tone, professional character design, safe for work';
+    prompt += `, ${qualityPrompt}`;
+    const finalPrompt = prompt.trim();
+    return finalPrompt;
   };
 
   const handleImageGenerate = async () => {
@@ -447,30 +357,53 @@ export default function CharacterEditModal({
       return;
     }
     
+    // Check credits balance before generating images (20 credits for 4 images)
+    const creditsCheck = await checkCreditsBalance(20);
+    if (!creditsCheck.sufficient) {
+      setInsufficientCreditsData({
+        required: 20,
+        current: creditsCheck.balance || 0,
+        action: "generate character images"
+      });
+      setShowInsufficientCreditsDialog(true);
+      return;
+    }
+    
     setIsGenerating(true);
     setGeneratedImages([]);
     setSelectedImageIndex(null);
     
     try {
+      // Deduct credits before generating images
+      const deductResult = await deductCredits(
+        20,
+        "Generate character images (4 images)",
+        { type: "character_image_generation", character_id: formData.id, character_name: formData.name }
+      );
+
+      if (!deductResult.success) {
+        alert("Failed to deduct credits. Please try again.");
+        setIsGenerating(false);
+        return;
+      }
+
+      // Trigger credits update event to refresh header balance
+      window.dispatchEvent(new Event("credits-updated"));
+      
       // 根据角色信息构建提示词
       const prompt = buildImagePrompt(formData);
       
       // 打印提交的参数
-      console.log("=== 角色编辑页面 - 文生图提交参数 ===");
-      console.log("1. 角色信息 (formData):", JSON.stringify(formData, null, 2));
-      console.log("2. 画面风格 (visualStyle):", visualStyle);
-      console.log("3. 美术设定/比例 (artSetting):", artSetting);
-      console.log("4. 构建的提示词 (prompt):", prompt);
-      console.log("5. 提交给API的参数:", JSON.stringify({ prompt }, null, 2));
-      console.log("=====================================");
-      
-      // 提交生成任务
+      // 提交生成任务，传递 project_id 以便 API 获取项目设置（风格和宽高比）
       const response = await fetch('/api/scenes/generate-image', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ 
+          prompt,
+          project_id: projectId, // 传递项目ID，让API获取项目的风格和宽高比设置
+        }),
       });
 
       if (!response.ok) {
@@ -488,17 +421,29 @@ export default function CharacterEditModal({
       }
 
       const result = await response.json();
-      if (result.success && result.data?.taskId) {
-        setTaskId(result.data.taskId);
-        setIsPolling(true);
+      if (result.success && result.data) {
+        // 如果API立即返回图片（豆包同步API），直接使用
+        if (result.data.immediate && result.data.images && Array.isArray(result.data.images)) {
+          setGeneratedImages(result.data.images);
+          setIsGenerating(false);
+          setIsPolling(false);
+          return;
+        }
         
-        // 开始轮询任务状态
-        await pollImageStatus(result.data.taskId);
+        // 否则使用异步任务ID进行轮询（兼容旧逻辑）
+        if (result.data.taskId) {
+          setTaskId(result.data.taskId);
+          setIsPolling(true);
+          
+          // 开始轮询任务状态
+          await pollImageStatus(result.data.taskId);
+        } else {
+          throw new Error('Failed to submit image generation task');
+        }
       } else {
         throw new Error('Failed to submit image generation task');
       }
     } catch (error) {
-      console.error("Error generating image:", error);
       let errorMessage = "Image generation failed";
       
       if (error instanceof Error) {
@@ -545,7 +490,6 @@ export default function CharacterEditModal({
           // 如果还在处理中，继续轮询
         }
       } catch (error) {
-        console.error('Error polling image status:', error);
         if (attempt === maxAttempts - 1) {
           alert('Image generation timed out. Please try again later');
           setIsPolling(false);
@@ -572,10 +516,14 @@ export default function CharacterEditModal({
       if (uploadedUrl) {
         setImageUrl(uploadedUrl);
         // 图片已通过 onImageUploadFromUrl 更新到角色卡片
+      } else {
+        // 如果上传失败，至少设置 imageUrl 为原始URL，以便保存时使用
+        setImageUrl(imageUrl);
       }
     } catch (error) {
-      console.error('Error uploading selected image:', error);
-      alert('Image upload failed');
+      // 即使上传失败，也设置 imageUrl，以便保存时使用
+      setImageUrl(imageUrl);
+      alert('Image upload failed, but the image will be saved with the original URL');
     }
   };
 
@@ -603,13 +551,20 @@ export default function CharacterEditModal({
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+              <motion.div whileHover={!isSaving ? { scale: 1.05 } : {}} whileTap={!isSaving ? { scale: 0.95 } : {}}>
                 <Button
                   onClick={handleSave}
-                  disabled={!formData}
-                  className="bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold h-11 px-8 shadow-lg shadow-[#FFDA2A]/30 text-base"
+                  disabled={!formData || isSaving}
+                  className="bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-bold h-11 px-8 shadow-lg shadow-[#FFDA2A]/30 text-base disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Save
+                  {isSaving ? (
+                    <span className="flex items-center gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Saving...
+                    </span>
+                  ) : (
+                    "Save"
+                  )}
                 </Button>
               </motion.div>
               <button
@@ -976,7 +931,9 @@ export default function CharacterEditModal({
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 mr-2" />
-                    {imageUrl ? "Regenerate" : "Generate Image"}
+                    <span>{imageUrl ? "Regenerate" : "Generate Image"}</span>
+                    <Diamond className="w-4 h-4 ml-2" />
+                    <span className="text-xs ml-1">20</span>
                   </>
                 )}
               </Button>
@@ -992,6 +949,17 @@ export default function CharacterEditModal({
           </div>
         </motion.div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </AnimatePresence>
   );
 }

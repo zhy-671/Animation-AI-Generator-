@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Sparkles, Image as ImageIcon, Film, Video, Camera, MessageSquare, FileText, Clock, X, Edit2, Save, CheckCircle } from "lucide-react";
+import { ArrowLeft, Sparkles, Image as ImageIcon, Film, Video, Camera, MessageSquare, FileText, Clock, X, Edit2, Save, CheckCircle, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,19 @@ import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
+import { checkCreditsBalance, deductCredits, deductVideoCredits } from "@/lib/credits/deduct";
+import { calculateVideoCredits, type SubscriptionPlan } from "@/lib/subscription/rules";
+import { getUserSubscriptionPlan } from "@/lib/subscription/client";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import SceneImageGenerateModal from "./scene-image-generate-modal";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface Shot {
   shot_number: number;
@@ -26,7 +39,8 @@ interface Shot {
   mood?: string;
   narration: string;
   dialogue: string;
-  characters?: string; // 角色字段
+  characters?: string; // 角色字段（字符串，逗号分隔）
+  appearCharacters?: string[]; // 角色数组（从AI生成的分镜中提取）
   image_url?: string; // 分镜图片URL
   video_url?: string; // 视频URL
 }
@@ -49,6 +63,7 @@ interface SceneItem {
   text: string;
   sceneDetail: string | null;
   imageUrl: string | null;
+  sceneImageUrl: string | null; // 场景图URL，用于在生成分镜图片时作为参考图
   sceneTitle: string | null;
   camera: string | null;
   dialogue: string[] | null;
@@ -87,36 +102,167 @@ export default function StoryboardCreateForm() {
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [editingSceneData, setEditingSceneData] = useState<SceneItem | null>(null);
   const [isSavingScene, setIsSavingScene] = useState(false);
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
+  
+  // 场景图生成弹窗状态
+  const [showSceneImageModal, setShowSceneImageModal] = useState(false);
+  
+  // Scene Location 编辑状态
+  const [editingSceneLocation, setEditingSceneLocation] = useState<string | null>(null); // 正在编辑的 scene id
+  const [editingLocationValue, setEditingLocationValue] = useState<string>(""); // 编辑中的值
+  const [isSavingLocation, setIsSavingLocation] = useState(false); // 是否正在保存
+  
+  // 订阅计划状态（用于计算积分显示）
+  const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
+  
+  // 加载订阅计划（页面加载时查询一次）
+  useEffect(() => {
+    const loadSubscriptionPlan = async () => {
+      try {
+        const planData = await getUserSubscriptionPlan();
+        if (planData.plan !== undefined) {
+          setSubscriptionPlan(planData.plan);
+        }
+      } catch (error) {
+      }
+    };
+    
+    loadSubscriptionPlan();
+  }, []);
+  
+  // 角色列表（从anim_characters表查询，页面加载时查询一次）
+  const [charactersList, setCharactersList] = useState<Array<{
+    id: string;
+    name: string;
+    image_url: string | null;
+    image_generation_prompt: string | null;
+    resolution?: string | null;
+    visual_style?: string | null;
+    art_setting?: string | null;
+  }>>([]);
+
+  // Load characters from anim_characters table when projectId is available
+  const loadCharacters = async (projectId: string) => {
+    try {
+      const response = await fetch(`/api/storyboard/characters?projectId=${projectId}`);
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data?.characters) {
+          setCharactersList(result.data.characters);
+        }
+      } else {
+        setCharactersList([]);
+      }
+    } catch (error) {
+      setCharactersList([]);
+    }
+  };
+
+  // 检查是否有视频（只要有一个视频就视为完成）
+  const checkIfHasVideo = (): boolean => {
+    if (!sceneData || !sceneData.scenes) {
+      return false;
+    }
+    
+    // 遍历所有场景，检查分镜中是否有视频
+    for (const scene of sceneData.scenes) {
+      if (scene.storyboard && scene.storyboard.shots) {
+        for (const shot of scene.storyboard.shots) {
+          if (shot.video_url && shot.video_url.trim() !== '') {
+            return true; // 只要找到一个视频就返回 true
+          }
+        }
+      }
+    }
+    
+    return false;
+  };
+
+  // 更新项目步骤状态
+  const updateProjectStepStatus = async (step: 'step_script' | 'step_settings' | 'step_storyboard' | 'step_video', completed: boolean) => {
+    if (!projectId) return;
+    
+    try {
+      const response = await fetch('/api/storyboard/project-step-status', {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_id: projectId,
+          [step]: completed,
+        }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success && result.data) {
+          // 更新本地状态
+          if (step === 'step_video') {
+            setStatusVideo(result.data.step_video || false);
+          } else if (step === 'step_storyboard') {
+            setStatusStoryboard(result.data.step_storyboard || false);
+          }
+        }
+      } else {
+      }
+    } catch (error) {
+    }
+  };
 
   useEffect(() => {
-    // 从sessionStorage获取projectId
+    // Get projectId from sessionStorage
     if (typeof window !== 'undefined') {
       const pid = sessionStorage.getItem("storyboardProjectId");
       setProjectId(pid);
       
       if (pid) {
-        // 加载已保存的场次数据
+        // Load characters from anim_characters table (once on page load)
+        loadCharacters(pid);
+        
+        // Load saved scene data
         loadScenesFromDatabase(pid);
         
-        // 检查是否有故事大纲和分镜数据
-        const checkData = async () => {
+        // Load project step status from anim_project_step_status table
+        const loadProjectStepStatus = async () => {
           try {
-            // 检查故事大纲
-            const projectResponse = await fetch(`/api/storyboard/projects/${pid}`);
-            if (projectResponse.ok) {
-              const projectResult = await projectResponse.json();
-              if (projectResult.success && projectResult.data) {
-                setStatusScript(projectResult.data.status_script || false);
-                setStatusSettings(projectResult.data.status_settings || false);
-                setStatusStoryboard(projectResult.data.status_storyboard || false);
-                setStatusVideo(projectResult.data.status_video || false);
+            const response = await fetch(`/api/storyboard/project-step-status?projectId=${pid}`);
+            if (response.ok) {
+              const result = await response.json();
+              if (result.success && result.data) {
+                setStatusScript(result.data.step_script || false);
+                setStatusSettings(result.data.step_settings || false);
+                setStatusStoryboard(result.data.step_storyboard || false);
+                setStatusVideo(result.data.step_video || false);
+              } else {
+                // 如果查询失败，默认所有步骤未完成
+                setStatusScript(false);
+                setStatusSettings(false);
+                setStatusStoryboard(false);
+                setStatusVideo(false);
               }
+            } else {
+              // 查询失败，默认所有步骤未完成
+              setStatusScript(false);
+              setStatusSettings(false);
+              setStatusStoryboard(false);
+              setStatusVideo(false);
             }
-          } catch (e) {
-            console.error("Error checking data:", e);
+          } catch (error) {
+            // 查询失败，默认所有步骤未完成
+            setStatusScript(false);
+            setStatusSettings(false);
+            setStatusStoryboard(false);
+            setStatusVideo(false);
           }
         };
-        checkData();
+        loadProjectStepStatus();
       }
     }
   }, []);
@@ -168,27 +314,44 @@ export default function StoryboardCreateForm() {
           text: item.text || "",
           sceneDetail: item.scene_detail || null,
           imageUrl: item.image_url || null,
+          sceneImageUrl: item.scene_image_url || null, // 场景图URL
           sceneTitle: metadata.scene_title || metadata.场次标题 || null,
           camera: metadata.camera || null,
           dialogue: Array.isArray(metadata.dialogue) ? metadata.dialogue : (metadata.dialogue ? [metadata.dialogue] : null),
           duration: metadata.scene_duration || null,
           imageTaskId: null,
           imageGenerationFailed: false,
-          // 新增字段
-          场次时间: metadata.场次时间 || null,
-          场次地点: metadata.场次地点 || null,
-          主要角色: metadata.主要角色 || [],
-          场次故事: metadata.场次故事 || null,
+          // 新增字段 - 同时支持英文和中文字段名
+          场次时间: metadata.scene_time || metadata.场次时间 || null,
+          场次地点: metadata.scene_location || metadata.场次地点 || null,
+          主要角色: metadata.main_characters || metadata.主要角色 || [],
+          场次故事: metadata.scene_story || metadata.场次故事 || null,
           关键画面提示: visualPrompts || metadata.关键画面提示 || null,
           // 分镜数据
-          storyboard: metadata.storyboard ? {
-            ...metadata.storyboard,
-            shots: (metadata.storyboard.shots || []).map((shot: any) => ({
-              ...shot,
-              image_url: shot.image_url || null, // 确保image_url字段存在
-              video_url: shot.video_url || null, // 确保video_url字段存在
-            })),
-          } : null,
+          storyboard: (() => {
+            const storyboardData = metadata.storyboard;
+            if (storyboardData) {
+              return {
+                ...storyboardData,
+                shots: (storyboardData.shots || []).map((shot: any) => ({
+                  ...shot,
+                  image_url: shot.image_url || null, // Ensure image_url field exists
+                  video_url: shot.video_url || null, // Ensure video_url field exists
+                  // Parse appearCharacters: if it's a string (comma-separated), convert to array; if it's already an array, use it
+                  appearCharacters: shot.appearCharacters 
+                    ? (Array.isArray(shot.appearCharacters) 
+                        ? shot.appearCharacters 
+                        : (typeof shot.appearCharacters === 'string' 
+                            ? shot.appearCharacters.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                            : []))
+                    : (shot.characters && typeof shot.characters === 'string'
+                        ? shot.characters.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                        : []),
+                })),
+              };
+            }
+            return null;
+          })(),
         };
       });
       
@@ -199,12 +362,21 @@ export default function StoryboardCreateForm() {
         scenes,
       });
       
-      // 默认选中第一个场次
-      if (scenes.length > 0) {
+      // 如果已经有选中的场次，保持选中状态；否则默认选中第一个场次
+      if (selectedSceneNumber === null && scenes.length > 0) {
         const firstSceneNumber = scenes[0].sceneNumber;
         setSelectedSceneNumber(firstSceneNumber);
+      } else if (selectedSceneNumber !== null) {
+        // 检查选中的场次是否仍然存在
+        const selectedSceneExists = scenes.some(s => s.sceneNumber === selectedSceneNumber);
+        if (!selectedSceneExists && scenes.length > 0) {
+          setSelectedSceneNumber(scenes[0].sceneNumber);
+        } else {
+        }
       }
       
+      // 打印加载后的分镜数据统计
+      const scenesWithStoryboard = scenes.filter(s => s.storyboard && s.storyboard.shots && s.storyboard.shots.length > 0);
       // 初始化所有图片状态
       const initialStatuses = new Map<string, { status: 'pending' | 'generating' | 'completed' | 'failed', imageUrl: string | null }>();
       scenes.forEach((scene) => {
@@ -213,8 +385,21 @@ export default function StoryboardCreateForm() {
       });
       setImageStatuses(initialStatuses);
       
+      // 注意：step_storyboard 状态只在视频生成成功后才更新，这里不更新
+      
+      // 检查是否有视频，如果有则更新 step_video 状态
+      const hasVideo = scenes.some(s => 
+        s.storyboard && s.storyboard.shots && 
+        s.storyboard.shots.some((shot: any) => shot.video_url && shot.video_url.trim() !== '')
+      );
+      if (hasVideo && !statusVideo) {
+        if (projectId) {
+          updateProjectStepStatus('step_video', true);
+          setStatusVideo(true);
+        }
+      }
+      
     } catch (error) {
-      console.error("Error loading scenes:", error);
       showError(error instanceof Error ? error.message : "Failed to load scene data");
     } finally {
       setIsGenerating(false);
@@ -448,14 +633,12 @@ export default function StoryboardCreateForm() {
                 throw new Error(data.error);
               }
             } catch (e) {
-              console.error('Error parsing SSE data:', e);
             }
             currentEvent = '';
           }
         }
       }
     } catch (error) {
-      console.error("Error generating scenes:", error);
       showError(error instanceof Error ? error.message : "Failed to generate scenes");
     } finally {
       setIsGenerating(false);
@@ -472,6 +655,13 @@ export default function StoryboardCreateForm() {
   ) || null;
   
   const selectedSceneItems = selectedScene ? [selectedScene] : [];
+  
+  // 调试：打印当前选中场次的分镜信息
+  useEffect(() => {
+    if (selectedScene) {
+    } else {
+    }
+  }, [selectedScene, selectedSceneNumber, sceneData]);
 
   // 开始编辑场次
   const handleStartEdit = (scene: SceneItem) => {
@@ -531,10 +721,74 @@ export default function StoryboardCreateForm() {
       setEditingSceneData(null);
       showSuccess("Saved successfully");
     } catch (error) {
-      console.error("Error saving scene:", error);
       showError(error instanceof Error ? error.message : "Save failed");
     } finally {
       setIsSavingScene(false);
+    }
+  };
+
+  // 开始编辑 Scene Location
+  const handleStartEditLocation = (scene: SceneItem) => {
+    setEditingSceneLocation(scene.id);
+    setEditingLocationValue(scene.场次地点 || "");
+  };
+
+  // 取消编辑 Scene Location
+  const handleCancelEditLocation = () => {
+    setEditingSceneLocation(null);
+    setEditingLocationValue("");
+  };
+
+  // 保存 Scene Location
+  const handleSaveLocation = async () => {
+    if (!editingSceneLocation || !sceneData) return;
+
+    setIsSavingLocation(true);
+    try {
+      // 找到对应的场景
+      const scene = sceneData.scenes.find((s) => s.id === editingSceneLocation);
+      if (!scene) {
+        throw new Error("Scene not found");
+      }
+
+      // 调用API更新场次数据
+      const response = await fetch(`/api/scenes/items/${editingSceneLocation}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          metadata: {
+            场次地点: editingLocationValue,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Save failed");
+      }
+
+      // 更新本地状态
+      setSceneData((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          scenes: prev.scenes.map((s) =>
+            s.id === editingSceneLocation
+              ? { ...s, 场次地点: editingLocationValue }
+              : s
+          ),
+        };
+      });
+
+      setEditingSceneLocation(null);
+      setEditingLocationValue("");
+      showSuccess("Scene Location saved successfully");
+    } catch (error) {
+      showError(error instanceof Error ? error.message : "Save failed");
+    } finally {
+      setIsSavingLocation(false);
     }
   };
 
@@ -549,6 +803,21 @@ export default function StoryboardCreateForm() {
   // 生成的图片数组和选中状态（用于编辑模态框）
   const [generatedShotImages, setGeneratedShotImages] = useState<string[]>([]);
   const [selectedShotImageIndex, setSelectedShotImageIndex] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!editingShotId) return;
+    if (generatedShotImages.length === 0) return;
+
+    setEditingShotData((prev) => {
+      if (!prev) return prev;
+      const index = selectedShotImageIndex ?? 0;
+      const nextImageUrl = generatedShotImages[index] || null;
+      if (!nextImageUrl || prev.image_url === nextImageUrl) {
+        return prev;
+      }
+      return { ...prev, image_url: nextImageUrl };
+    });
+  }, [editingShotId, generatedShotImages, selectedShotImageIndex]);
   // 保存成功提示状态
   const [showSaveSuccess, setShowSaveSuccess] = useState(false);
   // 视频生成状态
@@ -566,9 +835,9 @@ export default function StoryboardCreateForm() {
   // 视频生成参数
   const [videoDescription, setVideoDescription] = useState<string>("");
   const [videoResolution, setVideoResolution] = useState<"480P" | "720P" | "1080P">("480P");
-  const [videoDuration, setVideoDuration] = useState<5 | 10>(5);
+  const [videoDuration, setVideoDuration] = useState<10 | 15>(10);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
-  // 视频详情模态框状态
+  // Video detail modal state
   const [videoDetailModal, setVideoDetailModal] = useState<{
     isOpen: boolean;
     shot: Shot | null;
@@ -608,6 +877,33 @@ export default function StoryboardCreateForm() {
       return;
     }
 
+    // 检查积分余额（需要3积分）
+    const creditsCheck = await checkCreditsBalance(3);
+    if (!creditsCheck.sufficient) {
+      setInsufficientCreditsData({
+        required: 3,
+        current: creditsCheck.balance || 0,
+        action: "generate storyboard"
+      });
+      setShowInsufficientCreditsDialog(true);
+      return;
+    }
+
+    // 扣除积分
+    const deductResult = await deductCredits(
+      3,
+      "Generate storyboard",
+      { type: "storyboard_generation", project_id: projectId, scene_id: scene.id }
+    );
+
+    if (!deductResult.success) {
+      showError("Failed to deduct credits. Please try again.");
+      return;
+    }
+
+    // 触发积分更新事件，刷新头部余额显示
+    window.dispatchEvent(new Event("credits-updated"));
+
     setIsGeneratingStoryboard(true);
     setGeneratingStoryboardSceneId(scene.id);
 
@@ -636,11 +932,19 @@ export default function StoryboardCreateForm() {
       // 重新加载场次数据以显示生成的分镜
       if (projectId) {
         await loadScenesFromDatabase(projectId);
+        // 确保选中生成分镜的场次，以便立即显示分镜
+        // 延迟一下，确保 sceneData 状态已更新
+        setTimeout(() => {
+          // 直接选中生成分镜的场次
+          setSelectedSceneNumber(scene.sceneNumber);
+        }, 300);
+        
+        // 注意：分镜和视频状态检查在 loadScenesFromDatabase 中完成
+        // 因为 loadScenesFromDatabase 会检查所有场景的分镜和视频数据
       }
 
       showSuccess("Storyboard generated successfully!");
     } catch (error) {
-      console.error("Error generating storyboard:", error);
       showError(error instanceof Error ? error.message : "Failed to generate storyboard");
     } finally {
       setIsGeneratingStoryboard(false);
@@ -671,27 +975,270 @@ export default function StoryboardCreateForm() {
           shot_number: shot.shot_number,
           image_prompt: shot.image_prompt || "",
           characters: shot.characters || "",
+          appearCharacters: shot.appearCharacters || (shot.characters ? shot.characters.split(',').map((c: string) => c.trim()) : []),
+          charactersList: charactersList, // Pass cached characters list to avoid database query
+          watermark: false, // Default false: no watermark, direct return from Volcano API
+          editMode: updateEditingData, // Pass edit mode flag to API
         }),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate storyboard image");
+        let error;
+        try {
+          error = await response.json();
+        } catch (parseError) {
+          const errorText = await response.text();
+          throw new Error(`Server error (${response.status}): ${errorText.substring(0, 200)}`);
+        }
+        throw new Error(error.error || error.message || "Failed to generate storyboard image");
       }
 
       const result = await response.json();
       if (!result.success) {
-        throw new Error(result.error || "Failed to generate storyboard image");
+        console.error("[handleGenerateShotImage] API returned error:", result);
+        throw new Error(result.error || result.message || "Failed to generate storyboard image");
       }
 
-      const { taskId } = result.data;
+      // 检查返回数据是否存在
+      if (!result.data || typeof result.data !== 'object') {
+        throw new Error("API returned invalid data format");
+      }
+
+      // 检查返回数据是否为空对象
+      if (Object.keys(result.data).length === 0) {
+        throw new Error("API returned empty data object. This may indicate an error occurred during image generation. Please check the server logs.");
+      }
+
+      const { taskId, imageUrl, imageUrls, isVolcanoAPI, watermark } = result.data;
+      
+      // 类型转换：确保布尔值正确
+      const isVolcanoAPIBool = isVolcanoAPI === true || isVolcanoAPI === "true";
+      const watermarkBool = watermark === false || watermark === "false" || watermark === null || watermark === undefined;
+      // 如果直接返回了图片URL（火山引擎API且watermark为false），不需要轮询
+      // 检查条件：有imageUrl或imageUrls且没有taskId，或者明确标记为火山API且watermark为false
+      // 注意：isVolcanoAPI可能为true，或者没有taskId但有imageUrl/imageUrls，都表示是火山API直接返回
+      const hasImageData = !!(imageUrl || (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0));
+      // 如果明确标记为火山API且watermark为false，或者有图片数据但没有taskId，都认为是火山API直接返回
+      const isVolcanoDirectReturn = (isVolcanoAPIBool && watermarkBool) || (hasImageData && !taskId);
+      // 如果有图片数据且满足火山API直接返回的条件，直接处理，不进行轮询
+      if (hasImageData && isVolcanoDirectReturn) {
+        // 编辑模式优先使用imageUrls，非编辑模式优先使用imageUrl，如果都没有则使用另一个
+        let finalImageUrlsArray: string[] = [];
+        
+        if (updateEditingData) {
+          // 编辑模式：优先使用imageUrls数组
+          if (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0) {
+            finalImageUrlsArray = imageUrls;
+          } else if (imageUrl) {
+            finalImageUrlsArray = [imageUrl];
+          }
+        } else {
+          // 非编辑模式：优先使用imageUrl，如果没有则使用imageUrls的第一张
+          if (imageUrl) {
+            finalImageUrlsArray = [imageUrl];
+          } else if (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0) {
+            finalImageUrlsArray = [imageUrls[0]];
+          }
+        }
+        
+        if (finalImageUrlsArray.length === 0) {
+          throw new Error("No image URLs available in API response");
+        }
+        // 扣除积分
+        const creditsToDeduct = 5;
+        const creditsCheck = await checkCreditsBalance(creditsToDeduct);
+        if (!creditsCheck.sufficient) {
+          throw new Error("Insufficient credits. Image generated but credits cannot be deducted.");
+        }
+
+        const deductResult = await deductCredits(
+          creditsToDeduct,
+          updateEditingData ? "Generate shot images (edit mode)" : "Generate shot image",
+          { type: "shot_image_generation", project_id: projectId, scene_id: sceneId, shot_number: shot.shot_number, edit_mode: updateEditingData }
+        );
+
+        if (!deductResult.success) {
+          throw new Error("Image generated but failed to deduct credits. Please contact support.");
+        }
+
+        // 触发积分更新事件，刷新头部余额显示
+        window.dispatchEvent(new Event("credits-updated"));
+
+        // 如果是在编辑模式下，显示生成的图片供选择（4张）
+        if (updateEditingData) {
+          console.log("[handleGenerateShotImage] Setting generated images in edit mode:", finalImageUrlsArray.length);
+          setGeneratedShotImages(finalImageUrlsArray);
+          setSelectedShotImageIndex(0); // 默认选中第一张
+          setGeneratingShotImageId(null);
+          return; // 不自动保存，等待用户选择后点击保存
+        }
+        
+        // 非编辑模式：自动使用图片（优先使用imageUrl，如果没有则使用finalImageUrlsArray的第一张）
+        const imageUrlToUse = imageUrl || (finalImageUrlsArray.length > 0 ? finalImageUrlsArray[0] : null);
+        if (!imageUrlToUse) {
+          throw new Error("No image URL available to use");
+        }
+        // 更新分镜的图片URL到数据库
+        try {
+          // 先获取当前的metadata
+          const currentSceneResponse = await fetch(`/api/scenes?projectId=${projectId}`);
+          if (!currentSceneResponse.ok) {
+            throw new Error("Failed to fetch scene data");
+          }
+          
+          const currentSceneResult = await currentSceneResponse.json();
+          if (!currentSceneResult.success || !currentSceneResult.data) {
+            throw new Error("Scene data does not exist");
+          }
+          
+          const sceneItems = currentSceneResult.data.items || [];
+          const currentSceneItem = sceneItems.find((item: any) => item.id === sceneId);
+          
+          if (!currentSceneItem) {
+            throw new Error("Corresponding scene item not found");
+          }
+          
+          const currentMetadata = currentSceneItem.metadata || {};
+          const currentStoryboard = currentMetadata.storyboard || {};
+          const currentShots = currentStoryboard.shots || [];
+          
+          // 更新对应shot的image_url
+          const updatedShots = currentShots.map((s: Shot) => {
+            if (s.shot_number === shot.shot_number) {
+              return { ...s, image_url: imageUrlToUse };
+            }
+            return s;
+          });
+          
+          const updatedStoryboard = {
+            ...currentStoryboard,
+            shots: updatedShots,
+          };
+          
+          const updatedMetadata = {
+            ...currentMetadata,
+            storyboard: updatedStoryboard,
+          };
+          
+          // 调用API更新metadata
+          const updateResponse = await fetch(`/api/scenes/items/${sceneId}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              metadata: updatedMetadata,
+            }),
+          });
+          
+          if (!updateResponse.ok) {
+            const errorData = await updateResponse.json();
+            throw new Error(errorData.error || "Failed to update storyboard image");
+          }
+          // 更新本地状态，避免重新加载整个页面
+          if (selectedScene && selectedScene.storyboard && sceneData) {
+            const updatedShots = selectedScene.storyboard.shots.map((s: Shot) => {
+              if (s.shot_number === shot.shot_number) {
+                return { ...s, image_url: imageUrlToUse };
+              }
+              return s;
+            });
+            
+            // 更新当前选中的场次
+            const updatedSelectedScene = {
+              ...selectedScene,
+              storyboard: {
+                ...selectedScene.storyboard,
+                shots: updatedShots,
+              },
+            };
+            
+            // 更新场景数据
+            const updatedScenes = sceneData.scenes.map((s: SceneItem) => {
+              if (s.id === selectedScene.id) {
+                return updatedSelectedScene;
+              }
+              return s;
+            });
+            
+            setSceneData({
+              ...sceneData,
+              scenes: updatedScenes,
+            });
+            
+            // 如果是在编辑模式下生成的图片，更新编辑数据
+            if (updateEditingData && editingShotData && editingShotData.shot_number === shot.shot_number) {
+              setEditingShotData({
+                ...editingShotData,
+                image_url: imageUrlToUse,
+              });
+            } else {
+              // 确保编辑状态已清除，避免显示保存按钮
+              setEditingShotId(null);
+              setEditingShotData(null);
+            }
+          }
+          
+          // 不显示alert，避免页面重新加载
+          setGeneratingShotImageId(null);
+          return;
+        } catch (updateError) {
+          showWarning(`Image generated successfully but update failed: ${updateError instanceof Error ? updateError.message : "Unknown error"}`);
+          setGeneratingShotImageId(null);
+          return;
+        }
+      }
+      
+      // 需要轮询的情况（DashScope API）
+      // 只有在没有imageUrl和imageUrls的情况下才需要taskId进行轮询
+      const hasAnyImageData = imageUrl || (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0);
+      if (!hasAnyImageData && !taskId) {
+        throw new Error("No taskId or imageUrl/imageUrls returned from API");
+      }
+      
+      // 如果有imageUrl或imageUrls但没有taskId，说明是直接返回的图片（可能是火山API），不应该到这里
+      // 但为了安全，如果确实有图片URL，直接处理，不进行轮询
+      if (hasAnyImageData && !taskId) {
+        // Fallback处理：直接使用图片数据
+        try {
+          const fallbackImageUrls = imageUrl ? [imageUrl] : (imageUrls && Array.isArray(imageUrls) ? imageUrls : []);
+          if (fallbackImageUrls.length > 0) {
+            // 扣除积分
+            const creditsToDeduct = 5;
+            const creditsCheck = await checkCreditsBalance(creditsToDeduct);
+            if (creditsCheck.sufficient) {
+              const deductResult = await deductCredits(
+                creditsToDeduct,
+                updateEditingData ? "Generate shot images (edit mode)" : "Generate shot image",
+                { type: "shot_image_generation", project_id: projectId, scene_id: sceneId, shot_number: shot.shot_number, edit_mode: updateEditingData }
+              );
+              if (deductResult.success) {
+                window.dispatchEvent(new Event("credits-updated"));
+              }
+            }
+            
+            if (updateEditingData) {
+              setGeneratedShotImages(fallbackImageUrls);
+              setSelectedShotImageIndex(0);
+            } else {
+              // 非编辑模式：更新metadata中的shot图片
+              const imageUrlToUse = fallbackImageUrls[0];
+              // 这里需要更新metadata，但为了简化，先清除loading状态
+              // 实际更新应该在正常流程中完成
+            }
+          }
+        } catch (e) {
+        }
+        setGeneratingShotImageId(null);
+        return;
+      }
       
       // 轮询图片生成状态
-      const pollImageStatus = async () => {
+      const pollImageStatus = async (): Promise<string[] | null> => {
         const maxAttempts = 60; // 最多轮询60次（约5分钟）
         let attempts = 0;
 
-        const poll = async (): Promise<string | null> => {
+        const poll = async (): Promise<string[] | null> => {
           if (attempts >= maxAttempts) {
             throw new Error("Image generation timed out");
           }
@@ -704,12 +1251,33 @@ export default function StoryboardCreateForm() {
 
             const statusResult = await statusResponse.json();
             if (!statusResult.success) {
-              throw new Error(statusResult.error || "查询图片状态失败");
+              throw new Error(statusResult.error || "Failed to query image status");
             }
 
-            const { status, imageUrl, imageUrls } = statusResult.data;
+            const { status, imageUrl, imageUrls, message } = statusResult.data;
 
             if (status === "SUCCEEDED") {
+              // 图片生成成功，扣除积分
+              // 编辑模式下扣除积分（统一为5积分）
+              const creditsToDeduct = 5;
+              const creditsCheck = await checkCreditsBalance(creditsToDeduct);
+              if (!creditsCheck.sufficient) {
+                throw new Error("Insufficient credits. Image generated but credits cannot be deducted.");
+              }
+
+              const deductResult = await deductCredits(
+                creditsToDeduct,
+                updateEditingData ? "Generate shot images (edit mode)" : "Generate shot image",
+                { type: "shot_image_generation", project_id: projectId, scene_id: sceneId, shot_number: shot.shot_number, edit_mode: updateEditingData }
+              );
+
+              if (!deductResult.success) {
+                throw new Error("Image generated but failed to deduct credits. Please contact support.");
+              }
+
+              // 触发积分更新事件，刷新头部余额显示
+              window.dispatchEvent(new Event("credits-updated"));
+
               // 返回所有图片URLs（最多4张）
               if (imageUrls && Array.isArray(imageUrls) && imageUrls.length > 0) {
                 return imageUrls;
@@ -720,7 +1288,11 @@ export default function StoryboardCreateForm() {
                 throw new Error("Image generation succeeded but no image URL returned");
               }
             } else if (status === "FAILED") {
-              throw new Error("Image generation failed");
+              // 使用 API 返回的详细错误信息（如果有）
+              const errorMessage = message 
+                ? `Image generation failed: ${message}` 
+                : "Image generation failed. Please try again later";
+              throw new Error(errorMessage);
             } else {
               // 继续轮询
               attempts++;
@@ -736,23 +1308,19 @@ export default function StoryboardCreateForm() {
       };
 
       // 开始轮询
-      const imageUrls = await pollImageStatus();
+      const polledImageUrls = await pollImageStatus();
       
-      if (imageUrls && imageUrls.length > 0) {
-        console.log("图片生成成功，共", imageUrls.length, "张:", imageUrls);
-        
+      if (polledImageUrls && polledImageUrls.length > 0) {
         // 如果是在编辑模式下，显示生成的图片供选择
         if (updateEditingData) {
-          setGeneratedShotImages(imageUrls);
+          setGeneratedShotImages(polledImageUrls);
           setSelectedShotImageIndex(0); // 默认选中第一张
           setGeneratingShotImageId(null);
           return; // 不自动保存，等待用户选择后点击保存
         }
         
         // 非编辑模式：自动使用第一张图片
-        const imageUrl = imageUrls[0];
-        console.log("准备更新分镜图片，scene_item_id:", sceneId, "shot_number:", shot.shot_number);
-        
+        const imageUrl = polledImageUrls[0];
         // 更新分镜的图片URL到数据库
         // 需要更新 metadata.storyboard.shots[shot_number-1].image_url
         try {
@@ -811,9 +1379,6 @@ export default function StoryboardCreateForm() {
             const errorData = await updateResponse.json();
             throw new Error(errorData.error || "Failed to update storyboard image");
           }
-          
-          console.log("分镜图片已更新到数据库");
-          
           // 更新本地状态，避免重新加载整个页面
           if (selectedScene && selectedScene.storyboard && sceneData) {
             const updatedShots = selectedScene.storyboard.shots.map((s: Shot) => {
@@ -859,15 +1424,16 @@ export default function StoryboardCreateForm() {
           }
           
           // 不显示alert，避免页面重新加载
-          console.log("分镜图片生成并保存成功！");
         } catch (updateError) {
-          console.error("更新分镜图片失败:", updateError);
           showWarning(`Image generated successfully but update failed: ${updateError instanceof Error ? updateError.message : "Unknown error"}`);
         }
       }
     } catch (error) {
-      console.error("Error generating shot image:", error);
-      showError(error instanceof Error ? error.message : "Failed to generate storyboard image");
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : "Image generation failed. Please try again later";
+      showError(errorMessage);
+      // 图片生成失败，不扣除积分（积分只在成功时扣除）
     } finally {
       setGeneratingShotImageId(null);
     }
@@ -902,7 +1468,7 @@ export default function StoryboardCreateForm() {
       return;
     }
     
-    // 优先使用分镜中的 video_prompt 作为视频描述
+    // Prefer video_prompt from storyboard as video description
     const description = shot.video_prompt || shot.image_prompt || "";
     
     setVideoDescription(description);
@@ -931,18 +1497,45 @@ export default function StoryboardCreateForm() {
     const shot = videoGenerationModal.shot;
     const sceneItemId = videoGenerationModal.sceneItemId;
     const shotId = `${sceneItemId}-${shot.shot_number}`;
-    
-    // 不关闭模态框，保持打开状态以显示生成进度
-    setGeneratingVideoShotId(shotId);
 
     try {
-      // 获取项目设置中的视觉风格
+      // 获取订阅计划
+      const planData = await getUserSubscriptionPlan();
+      const subscriptionPlan: SubscriptionPlan = planData.plan || null;
+
+      // 转换分辨率为小写格式（480P -> 480p）
+      const resolutionLower = videoResolution.toLowerCase() as '480p' | '720p' | '1080p';
+      const duration = videoDuration;
+
+      // 计算视频积分（根据订阅计划和积分规则）
+      // 注意：1080p 单独计费，没有订阅计划则按照 1080p 的双倍来计算
+      // 480p 和 720p 没有订阅计划时统一按 720p 费率扣除
+      const requiredCredits = calculateVideoCredits(subscriptionPlan, resolutionLower, duration);
+
+      // 检查积分余额（仅检查，不扣费）
+      const creditsCheck = await checkCreditsBalance(requiredCredits);
+      if (!creditsCheck.sufficient) {
+        setInsufficientCreditsData({
+          required: requiredCredits,
+          current: creditsCheck.balance || 0,
+          action: `generate ${duration}s ${videoResolution} video`
+        });
+        setShowInsufficientCreditsDialog(true);
+        setGeneratingVideoShotId(null);
+        return;
+      }
+
+      // 不关闭模态框，保持打开状态以显示生成进度
+      setGeneratingVideoShotId(shotId);
+
+      // 获取项目设置中的视觉风格和宽高比
       const projectResponse = await fetch(`/api/storyboard/projects/${projectId}`);
       if (!projectResponse.ok) {
         throw new Error("Failed to fetch project information");
       }
       const projectData = await projectResponse.json();
       const visualStyle = projectData.data?.visual_style || "2D动画";
+      const artSetting = projectData.data?.art_setting || "16:9"; // 默认16:9横屏
 
       // 风格提示词映射
       const stylePrompts: Record<string, string> = {
@@ -959,7 +1552,6 @@ export default function StoryboardCreateForm() {
 
       const dashScopeModel = "wan2.5-i2v-preview";
       const dashScopeResolution = videoResolution;
-      const duration = videoDuration;
 
       // 优先使用分镜中的 video_prompt，如果用户在弹窗中修改了描述则使用修改后的描述
       let finalDescription = videoDescription.trim();
@@ -967,50 +1559,60 @@ export default function StoryboardCreateForm() {
         // 如果没有输入，优先使用分镜中的 video_prompt
         finalDescription = shot.video_prompt || shot.image_prompt || shot.description || "动画视频";
       }
-      
-      const prompt = `${finalDescription}，${stylePrompt}`;
-      const sceneDetail = shot.image_prompt || finalDescription;
 
-      // 打印前端传入的参数
-      const requestBody = {
-        prompt: prompt,
-        sceneDetail: sceneDetail,
-        imageUrl: shot.image_url,
-        model: dashScopeModel,
-        resolution: dashScopeResolution,
-        duration: duration,
-        promptExtend: true,
-        audio: true,
-      };
+      let apiEndpoint: string;
+      let requestBody: any;
+      let statusEndpoint: string;
+      let downloadEndpoint: string;
+      let selectedModel: string;
+
+      // 根据宽高比和时长选择模型
+      // 9:16 竖屏使用 sora_video2，其他使用 sora_video2-landscape
+      const isPortrait = artSetting === "9:16";
+      if (duration === 15) {
+        selectedModel = isPortrait ? "sora_video2-15s" : "sora_video2-landscape-15s";
+      } else {
+        selectedModel = isPortrait ? "sora_video2" : "sora_video2-landscape";
+      }
       
-      console.log("=== 视频生成请求参数 ===");
-      console.log("分镜信息:", {
-        shot_number: shot.shot_number,
-        description: shot.description,
-        video_prompt: shot.video_prompt,
-        image_prompt: shot.image_prompt,
-        framing: shot.framing,
-        camera_angle: shot.camera_angle,
-        camera_movement: shot.camera_movement,
-        composition: shot.composition,
-        lighting: shot.lighting,
-        mood: shot.mood,
-        characters: shot.characters,
-        dialogue: shot.dialogue,
-        narration: shot.narration,
-      });
-      console.log("提示词 (prompt):", prompt);
-      console.log("画面描述 (sceneDetail):", sceneDetail);
-      console.log("图片URL (imageUrl):", shot.image_url);
-      console.log("模型 (model):", dashScopeModel);
-      console.log("分辨率 (resolution):", dashScopeResolution);
-      console.log("时长 (duration):", duration);
-      console.log("视觉风格 (visualStyle):", visualStyle);
-      console.log("风格提示词 (stylePrompt):", stylePrompt);
-      console.log("完整请求体:", JSON.stringify(requestBody, null, 2));
+      // 根据宽高比和分辨率设置size
+      let size: string;
+      if (artSetting === "9:16") {
+        // 竖屏尺寸
+        const portraitSizeMap: Record<string, string> = {
+          "480P": "576x1024",
+          "720P": "720x1280",
+          "1080P": "1080x1920",
+        };
+        size = portraitSizeMap[videoResolution] || "720x1280";
+      } else {
+        // 横屏尺寸
+        const landscapeSizeMap: Record<string, string> = {
+          "480P": "1280x704",
+          "720P": "1280x704",
+          "1080P": "1920x1080",
+        };
+        size = landscapeSizeMap[videoResolution] || "1280x704";
+      }
+      
+      const soraPrompt = finalDescription; // 严格使用视频描述，不添加风格提示词
+      
+      requestBody = {
+        prompt: soraPrompt,
+        imageUrl: shot.image_url, // 可以是 URL 或本地文件路径
+        size: size,
+        seconds: duration, // 使用用户选择的时长
+        model: selectedModel, // 传递模型名称（API 会根据 aspectRatio 自动选择，但这里也传递以确保一致性）
+        aspectRatio: artSetting, // 传递宽高比，让 API 可以自动选择模型
+      };
+
+      apiEndpoint = "/api/video/generate-sora-video2";
+      statusEndpoint = "/api/video/status-sora-video2";
+      downloadEndpoint = "/api/video/download-sora-video2";
+
 
       // 调用视频生成API
-      const response = await fetch("/api/video/generate", {
+      const response = await fetch(apiEndpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1019,12 +1621,28 @@ export default function StoryboardCreateForm() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate video");
+        // 检查响应类型，避免解析 HTML 错误页面
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate video");
+        } else {
+          // 响应是 HTML（错误页面）
+          const errorText = await response.text();
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // 检查响应类型，确保是 JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
       const taskId = result.data.taskId;
+
 
       // 轮询视频生成状态
       const pollStatus = async () => {
@@ -1035,38 +1653,85 @@ export default function StoryboardCreateForm() {
           try {
             await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 0 : interval));
 
-            const statusResponse = await fetch(`/api/video/status?taskId=${taskId}`);
+            const statusResponse = await fetch(`${statusEndpoint}?taskId=${taskId}`);
             if (!statusResponse.ok) {
-              const errorData = await statusResponse.json();
-              throw new Error(errorData.error || "获取视频状态失败");
+              // 检查响应类型
+              const contentType = statusResponse.headers.get("content-type");
+              if (contentType && contentType.includes("application/json")) {
+                const errorData = await statusResponse.json();
+                throw new Error(errorData.error || "获取视频状态失败");
+              } else {
+                const errorText = await statusResponse.text();
+                throw new Error(`Server error (${statusResponse.status}): Please try again later`);
+              }
+            }
+
+            // 检查响应类型
+            const statusContentType = statusResponse.headers.get("content-type");
+            if (!statusContentType || !statusContentType.includes("application/json")) {
+              const errorText = await statusResponse.text();
+              throw new Error("Invalid response from server. Please try again.");
             }
 
             const statusResult = await statusResponse.json();
             const status = statusResult.data;
 
-            if (status.status === "SUCCEEDED" && status.output?.video_url) {
-              const videoUrl = status.output.video_url;
+            if (status.status === "completed" && status.url) {
+              // 视频生成成功，先扣除积分
+              const deductResult = await deductVideoCredits(
+                resolutionLower,
+                duration,
+                { 
+                  type: "shot_video_generation", 
+                  project_id: projectId, 
+                  scene_id: sceneItemId, 
+                  shot_number: shot.shot_number 
+                },
+                subscriptionPlan
+              );
 
-              // 上传视频到TOS
-              const uploadResponse = await fetch("/api/video/upload", {
+              if (!deductResult.success) {
+                // 扣费失败，但视频已生成，记录错误但继续处理
+                console.error("Failed to deduct credits after video generation:", deductResult.error);
+              } else {
+                // 触发积分更新事件，刷新头部余额显示
+                window.dispatchEvent(new Event("credits-updated"));
+              }
+
+              // 下载视频并上传到云存储
+              const downloadResponse = await fetch(downloadEndpoint, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
                 },
                 body: JSON.stringify({
-                  videoUrl: videoUrl,
+                  taskId: taskId,
                 }),
               });
 
-              if (!uploadResponse.ok) {
-                const uploadError = await uploadResponse.json();
-                throw new Error(uploadError.error || "Failed to upload video");
+              if (!downloadResponse.ok) {
+                // 检查响应类型
+                const contentType = downloadResponse.headers.get("content-type");
+                if (contentType && contentType.includes("application/json")) {
+                  const downloadError = await downloadResponse.json();
+                  throw new Error(downloadError.error || "Failed to download and upload video");
+                } else {
+                  const errorText = await downloadResponse.text();
+                  throw new Error(`Server error (${downloadResponse.status}): Please try again later`);
+                }
               }
 
-              const uploadResult = await uploadResponse.json();
-              const storedVideoUrl = uploadResult.data.url;
+              // 检查响应类型
+              const downloadContentType = downloadResponse.headers.get("content-type");
+              if (!downloadContentType || !downloadContentType.includes("application/json")) {
+                const errorText = await downloadResponse.text();
+                throw new Error("Invalid response from server. Please try again.");
+              }
 
-              // 保存视频信息到数据库
+              const downloadResult = await downloadResponse.json();
+              const storedVideoUrl = downloadResult.data.videoUrl;
+
+              // Save video information to database
               const saveVideoResponse = await fetch("/api/scenes/videos", {
                 method: "POST",
                 headers: {
@@ -1080,7 +1745,7 @@ export default function StoryboardCreateForm() {
                   imageUrl: shot.image_url,
                   resolution: dashScopeResolution,
                   taskId: taskId,
-                  requestId: status.requestId || statusResult.request_id,
+                  requestId: taskId, // laozhang 使用 taskId 作为 requestId
                   shotNumber: shot.shot_number, // 传递shot_number用于更新metadata
                 }),
               });
@@ -1091,13 +1756,17 @@ export default function StoryboardCreateForm() {
               }
 
               // 更新本地状态
-              const updatedShots = selectedScene.storyboard!.shots.map((s: Shot) =>
+              if (!selectedScene || !selectedScene.storyboard || !sceneData) {
+                return;
+              }
+
+              const updatedShots = selectedScene.storyboard.shots.map((s: Shot) =>
                 s.shot_number === shot.shot_number
                   ? { ...s, video_url: storedVideoUrl }
                   : s
               );
 
-              setSceneData({
+              const updatedSceneData = {
                 ...sceneData,
                 scenes: sceneData.scenes.map((s) =>
                   s.id === selectedScene.id
@@ -1110,7 +1779,40 @@ export default function StoryboardCreateForm() {
                       }
                     : s
                 ),
-              });
+              };
+              
+              setSceneData(updatedSceneData);
+
+              // 检查是否有视频，如果有则更新 step_video 和 step_storyboard 状态
+              // 使用更新后的数据直接检查，不需要等待状态更新
+              const hasVideo = updatedSceneData.scenes.some(s => 
+                s.storyboard && s.storyboard.shots && 
+                s.storyboard.shots.some((shot: any) => shot.video_url && shot.video_url.trim() !== '')
+              );
+              if (hasVideo) {
+                if (projectId) {
+                  // 同时更新 step_video 和 step_storyboard
+                  const response = await fetch('/api/storyboard/project-step-status', {
+                    method: 'PATCH',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      project_id: projectId,
+                      step_video: true,
+                      step_storyboard: true,
+                    }),
+                  });
+
+                  if (response.ok) {
+                    const result = await response.json();
+                    if (result.success && result.data) {
+                      setStatusVideo(result.data.step_video || false);
+                      setStatusStoryboard(result.data.step_storyboard || false);
+                    }
+                  }
+                }
+              }
 
               // 关闭视频生成模态框
               setVideoGenerationModal({
@@ -1120,11 +1822,10 @@ export default function StoryboardCreateForm() {
               });
               setGeneratingVideoShotId(null);
               return;
-            } else if (status.status === "FAILED") {
-              throw new Error(status.message || "Video generation failed");
+            } else if (status.status === "failed" || status.status === "error") {
+              throw new Error("Video generation failed");
             }
           } catch (error) {
-            console.error("Error polling video status:", error);
             setGeneratingVideoShotId(null);
             showError(error instanceof Error ? error.message : "Video generation failed");
             return;
@@ -1136,7 +1837,6 @@ export default function StoryboardCreateForm() {
 
       await pollStatus();
     } catch (error) {
-      console.error("Error generating video:", error);
       setGeneratingVideoShotId(null);
       showError(error instanceof Error ? error.message : "Failed to generate video");
     }
@@ -1144,7 +1844,7 @@ export default function StoryboardCreateForm() {
 
   // 保存分镜编辑
   const handleSaveShot = async () => {
-    if (!editingShotData || !selectedScene) {
+    if (!editingShotData || !selectedScene || !selectedScene.storyboard) {
       return;
     }
 
@@ -1158,9 +1858,6 @@ export default function StoryboardCreateForm() {
       ...editingShotData,
       image_url: imageUrlToSave,
     };
-
-    console.log("保存分镜编辑:", shotDataToSave);
-    
     try {
       // 更新数据库
       const updateResponse = await fetch(`/api/scenes/items/${selectedScene.id}`, {
@@ -1216,16 +1913,15 @@ export default function StoryboardCreateForm() {
       setGeneratedShotImages([]);
       setSelectedShotImageIndex(null);
       
-      // 显示保存成功弹窗
-      setShowSaveSuccess(true);
-      setTimeout(() => {
-        setShowSaveSuccess(false);
-      }, 2000); // 2秒后自动关闭
+      // 不再显示保存成功弹窗
+      // setShowSaveSuccess(true);
+      // setTimeout(() => {
+      //   setShowSaveSuccess(false);
+      // }, 2000); // 2秒后自动关闭
       
       setEditingShotId(null);
       setEditingShotData(null);
     } catch (error) {
-      console.error("Error saving shot:", error);
       showError(`Failed to save storyboard: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   };
@@ -1281,7 +1977,7 @@ export default function StoryboardCreateForm() {
               onClick={(e) => e.stopPropagation()}
               className="bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800 rounded-2xl shadow-2xl border border-gray-700/50 backdrop-blur-xl w-full max-w-6xl h-[90vh] overflow-hidden flex flex-col"
             >
-              {/* 头部 - 标题栏 */}
+              {/* Header - Title Bar */}
               <div className="relative flex items-center justify-between px-6 py-4 bg-gradient-to-r from-gray-800/50 via-gray-900/50 to-gray-800/50 border-b border-gray-700/50 flex-shrink-0">
                 <h3 className="text-lg font-bold text-white">
                   Scene {selectedScene.sceneNumber} {selectedScene.sceneTitle || ""} Shot {videoGenerationModal.shot.shot_number} Video Settings
@@ -1294,9 +1990,9 @@ export default function StoryboardCreateForm() {
                 </Button>
               </div>
 
-              {/* 内容区域 - 左右分栏 */}
+              {/* Content Area - Left and Right Columns */}
               <div className="flex-1 flex overflow-hidden">
-                {/* 左侧：设置区域 */}
+                {/* Left: Settings Area */}
                 <div className="w-96 border-r border-gray-700/50 overflow-y-auto p-6 space-y-6">
                   {/* 视频描述 */}
                   <div>
@@ -1311,10 +2007,10 @@ export default function StoryboardCreateForm() {
                     />
                   </div>
 
-                  {/* 视频质量 */}
+                  {/* Video Quality */}
                   <div>
                     <label className="text-sm font-semibold text-gray-200 mb-3 block">
-                      视频质量
+                      Video Quality
                     </label>
                     <div className="space-y-2">
                       {(["480P", "720P", "1080P"] as const).map((res) => (
@@ -1331,20 +2027,20 @@ export default function StoryboardCreateForm() {
                             className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
                           />
                           <span className="text-sm text-gray-200">
-                            {res === "480P" ? "基础 (480P)" : res === "720P" ? "标准 (720P)" : "高品质 (1080P)"}
+                            {res === "480P" ? "Basic (480P)" : res === "720P" ? "Standard (720P)" : "High Quality (1080P)"}
                           </span>
                         </label>
                       ))}
                     </div>
                   </div>
 
-                  {/* 视频时长 */}
+                  {/* Video Duration */}
                   <div>
                     <label className="text-sm font-semibold text-gray-200 mb-3 block">
-                      视频时长
+                      Video Duration
                     </label>
                     <div className="space-y-2">
-                      {([5, 10] as const).map((dur) => (
+                      {([10, 15] as const).map((dur) => (
                         <label
                           key={dur}
                           className="flex items-center gap-3 p-3 rounded-lg bg-gray-800/30 hover:bg-gray-800/50 cursor-pointer transition-colors border border-gray-700/30"
@@ -1354,42 +2050,57 @@ export default function StoryboardCreateForm() {
                             name="videoDuration"
                             value={dur}
                             checked={videoDuration === dur}
-                            onChange={() => setVideoDuration(dur)}
+                            onChange={() => setVideoDuration(dur as 10 | 15)}
                             className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 focus:ring-blue-500 focus:ring-2"
                           />
-                          <span className="text-sm text-gray-200">{dur}秒</span>
+                          <span className="text-sm text-gray-200">{dur} seconds</span>
                         </label>
                       ))}
                     </div>
                   </div>
 
-                  {/* 生成按钮 */}
-                  <Button
-                    onClick={handleConfirmGenerateVideo}
-                    disabled={isGeneratingVideo}
-                    className="w-full bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-semibold h-11 shadow-lg shadow-[#FFDA2A]/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isGeneratingVideo ? (
-                      <>
-                        <motion.div
-                          animate={{ rotate: 360 }}
-                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                          className="w-4 h-4 mr-2"
-                        >
-                          <Sparkles className="w-4 h-4" />
-                        </motion.div>
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Film className="w-4 h-4 mr-2" />
-                        Generate Video
-                      </>
-                    )}
-                  </Button>
+                  {/* Generate Button */}
+                  {(() => {
+                    // 转换分辨率为小写格式（480P -> 480p）
+                    const resolutionLower = videoResolution.toLowerCase() as '480p' | '720p' | '1080p';
+                    // 计算视频积分（根据订阅计划和积分规则）
+                    // 注意：1080p 单独计费，没有订阅计划则按照 1080p 的双倍来计算
+                    // 480p 和 720p 没有订阅计划时统一按 720p 费率扣除
+                    const requiredCredits = calculateVideoCredits(subscriptionPlan, resolutionLower, videoDuration);
+                    
+                    return (
+                      <Button
+                        onClick={handleConfirmGenerateVideo}
+                        disabled={isGeneratingVideo}
+                        className="w-full bg-gradient-to-r from-[#FFDA2A] to-[#FFDA2A]/90 hover:from-[#FFDA2A]/90 hover:to-[#FFDA2A] text-gray-900 font-semibold h-11 shadow-lg shadow-[#FFDA2A]/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isGeneratingVideo ? (
+                          <>
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                              className="w-4 h-4 mr-2"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                            </motion.div>
+                            Generating...
+                          </>
+                        ) : (
+                          <span className="flex items-center justify-center gap-2">
+                            <Film className="w-4 h-4" />
+                            Generate Video
+                            <span className="flex items-center gap-1">
+                              <Diamond className="w-4 h-4" />
+                              <span className="text-sm font-semibold">{requiredCredits}</span>
+                            </span>
+                          </span>
+                        )}
+                      </Button>
+                    );
+                  })()}
                 </div>
 
-                {/* 右侧：视频预览区域 */}
+                {/* Right: Video Preview Area */}
                 <div className="flex-1 bg-gray-900/30 flex items-center justify-center p-8 relative overflow-hidden">
                   {generatingVideoShotId === `${videoGenerationModal.sceneItemId}-${videoGenerationModal.shot.shot_number}` ? (
                     <div className="text-center relative z-10">
@@ -1427,7 +2138,7 @@ export default function StoryboardCreateForm() {
                           controls
                           className="max-w-full max-h-full rounded-lg shadow-2xl border border-gray-700/50"
                         >
-                          您的浏览器不支持视频播放
+                          Your browser does not support video playback
                         </video>
                       </motion.div>
                     </div>
@@ -1445,7 +2156,7 @@ export default function StoryboardCreateForm() {
         )}
       </AnimatePresence>
 
-      {/* 视频详情模态框 */}
+      {/* Video Details Modal */}
       <AnimatePresence>
         {videoDetailModal.isOpen && videoDetailModal.shot && (
           <motion.div
@@ -1463,7 +2174,7 @@ export default function StoryboardCreateForm() {
               onClick={(e) => e.stopPropagation()}
               className="bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800 rounded-2xl shadow-2xl border border-gray-700/50 backdrop-blur-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
             >
-              {/* 头部 */}
+              {/* Header */}
               <div className="relative flex items-center justify-between px-4 py-3 bg-gradient-to-r from-gray-800/50 via-gray-900/50 to-gray-800/50 border-b border-gray-700/50 flex-shrink-0">
                 <div>
                   <h3 className="text-base font-bold text-white">
@@ -1481,9 +2192,9 @@ export default function StoryboardCreateForm() {
                 </Button>
               </div>
 
-              {/* 内容区域 */}
+              {/* Content Area */}
               <div className="flex-1 overflow-y-auto p-4">
-                {/* 视频播放器 */}
+                {/* Video Player */}
                 {videoDetailModal.shot.video_url && (
                   <div className="mb-4">
                     <video
@@ -1492,12 +2203,12 @@ export default function StoryboardCreateForm() {
                       autoPlay
                       className="w-full rounded-lg"
                     >
-                      您的浏览器不支持视频播放
+                      Your browser does not support video playback
                     </video>
                   </div>
                 )}
 
-                {/* 视频信息 */}
+                {/* Video Information */}
                 <div className="space-y-3">
                   {videoDetailModal.shot.description && (
                     <div>
@@ -1609,6 +2320,21 @@ export default function StoryboardCreateForm() {
                       className="bg-gray-900 text-white text-sm min-h-[120px] border-gray-700"
                       placeholder="Enter shot description"
                     />
+                  </div>
+                  {/* 图片描述 */}
+                  <div>
+                    <label className="text-sm font-semibold text-gray-300 mb-2 block">
+                      Image Description
+                    </label>
+                    <Textarea
+                      value={editingShotData.image_prompt || ""}
+                      onChange={(e) => setEditingShotData({ ...editingShotData, image_prompt: e.target.value })}
+                      className="bg-gray-900 text-white text-sm min-h-[140px] border-gray-700"
+                      placeholder="Describe characters, poses, lighting, props, environment, and continuity details"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Updating this prompt directly changes the storyboard image; describe character poses, wardrobe, lighting, props, and continuity tweaks.
+                    </p>
                   </div>
 
                   {/* 相机信息 */}
@@ -1764,71 +2490,45 @@ export default function StoryboardCreateForm() {
                     />
                   </div>
 
-                  {/* 分镜图片显示 - 4个位置 */}
+                  {/* 分镜图片显示 - 单张展示 */}
                   <div>
                     <label className="text-sm font-semibold text-gray-300 mb-2 block">
                       Storyboard Image
                     </label>
-                    <div className="grid grid-cols-2 gap-4">
-                      {[0, 1, 2, 3].map((index) => {
-                        // 如果有生成的图片，显示生成的图片；否则如果有已保存的图片且是第一个位置，显示已保存的图片；否则显示占位符
-                        const displayImage = generatedShotImages.length > 0 
-                          ? generatedShotImages[index] 
-                          : (index === 0 && editingShotData.image_url) 
-                            ? editingShotData.image_url 
-                            : null;
-                        const isSelected = generatedShotImages.length > 0 
-                          ? selectedShotImageIndex === index 
-                          : (index === 0 && editingShotData.image_url);
-                        
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="relative aspect-square rounded-lg overflow-hidden border-2 border-gray-700 bg-gray-900"
+                    >
+                      {(() => {
+                        const displayImage =
+                          generatedShotImages.length > 0
+                            ? generatedShotImages[selectedShotImageIndex ?? 0]
+                            : editingShotData.image_url || null;
+
+                        if (displayImage) {
+                          return (
+                            <img
+                              src={displayImage}
+                              alt="Storyboard image"
+                              className="w-full h-full object-contain"
+                            />
+                          );
+                        }
+
                         return (
-                          <motion.div
-                            key={index}
-                            initial={{ opacity: 0, scale: 0.9 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className={`relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all group ${
-                              isSelected
-                                ? "border-[#FFDA2A] ring-2 ring-[#FFDA2A]/30 shadow-lg shadow-[#FFDA2A]/20"
-                                : "border-gray-700 hover:border-gray-600"
-                            }`}
-                            onClick={() => {
-                              if (generatedShotImages.length > 0) {
-                                setSelectedShotImageIndex(index);
-                              }
-                            }}
-                            whileHover={{ scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
-                          >
-                            {displayImage ? (
-                              <>
-                                <img
-                                  src={displayImage}
-                                  alt={`Storyboard image ${index + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-                                {isSelected && (
-                                  <div className="absolute inset-0 bg-[#FFDA2A]/20 flex items-center justify-center">
-                                    <div className="bg-[#FFDA2A] text-gray-900 px-3 py-1 rounded-full text-xs font-semibold">
-                                      Selected
-                                    </div>
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <div className="w-full h-full bg-gray-900 border border-gray-700 rounded-lg flex items-center justify-center">
-                                <div className="text-center text-gray-500">
-                                  <ImageIcon className="w-8 h-8 mx-auto mb-2" />
-                                  <p className="text-xs">Placeholder</p>
-                                </div>
-                              </div>
-                            )}
-                          </motion.div>
+                          <div className="w-full h-full flex items-center justify-center">
+                            <div className="text-center text-gray-500">
+                              <ImageIcon className="w-8 h-8 mx-auto mb-2" />
+                              <p className="text-xs">Placeholder</p>
+                            </div>
+                          </div>
                         );
-                      })}
-                    </div>
+                      })()}
+                    </motion.div>
                   </div>
 
-                  {/* 图片生成按钮 - 编辑模式下显示 */}
+                  {/* Image Generation Button - Shown in Edit Mode */}
                   <div className="flex items-center gap-2">
                     <Button
                       onClick={() => {
@@ -1848,28 +2548,19 @@ export default function StoryboardCreateForm() {
                           >
                             <Sparkles className="w-4 h-4" />
                           </motion.div>
-                          Generating...
+                          <span>Generating...</span>
                         </> 
                       ) : (
                         <>
                           <ImageIcon className="w-4 h-4 mr-2" />
-                          {editingShotData.image_url ? "Regenerate" : "Generate Storyboard Image"}
+                          <span>{editingShotData.image_url ? "Regenerate" : "Generate Image"}</span>
+                          <Diamond className="w-4 h-4 ml-2" />
+                          <span className="text-xs ml-1">5</span>
                         </>
                       )}
                     </Button>
                   </div>
 
-                  {/* 图片提示词（只读） */}
-                  {editingShotData.image_prompt && (
-                    <div>
-                      <label className="text-sm font-semibold text-gray-300 mb-2 block">
-                        Image Generation Prompt
-                      </label>
-                      <div className="bg-gray-900 text-gray-400 text-xs p-3 rounded-lg border border-gray-700">
-                        {editingShotData.image_prompt}
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* 底部按钮 */}
@@ -1878,6 +2569,38 @@ export default function StoryboardCreateForm() {
                     onClick={async () => {
                       if (selectedScene && projectId) {
                         try {
+                          // 先检查积分余额（需要5积分）
+                          const requiredCredits = 5;
+                          const creditsCheck = await checkCreditsBalance(requiredCredits);
+                          if (!creditsCheck.sufficient) {
+                            setInsufficientCreditsData({
+                              required: requiredCredits,
+                              current: creditsCheck.balance || 0,
+                              action: "regenerate storyboard",
+                            });
+                            setShowInsufficientCreditsDialog(true);
+                            return;
+                          }
+
+                          // 扣除积分
+                          const deductResult = await deductCredits(
+                            requiredCredits,
+                            "Regenerate storyboard",
+                            {
+                              type: "storyboard_regeneration",
+                              project_id: projectId,
+                              scene_id: selectedScene.id,
+                            }
+                          );
+
+                          if (!deductResult.success) {
+                            showError("Failed to deduct credits. Please try again.");
+                            return;
+                          }
+
+                          // 更新头部积分显示
+                          window.dispatchEvent(new Event("credits-updated"));
+
                           setIsGeneratingStoryboard(true);
                           setGeneratingStoryboardSceneId(selectedScene.id);
                           
@@ -1929,7 +2652,6 @@ export default function StoryboardCreateForm() {
 
                           showSuccess("Storyboard regenerated successfully!");
                         } catch (error) {
-                          console.error("Error regenerating storyboard:", error);
                           showError(error instanceof Error ? error.message : "Failed to regenerate storyboard");
                         } finally {
                           setIsGeneratingStoryboard(false);
@@ -1955,6 +2677,8 @@ export default function StoryboardCreateForm() {
                       <>
                         <Sparkles className="w-4 h-4 mr-2" />
                         Regenerate Storyboard
+                        <Diamond className="w-4 h-4 ml-2" />
+                        <span className="text-xs ml-1">5</span>
                       </>
                     )}
                   </Button>
@@ -1993,7 +2717,7 @@ export default function StoryboardCreateForm() {
         />
       </div>
       
-      {/* 可滚动内容区域 */}
+      {/* Scrollable Content Area */}
       <div className="flex-1 flex overflow-hidden min-h-0">
         <div className="container mx-auto px-4 py-8 max-w-7xl flex-1 flex gap-6 overflow-hidden">
         <motion.div
@@ -2025,7 +2749,7 @@ export default function StoryboardCreateForm() {
           {/* 场次列表和分镜列表 */}
           {!isGenerating && sceneData && (
             <>
-              {/* 左侧：场次列表 - 固定，可独立滚动 */}
+              {/* Left: Scene List - Fixed, independently scrollable */}
               <div className="flex-shrink-0 w-80">
                 <div className="bg-gray-900 rounded-xl p-6 shadow-xl h-full flex flex-col">
                   <h3 className="text-xl font-bold mb-4 flex-shrink-0">Scene List</h3>
@@ -2047,19 +2771,15 @@ export default function StoryboardCreateForm() {
                               : "border-gray-700 hover:border-gray-600 bg-gray-800"
                           }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex-1">
-                              <div className="font-semibold">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              {/* 场次标题 */}
+                              <div className="font-semibold text-white text-sm">
                                 Scene {sceneNumber}
                                 {scene?.sceneTitle && `: ${scene.sceneTitle}`}
                               </div>
-                              {scene?.场次时间 && (
-                                <div className="text-xs text-gray-400 mt-1">
-                                  {scene.场次时间} · {scene.场次地点 || ""}
-                                </div>
-                              )}
                             </div>
-                            <div className="flex items-center gap-2 ml-2">
+                            <div className="flex items-center gap-2 flex-shrink-0">
                               {isGenerating && (
                                 <motion.div
                                   animate={{ rotate: 360 }}
@@ -2081,13 +2801,13 @@ export default function StoryboardCreateForm() {
                 </div>
               </div>
 
-              {/* 右侧：场次详情和编辑 - 可滚动 */}
+              {/* Right: Scene Details and Edit - Scrollable */}
               <div className="flex-1 overflow-y-auto min-h-0">
                 {selectedScene ? (
                   <div className="bg-gray-900 rounded-xl p-6 shadow-xl">
                     {/* 标题栏 */}
                     <div className="flex items-center justify-between mb-6">
-                      <h3 className="text-xl font-bold">
+                      <h3 className="text-base font-bold">
                         Scene {selectedScene.sceneNumber}
                         {selectedScene.sceneTitle && `: ${selectedScene.sceneTitle}`}
                       </h3>
@@ -2227,7 +2947,7 @@ export default function StoryboardCreateForm() {
                           >
                             Cancel
                           </Button>
-                          {/* 编辑模式下，如果没有分镜才显示生成按钮 */}
+                          {/* In edit mode, only show generate button if no storyboard exists */}
                           {!editingSceneData.storyboard && (
                             <Button
                               onClick={() => handleGenerateStoryboard(editingSceneData)}
@@ -2235,6 +2955,8 @@ export default function StoryboardCreateForm() {
                             >
                               <Sparkles className="w-4 h-4 mr-2" />
                               Generate Storyboard
+                              <Diamond className="w-4 h-4 ml-2" />
+                              <span className="text-xs ml-1">3</span>
                             </Button>
                           )}
                         </div>
@@ -2243,17 +2965,27 @@ export default function StoryboardCreateForm() {
                       /* 查看模式 */
                       <div className="space-y-6">
                         {/* 如果有分镜，只显示分镜列表，隐藏所有场次信息 */}
-                        {selectedScene.storyboard && selectedScene.storyboard.shots ? (
+                        {selectedScene && (() => {
+                          const hasStoryboard = !!selectedScene.storyboard;
+                          const hasShots = !!selectedScene.storyboard?.shots;
+                          const shotsCount = selectedScene.storyboard?.shots?.length || 0;
+                          
+                          if (hasStoryboard) {
+                          } else {
+                          }
+                          
+                          return hasStoryboard && hasShots && shotsCount > 0;
+                        })() && selectedScene.storyboard ? (
                           <div className="space-y-6 pt-6">
                             {/* 场景标题和摘要 */}
                             <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
                               {selectedScene.storyboard.scene_title && (
-                                <h4 className="text-xl font-bold mb-2 text-[#FFDA2A]">
+                                <h4 className="text-base font-bold mb-2 text-[#FFDA2A]">
                                   {selectedScene.storyboard.scene_title}
                                 </h4>
                               )}
                               {selectedScene.storyboard.scene_summary && (
-                                <p className="text-sm text-gray-300 leading-relaxed">
+                                <p className="text-xs text-gray-300 leading-relaxed">
                                   {selectedScene.storyboard.scene_summary}
                                 </p>
                               )}
@@ -2261,8 +2993,8 @@ export default function StoryboardCreateForm() {
 
                             {/* 分镜列表标题 */}
                             <div className="flex items-center justify-between">
-                              <h4 className="text-lg font-semibold">Storyboard List</h4>
-                              <span className="text-sm text-gray-400">
+                              <h4 className="text-sm font-semibold">Storyboard List</h4>
+                              <span className="text-xs text-gray-400">
                                 {selectedScene.storyboard.shots.length} shots
                               </span>
                             </div>
@@ -2336,84 +3068,43 @@ export default function StoryboardCreateForm() {
                                           </motion.div>
                                         )}
                                         
-                                        {/* 视频播放器 */}
-                                        {currentShot.video_url && !isGeneratingVideoForThisShot ? (
-                                          <motion.div 
-                                            className="w-full h-full relative group cursor-pointer overflow-hidden rounded-lg"
-                                            initial={{ opacity: 0, scale: 0.95 }}
-                                            animate={{ opacity: 1, scale: 1 }}
-                                            transition={{ duration: 0.3 }}
-                                            whileHover={{ scale: 1.02 }}
+                                        {/* 图片显示（如果有视频则在图片上叠加视频图标） */}
+                                        {currentShot.image_url && !isGeneratingVideoForThisShot ? (
+                                          <div className="w-full h-full relative group cursor-pointer overflow-hidden rounded-lg"
                                             onClick={() => {
-                                              setVideoDetailModal({
-                                                isOpen: true,
-                                                shot: currentShot,
-                                                sceneTitle: selectedScene.storyboard?.scene_title || "",
-                                              });
-                                            }}
-                                            onTouchStart={(e) => {
-                                              // 触摸时自动播放
-                                              const video = e.currentTarget.querySelector('video:not(.blur-bg)') as HTMLVideoElement;
-                                              if (video) {
-                                                video.play().catch(() => {
-                                                  // 自动播放失败时忽略错误
+                                              if (currentShot.video_url) {
+                                                setVideoDetailModal({
+                                                  isOpen: true,
+                                                  shot: currentShot,
+                                                  sceneTitle: selectedScene.storyboard?.scene_title || "",
                                                 });
                                               }
                                             }}
                                           >
-                                            {/* 模糊背景视频层 */}
-                                            <video
-                                              src={currentShot.video_url}
-                                              className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-40 scale-110 z-0"
-                                              muted
-                                              loop
-                                              playsInline
-                                              autoPlay
-                                            />
-                                            {/* 渐变遮罩 */}
-                                            <div className="absolute inset-0 bg-gradient-to-br from-gray-900/40 via-gray-800/20 to-gray-900/40 z-[5]" />
-                                            {/* 主视频播放器 */}
-                                            <video
-                                              src={currentShot.video_url}
-                                              className="w-full h-full object-cover relative z-10"
-                                              muted
-                                              loop
-                                              playsInline
-                                              onMouseEnter={(e) => {
-                                                const video = e.currentTarget;
-                                                video.play().catch(() => {});
-                                              }}
-                                              onMouseLeave={(e) => {
-                                                const video = e.currentTarget;
-                                                video.pause();
-                                                video.currentTime = 0;
+                                            <img
+                                              src={currentShot.image_url}
+                                              alt={`Shot ${currentShot.shot_number}`}
+                                              className="w-full h-full object-cover"
+                                              onError={(e) => {
+                                                const target = e.target as HTMLImageElement;
+                                                target.style.display = 'none';
                                               }}
                                             />
-                                            {/* 悬停覆盖层 */}
-                                            <motion.div 
-                                              className="absolute inset-0 z-20 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center"
-                                              initial={{ opacity: 0 }}
-                                              whileHover={{ opacity: 1 }}
-                                            >
-                                              <motion.div
-                                                initial={{ scale: 0.8, opacity: 0 }}
-                                                whileHover={{ scale: 1, opacity: 1 }}
-                                                transition={{ duration: 0.2 }}
-                                              >
-                                                <Video className="w-8 h-8 text-white drop-shadow-lg" />
-                                              </motion.div>
-                                            </motion.div>
-                                          </motion.div>
-                                        ) : currentShot.image_url && !isGeneratingVideoForThisShot ? (
-                                          <img
-                                            src={currentShot.image_url}
-                                            alt={`Shot ${currentShot.shot_number}`}
-                                            className="w-full h-full object-cover"
-                                            onError={(e) => {
-                                              const target = e.target as HTMLImageElement;
-                                              target.style.display = 'none';
-                                            }}
-                                          />
+                                            {/* 如果有视频，在图片上显示视频图标 */}
+                                            {currentShot.video_url && (
+                                              <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors">
+                                                <motion.div
+                                                  initial={{ scale: 0.9, opacity: 0.8 }}
+                                                  animate={{ scale: 1, opacity: 1 }}
+                                                  whileHover={{ scale: 1.1 }}
+                                                  transition={{ duration: 0.2 }}
+                                                  className="bg-black/60 rounded-full p-3 backdrop-blur-sm"
+                                                >
+                                                  <Video className="w-6 h-6 text-white" />
+                                                </motion.div>
+                                              </div>
+                                            )}
+                                          </div>
                                         ) : !isGeneratingVideoForThisShot ? (
                                           <div className="w-full h-full flex items-center justify-center">
                                             <ImageIcon className="w-8 h-8 text-gray-500" />
@@ -2423,7 +3114,7 @@ export default function StoryboardCreateForm() {
                                       <div className="flex-1 min-w-0">
                                         {/* 镜头编号和相机信息 */}
                                         <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                          <span className="text-sm font-semibold text-[#FFDA2A]">Shot {currentShot.shot_number}</span>
+                                          <span className="text-xs font-semibold text-[#FFDA2A]">Shot {currentShot.shot_number}</span>
                                           {currentShot.framing && (
                                             <span className="text-xs text-gray-400 bg-gray-700 px-2 py-0.5 rounded">
                                               {currentShot.framing}
@@ -2443,7 +3134,7 @@ export default function StoryboardCreateForm() {
                                         
                                         {/* 镜头描述 */}
                                         {currentShot.description && (
-                                          <p className="text-sm text-gray-300 mb-3 leading-relaxed">{currentShot.description}</p>
+                                          <p className="text-xs text-gray-300 mb-3 leading-relaxed">{currentShot.description}</p>
                                         )}
                                         
                                         {/* 技术细节 */}
@@ -2487,9 +3178,9 @@ export default function StoryboardCreateForm() {
                                           </div>
                                         )}
                                         
-                                        {/* 操作按钮 - 列表模式下只显示编辑按钮，如果有图片则隐藏生成按钮 */}
+                                        {/* Action Buttons - In list mode, only show edit button, hide generate button if image exists */}
                                         <div className="flex items-center gap-2 mt-4 pt-3 border-t border-gray-700">
-                                          {/* 只有在没有图片时才显示生成按钮 */}
+                                          {/* Only show generate button if no image exists */}
                                           {!currentShot.image_url && (
                                             <Button
                                               onClick={() => handleGenerateShotImage(shot, selectedScene.id)}
@@ -2510,7 +3201,9 @@ export default function StoryboardCreateForm() {
                                               ) : (
                                                 <>
                                                   <ImageIcon className="w-3 h-3 mr-1" />
-                                                  <span>Generate Storyboard Image</span>
+                                                  <span>Generate Image</span>
+                                                  <Diamond className="w-3 h-3 ml-2" />
+                                                  <span className="text-xs ml-1">5</span>
                                                 </>
                                               )}
                                             </Button>
@@ -2553,20 +3246,58 @@ export default function StoryboardCreateForm() {
                             </div>
                           </div>
                         ) : (
-                          /* 如果没有分镜，显示场次信息和生成按钮 */
+                          /* If no storyboard exists, display scene information and generate button */
                           <>
                             {/* 场次信息 */}
                             <div className="grid grid-cols-2 gap-4">
                               {selectedScene.场次时间 && (
                                 <div>
-                                  <div className="text-sm text-gray-400 mb-1">Scene Time</div>
-                                  <div className="text-white font-semibold">{selectedScene.场次时间}</div>
+                                  <div className="text-xs text-gray-400 mb-1">Scene Time</div>
+                                  <div className="text-white font-semibold text-sm">{selectedScene.场次时间}</div>
                                 </div>
                               )}
                               {selectedScene.场次地点 && (
                                 <div>
-                                  <div className="text-sm text-gray-400 mb-1">Scene Location</div>
-                                  <div className="text-white font-semibold">{selectedScene.场次地点}</div>
+                                  <div className="text-xs text-gray-400 mb-1">Scene Location</div>
+                                  <div className="flex items-center gap-2">
+                                    {editingSceneLocation === selectedScene.id ? (
+                                      <>
+                                        <input
+                                          type="text"
+                                          value={editingLocationValue}
+                                          onChange={(e) => setEditingLocationValue(e.target.value)}
+                                          className="flex-1 bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-white font-semibold text-sm focus:outline-none focus:ring-2 focus:ring-[#FFDA2A]/50"
+                                          autoFocus
+                                        />
+                                        <Button
+                                          onClick={handleSaveLocation}
+                                          disabled={isSavingLocation}
+                                          className="bg-green-600 hover:bg-green-700 text-white h-7 w-7 p-0 flex items-center justify-center disabled:opacity-50"
+                                          title="Save"
+                                        >
+                                          <CheckCircle className="w-4 h-4" />
+                                        </Button>
+                                        <Button
+                                          onClick={handleCancelEditLocation}
+                                          disabled={isSavingLocation}
+                                          className="bg-gray-600 hover:bg-gray-700 text-white h-7 w-7 p-0 flex items-center justify-center disabled:opacity-50"
+                                          title="Cancel"
+                                        >
+                                          <X className="w-4 h-4" />
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <div 
+                                          className="text-white font-semibold text-sm cursor-pointer hover:text-[#FFDA2A] transition-colors flex-1"
+                                          onClick={() => handleStartEditLocation(selectedScene)}
+                                          title="Click to edit"
+                                        >
+                                          {selectedScene.场次地点}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -2574,16 +3305,16 @@ export default function StoryboardCreateForm() {
                             {/* 场次描述 */}
                             {selectedScene.text && (
                               <div>
-                                <div className="text-sm text-gray-400 mb-2">Scene Description</div>
-                                <div className="text-white bg-gray-800 rounded-lg p-4">{selectedScene.text}</div>
+                                <div className="text-xs text-gray-400 mb-2">Scene Description</div>
+                                <div className="text-white text-sm bg-gray-800 rounded-lg p-4">{selectedScene.text}</div>
                               </div>
                             )}
 
                             {/* 场次故事 */}
                             {selectedScene.场次故事 && (
                               <div>
-                                <div className="text-sm text-gray-400 mb-2">Scene Story</div>
-                                <div className="text-white bg-gray-800 rounded-lg p-4 whitespace-pre-wrap">
+                                <div className="text-xs text-gray-400 mb-2">Scene Story</div>
+                                <div className="text-white text-sm bg-gray-800 rounded-lg p-4 whitespace-pre-wrap">
                                   {selectedScene.场次故事}
                                 </div>
                               </div>
@@ -2592,12 +3323,12 @@ export default function StoryboardCreateForm() {
                             {/* 主要角色 */}
                             {selectedScene.主要角色 && selectedScene.主要角色.length > 0 && (
                               <div>
-                                <div className="text-sm text-gray-400 mb-2">Main Characters</div>
+                                <div className="text-xs text-gray-400 mb-2">Main Characters</div>
                                 <div className="space-y-2">
                                   {selectedScene.主要角色.map((char, idx) => (
                                     <div key={idx} className="bg-gray-800 rounded-lg p-3">
-                                      <div className="font-semibold text-white">{char.姓名}</div>
-                                      <div className="text-sm text-gray-300 mt-1">
+                                      <div className="font-semibold text-white text-sm">{char.姓名}</div>
+                                      <div className="text-xs text-gray-300 mt-1">
                                         {char["心理/情绪状态"] || char.心理情绪状态 || ""}
                                       </div>
                                     </div>
@@ -2609,24 +3340,24 @@ export default function StoryboardCreateForm() {
                             {/* 关键画面提示 */}
                             {selectedScene.关键画面提示 && (
                               <div>
-                                <div className="text-sm text-gray-400 mb-2">Key Visual Prompts</div>
+                                <div className="text-xs text-gray-400 mb-2">Key Visual Prompts</div>
                                 <div className="space-y-2">
                                   {selectedScene.关键画面提示.镜头1 && (
                                     <div className="bg-gray-800 rounded-lg p-3">
-                                      <div className="text-sm text-gray-400 mb-1">Shot 1</div>
-                                      <div className="text-white">{selectedScene.关键画面提示.镜头1}</div>
+                                      <div className="text-xs text-gray-400 mb-1">Shot 1</div>
+                                      <div className="text-white text-sm">{selectedScene.关键画面提示.镜头1}</div>
                                     </div>
                                   )}
                                   {selectedScene.关键画面提示.镜头2 && (
                                     <div className="bg-gray-800 rounded-lg p-3">
-                                      <div className="text-sm text-gray-400 mb-1">Shot 2</div>
-                                      <div className="text-white">{selectedScene.关键画面提示.镜头2}</div>
+                                      <div className="text-xs text-gray-400 mb-1">Shot 2</div>
+                                      <div className="text-white text-sm">{selectedScene.关键画面提示.镜头2}</div>
                                     </div>
                                   )}
                                   {selectedScene.关键画面提示.镜头3 && (
                                     <div className="bg-gray-800 rounded-lg p-3">
-                                      <div className="text-sm text-gray-400 mb-1">Shot 3</div>
-                                      <div className="text-white">{selectedScene.关键画面提示.镜头3}</div>
+                                      <div className="text-xs text-gray-400 mb-1">Shot 3</div>
+                                      <div className="text-white text-sm">{selectedScene.关键画面提示.镜头3}</div>
                                     </div>
                                   )}
                                 </div>
@@ -2655,6 +3386,8 @@ export default function StoryboardCreateForm() {
                                   <>
                                     <Sparkles className="w-4 h-4 mr-2" />
                                     Generate Storyboard
+                                    <Diamond className="w-4 h-4 ml-2" />
+                                    <span className="text-xs ml-1">3</span>
                                   </>
                                 )}
                               </Button>
@@ -2676,6 +3409,83 @@ export default function StoryboardCreateForm() {
         </motion.div>
         </div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
+      
+      {/* Scene Image Generate Modal */}
+      {selectedScene && (
+        <SceneImageGenerateModal
+          isOpen={showSceneImageModal}
+          onClose={() => setShowSceneImageModal(false)}
+          sceneLocation={selectedScene.场次地点 || ""}
+          sceneDescription={selectedScene.text || ""}
+          projectId={projectId}
+          sceneId={selectedScene.id || null}
+          onLocationUpdate={async (location: string) => {
+            // 更新本地状态
+            if (selectedScene.id) {
+              setSceneData((prev) => {
+                if (!prev) return null;
+                return {
+                  ...prev,
+                  scenes: prev.scenes.map((s) =>
+                    s.id === selectedScene.id
+                      ? { ...s, 场次地点: location }
+                      : s
+                  ),
+                };
+              });
+            }
+          }}
+          onImageSelect={async (imageUrl: string) => {
+            // 更新场景的图片URL（保存到 scene_image_url 字段）
+            if (selectedScene.id && projectId) {
+              try {
+                const response = await fetch(`/api/scenes/items/${selectedScene.id}`, {
+                  method: "PATCH",
+                  headers: {
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    sceneImageUrl: imageUrl,
+                  }),
+                });
+
+                if (!response.ok) {
+                  throw new Error("Failed to update scene image");
+                }
+
+                // 更新本地状态
+                setSceneData(prev => {
+                  if (!prev) return null;
+                  return {
+                    ...prev,
+                    scenes: prev.scenes.map(scene =>
+                      scene.id === selectedScene.id
+                        ? { ...scene, sceneImageUrl: imageUrl }
+                        : scene
+                    ),
+                  };
+                });
+
+                showSuccess("Scene image updated successfully");
+              } catch (error) {
+                showError("Failed to update scene image");
+              }
+            }
+          }}
+        />
+      )}
+
     </div>
   );
 }

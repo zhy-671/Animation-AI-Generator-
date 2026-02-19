@@ -8,79 +8,64 @@ import { useTranslation } from "@/hooks/use-translation";
 const defaultFaqs = [
   {
     id: 1,
-    question: "How does the Animation AI Generator work?",
-    answer: "Our platform uses AI to transform your story ideas into complete animated videos. Start by entering your story concept, and our AI will generate a complete script with chapters. Then customize your project settings including visual style, aspect ratio, and character designs. The AI generates storyboards with detailed shots, and finally creates animated video clips. You can edit, add subtitles, voiceovers, and compose your final video."
+    question: "What is Video AI Music?",
+    answer:
+      "Video AI Music is an online platform that helps you create music videos using artificial intelligence. You can easily input your song lyrics or upload your track to generate a complete music video in just a few minutes.",
   },
   {
     id: 2,
-    question: "What is the complete workflow?",
-    answer: "The workflow consists of four main steps: 1) Story Script - Enter your idea and AI generates a complete story with chapters. 2) Settings - Configure visual style (2D Animation, 3D Animation, Japanese Anime, etc.), aspect ratio (16:9, 9:16, 1:1, etc.), and design characters with AI-generated images. 3) Storyboard - AI generates detailed shots with camera angles, movements, and compositions. 4) Create Video - Generate video clips for each shot, then edit and compose your final video with subtitles and voiceovers."
+    question: "How does the AI create music videos?",
+    answer:
+      "The AI transforms your lyrics into stunning visuals by automatically generating characters and storyboards that match the mood of your music. You don’t need to know how to edit videos; the AI does all the hard work for you!",
   },
   {
     id: 3,
-    question: "What visual styles are available?",
-    answer: "We support multiple visual styles including: 2D Animation (hand-drawn style), 3D Animation (CGI rendered), Japanese Anime (cel-shaded), Cyberpunk, Clay Animation, Comic Book, Cartoon Style, and 3D Cartoon. Each style affects the overall look of your characters and scenes."
+    question: "Can I use this tool if I have no video experience?",
+    answer:
+      "Absolutely! Video AI Music is designed to be user-friendly. Whether you are a beginner or an expert, you can easily create beautiful music videos without prior video editing skills.",
   },
   {
     id: 4,
-    question: "How do I design characters?",
-    answer: "In the Settings step, you can add characters and click 'Design' to generate AI character images. Enter character details including name, age, gender, appearance description (hair, eyes, height, build, etc.), and clothing description. The AI will generate character images based on your selected visual style and aspect ratio. You can regenerate images until you're satisfied."
+    question: "What video styles can I choose from?",
+    answer:
+      "You can select from various styles for your music video, such as dramatic, upbeat, romantic, or energetic. Each style is tailored to create the right atmosphere that matches your song.",
   },
   {
     id: 5,
-    question: "What aspect ratios can I choose?",
-    answer: "We support multiple aspect ratios: 16:9 (Landscape) for widescreen videos, 9:16 (Portrait) for mobile/social media, 1:1 (Square) for Instagram posts, 4:3 (Traditional) for classic format, and 21:9 (Ultrawide) for cinematic content. Your choice affects both character images and final video output."
+    question: "What quality can I expect from my music video?",
+    answer:
+      "You can generate music videos in high-definition quality at 720p, 1080p, or even 4K resolution. This makes them perfect for sharing on platforms like YouTube, TikTok, and Instagram.",
   },
   {
     id: 6,
-    question: "How long does storyboard generation take?",
-    answer: "Storyboard generation typically takes 1-3 minutes. The AI analyzes your scene story and generates 5-10 detailed shots per scene, including camera angles, movements, compositions, lighting, and mood. Each shot includes detailed image and video prompts optimized for AI generation."
+    question: "How long does it take to create a music video?",
+    answer:
+      "With Video AI Music, you can have a finished music video ready in just about 5 minutes! This quick process allows you to share your creation almost instantly.",
   },
   {
     id: 7,
-    question: "How long does video generation take?",
-    answer: "Video generation for each shot typically takes 2-3 minutes. You can generate videos for individual shots or multiple shots. The system supports resolutions from 480P to 1080P and durations of 5 or 10 seconds per clip. You'll see a progress indicator during generation."
+    question: "Can I share my music video on social media?",
+    answer:
+      "Yes! Once your music video is ready, you can download it and share it directly on social media platforms like TikTok, Instagram, and YouTube.",
   },
   {
     id: 8,
-    question: "Can I edit shots after generation?",
-    answer: "Yes! You can edit shot details including description, composition, camera angle, camera movement, lighting, mood, characters, dialogue, and narration. You can also regenerate images for shots, choosing from up to 4 generated options. All edits are saved to your project."
+    question: "Do I need to pay to start using Video AI Music?",
+    answer:
+      "You can start using Video AI Music for free, and no credit card is required. It is a great opportunity to create professional-quality music videos without any initial cost.",
   },
   {
     id: 9,
-    question: "What video editing features are available?",
-    answer: "The video editor includes: Timeline editing with playhead control, subtitle tracks for adding text overlays, voiceover tracks for narration, shot track showing all video clips, video preview with playback controls, and export functionality. You can arrange clips, add timing, and compose your final video."
+    question: "What if I don’t have lyrics to start with?",
+    answer:
+      "If you don't have lyrics, you can still create a music video by uploading your song. The AI will generate visuals that correspond with the music, regardless of whether you have lyrics.",
   },
   {
     id: 10,
-    question: "How are credits used?",
-    answer: "Credits are consumed for AI operations: story script generation, character image generation, storyboard generation, shot image generation, and video generation. Different operations consume different amounts of credits. You can purchase credits or subscribe to a plan that includes credits."
+    question: "How does AI generate characters for my video?",
+    answer:
+      "The AI creates characters that fit the style and mood of your song. You can even specify what kind of characters you want, whether they are happy, serious, or quirky.",
   },
-  {
-    id: 11,
-    question: "Can I save my projects?",
-    answer: "Yes! All projects are automatically saved. You can access your projects from 'My Projects' to continue working on them later. Projects save your story script, settings, characters, storyboards, and generated videos. You can edit any step at any time."
-  },
-  {
-    id: 12,
-    question: "What happens if generation fails?",
-    answer: "If generation fails, you'll see an error message. Common issues include content moderation (inappropriate content), API timeouts, or network errors. You can retry the generation. For image generation, you can regenerate up to 4 times. For videos, you can regenerate individual shots."
-  },
-  {
-    id: 13,
-    question: "Can I use generated content commercially?",
-    answer: "Yes, all content you generate is yours to use commercially. You can use it for social media, marketing, presentations, or any commercial projects. However, please review our Terms of Service for complete usage rights and restrictions."
-  },
-  {
-    id: 14,
-    question: "Do I need to complete all steps in order?",
-    answer: "Yes, steps must be completed in order: Story Script → Settings → Storyboard → Create Video. Each step unlocks the next. However, you can return to previous steps to edit. The navigation bar shows your progress and which steps are available."
-  },
-  {
-    id: 15,
-    question: "What video formats and resolutions are supported?",
-    answer: "Videos are generated in MP4 format. Supported resolutions include 480P, 720P, and 1080P. Duration options are 5 seconds or 10 seconds per clip. The final composed video maintains your selected aspect ratio and can be exported for download."
-  }
 ];
 
 export default function AnimationFAQ() {
@@ -113,11 +98,11 @@ export default function AnimationFAQ() {
             transition={{ duration: 0.5 }}
             className="text-center space-y-4 mb-16"
           >
-            <h2 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
-              {(t as any).faq?.title ?? 'Frequently asked questions'}
-            </h2>
+            <h1 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
+               Video AI Music– Frequently Asked Questions
+            </h1>
             <p className="text-lg text-gray-600 dark:text-gray-400">
-              {(t as any).faq?.subtitle ?? 'Everything you need to know'}
+              {(t as any).faq?.subtitle ?? 'Get answers about creating music videos with AI'}
             </p>
           </motion.div>
 
@@ -125,6 +110,18 @@ export default function AnimationFAQ() {
             {faqs.map((faq: { id: number; question: string; answer: string }, index: number) => (
               <motion.div
                 key={faq.id}
+                id={index === 0 ? "faq-what-is-music-video-ai" : 
+                    index === 1 ? "faq-no-software-needed" :
+                    index === 2 ? "faq-generation-time" :
+                    index === 3 ? "faq-style-selection" :
+                    index === 4 ? "faq-trim-segments" :
+                    index === 5 ? "faq-audio-formats" :
+                    index === 6 ? "faq-video-format" :
+                    index === 7 ? "faq-privacy" :
+                    index === 8 ? "faq-commercial-use" :
+                    index === 9 ? "faq-mobile-support" :
+                    index === 10 ? "faq-beat-sync" :
+                    "faq-multiple-variations"}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}

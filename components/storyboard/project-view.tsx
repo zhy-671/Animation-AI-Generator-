@@ -74,7 +74,6 @@ export default function StoryboardProjectView({ projectId }: ProjectViewProps) {
                       }
                     }
                   } catch (error) {
-                    console.error('Error generating presigned URL:', error);
                   }
                 }
               }
@@ -101,7 +100,6 @@ export default function StoryboardProjectView({ projectId }: ProjectViewProps) {
         }
       }
     } catch (error) {
-      console.error("Error loading project:", error);
       alert("加载项目失败");
     } finally {
       setLoading(false);

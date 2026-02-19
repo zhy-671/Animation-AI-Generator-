@@ -154,7 +154,6 @@ export default function StoryContentEditor() {
           content: formatStoryOutline(outline),
         });
       } catch (e) {
-        console.error("Failed to parse story outline:", e);
         // 如果解析失败，使用默认内容
         setStoryContent({
           title: "新故事",
@@ -262,7 +261,6 @@ export default function StoryContentEditor() {
       
       router.push(`/storyboard/project/${projectId}/create`);
     } catch (error) {
-      console.error("Error saving project:", error);
       setSaveStatus("error");
       alert(error instanceof Error ? error.message : "保存项目失败");
       setIsSaving(false);
@@ -312,7 +310,6 @@ export default function StoryContentEditor() {
         throw new Error(result.error || "Failed to regenerate story outline");
       }
     } catch (error) {
-      console.error("Error regenerating story outline:", error);
       alert(
         error instanceof Error
           ? error.message

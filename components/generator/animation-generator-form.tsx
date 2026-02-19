@@ -7,16 +7,15 @@ import { getImageCredits, getVideoCredits } from "@/lib/credits/rules";
 import { getUserSubscriptionPlan } from "@/lib/subscription/client";
 import { 
   getSubscriptionPlanConfig, 
-  isResolutionAllowed, 
-  isAnimationStyleAllowed,
   calculateVideoCredits,
   type SubscriptionPlan 
 } from "@/lib/subscription/rules";
-import { useParams, useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, X, Sparkles, Type, Image as ImageIcon, Video, ChevronDown, ChevronUp, Diamond, Info } from "lucide-react";
+import { Upload, X, Sparkles, Type, Image as ImageIcon, Video, ChevronDown, ChevronUp, Diamond, Info, Coins, Clock, Download } from "lucide-react";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
@@ -35,7 +34,7 @@ interface FormData {
   startFrame: File | null;
   endFrame: File | null;
   referenceImage: File | null; // 参考图（用于故事剧本生成）
-  readerGroup: "儿童" | "青少年" | "成人" | "全年龄";
+  readerGroup: "Children" | "Teen" | "Adult" | "All Ages";
   model: string;
   duration: string;
   quality: string;
@@ -65,10 +64,8 @@ interface AnimationGeneratorFormProps {
 }
 
 export default function AnimationGeneratorForm({ isStoryboardMode = false }: AnimationGeneratorFormProps = {}) {
-  const params = useParams();
   const router = useRouter();
   const pathname = usePathname();
-  const locale = (params?.locale as string) || "en";
   
   // 使用默认值，如果是故事剧本模式则设置为 "storyboard"
   const [formData, setFormData] = useState<FormData>({
@@ -78,9 +75,9 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     startFrame: null,
     endFrame: null,
     referenceImage: null,
-    readerGroup: "全年龄",
+    readerGroup: "All Ages",
     model: "2d", // 默认值改为 2d
-    duration: "5",
+    duration: "10",
     quality: "480p"
   });
 
@@ -111,6 +108,14 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
   // 订阅计划状态
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
   
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
+  
   // 文生视频进度状态
   const [textToVideoProgress, setTextToVideoProgress] = useState<{
     status: 'idle' | 'generating' | 'polling' | 'completed' | 'error';
@@ -134,19 +139,38 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
   useEffect(() => {
     const loadUserData = async () => {
       try {
-        // 加载订阅计划
+        // 直接从服务器获取最新订阅计划（不依赖 Cookie，确保数据准确）
         const planData = await getUserSubscriptionPlan();
         if (planData.plan !== undefined) {
           setSubscriptionPlan(planData.plan);
+          // 保存到 Cookie
+          if (typeof document !== 'undefined') {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+            document.cookie = `subscription_plan=${planData.plan || 'null'}; expires=${expires.toUTCString()}; path=/`;
+          }
         }
         
-        // 加载积分余额
-        const balanceCheck = await checkCreditsBalance(0);
-        if (balanceCheck.balance !== undefined) {
-          setCreditsBalance(balanceCheck.balance);
-        }
+        // 移除积分查询，因为 Header 组件已经统一管理积分显示
+        // 避免多个组件重复调用积分接口
+        // 如果需要积分余额，可以通过监听 credits-updated 事件获取
+        // const balanceCheck = await checkCreditsBalance(0);
+        // if (balanceCheck.balance !== undefined) {
+        //   setCreditsBalance(balanceCheck.balance);
+        // }
       } catch (error) {
-        console.error("Error loading user data:", error);
+        // 如果加载失败，尝试从 Cookie 读取（作为后备）
+        if (typeof document !== 'undefined') {
+          const cookiePlan = document.cookie
+            .split('; ')
+            .find(row => row.startsWith('subscription_plan='))
+            ?.split('=')[1];
+          if (cookiePlan && (cookiePlan === 'basic' || cookiePlan === 'pro' || cookiePlan === 'studio')) {
+            setSubscriptionPlan(cookiePlan as SubscriptionPlan);
+          } else if (cookiePlan === 'null') {
+            setSubscriptionPlan(null);
+          }
+        }
       }
     };
     
@@ -154,6 +178,37 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       loadUserData();
     }
   }, [isMounted]);
+
+  // 监听订阅计划更新事件（当支付成功后，pricing 页面会触发此事件）
+  useEffect(() => {
+    const handleSubscriptionUpdate = async () => {
+      try {
+        const planData = await getUserSubscriptionPlan();
+        if (planData.plan !== undefined) {
+          setSubscriptionPlan(planData.plan);
+          // 更新 Cookie
+          if (typeof document !== 'undefined') {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+            document.cookie = `subscription_plan=${planData.plan || 'null'}; expires=${expires.toUTCString()}; path=/`;
+          }
+        }
+      } catch (error) {
+        // 静默处理错误
+      }
+    };
+
+    // 监听自定义事件
+    if (typeof window !== 'undefined') {
+      window.addEventListener('subscription-updated', handleSubscriptionUpdate);
+      window.addEventListener('credits-updated', handleSubscriptionUpdate); // 积分更新时也刷新订阅计划
+      
+      return () => {
+        window.removeEventListener('subscription-updated', handleSubscriptionUpdate);
+        window.removeEventListener('credits-updated', handleSubscriptionUpdate);
+      };
+    }
+  }, []);
 
   // 客户端挂载后设置标志
   useEffect(() => {
@@ -173,14 +228,12 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         // 2. 从数据库加载分镜数据
         const response = await fetch(`/api/scenes?sceneId=${savedSceneId}`);
         if (!response.ok) {
-          console.warn('Failed to load scene:', savedSceneId);
           localStorage.removeItem('currentSceneId');
           return;
         }
         
         const result = await response.json();
         if (!result.success || !result.data) {
-          console.warn('Scene not found:', savedSceneId);
           localStorage.removeItem('currentSceneId');
           return;
         }
@@ -189,7 +242,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         
         // 3. 检查是否有分镜项
         if (!sceneData.items || sceneData.items.length === 0) {
-          console.warn('Scene has no items:', savedSceneId);
           return;
         }
         
@@ -219,25 +271,15 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                     const presignedResult = await presignedResponse.json();
                     if (presignedResult.success && presignedResult.data?.imageUrl) {
                       displayImageUrl = presignedResult.data.imageUrl;
-                      console.log('Generated new presigned URL for display:', displayImageUrl);
                     }
                   }
                 } catch (error) {
-                  console.error('Error generating presigned URL for display:', error);
                   // 如果失败，使用原始 URL
                 }
               }
             }
             
             // 调试日志：检查图片URL
-            console.log('Restoring scene item:', {
-              id: item.id,
-              scene_number: item.scene_number,
-              image_url: item.image_url,
-              imageUrl: displayImageUrl,
-              hasImageUrl: !!displayImageUrl,
-            });
-            
             return {
               id: item.id,
               imageUrl: displayImageUrl, // 使用新的预签名 URL 或原始 URL
@@ -253,7 +295,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               isGeneratingImage: !displayImageUrl && hasGeneratingImages, // 如果图片还在生成中
               imageGenerationFailed: false,
               sceneItemId: item.id,
-              imageStatus: displayImageUrl ? 'completed' : (hasGeneratingImages ? 'pending' : 'failed'),
+              imageStatus: displayImageUrl ? ('completed' as const) : (hasGeneratingImages ? ('pending' as const) : ('failed' as const)),
             };
           })
         );
@@ -265,7 +307,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         
         // 7. 如果有图片还在生成中，显示提示
         if (hasGeneratingImages) {
-          console.log('Some images are still generating, scene restored from database');
           // 注意：图片生成是在后端异步进行的，前端不需要轮询
           // 如果图片还在生成中，用户刷新页面后可以看到分镜脚本，但图片可能还未生成完成
         }
@@ -277,10 +318,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
         }, 300);
-        
-        console.log('Scene preview restored:', savedSceneId, restoredImages.length, 'items');
       } catch (error) {
-        console.error('Error restoring scene preview:', error);
         localStorage.removeItem('currentSceneId');
       }
     };
@@ -313,14 +351,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       })
       .then((data) => {
         if (!mounted) return;
-        console.log('Fetched videos data:', data);
         if (data.error) {
-          console.error('API returned error:', data.error);
         }
         setVideos(Array.isArray(data?.videos) ? data.videos.slice(0, 20) : []);
       })
       .catch((error) => {
-        console.error('Error fetching videos:', error);
         setVideos([]);
       });
     return () => { mounted = false; };
@@ -338,14 +373,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       })
       .then((data) => {
         if (!mounted) return;
-        console.log('Fetched my videos data:', data);
         if (data.error) {
-          console.error('API returned error:', data.error);
         }
         setMyVideos(Array.isArray(data?.videos) ? data.videos : []);
       })
       .catch((error) => {
-        console.error('Error fetching my videos:', error);
         setMyVideos([]);
       });
     return () => { mounted = false; };
@@ -405,6 +437,35 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     setPreview(null);
   };
 
+  // 下载视频函数
+  const handleDownloadVideo = async (videoUrl: string, filename: string) => {
+    try {
+      // 获取视频数据
+      const response = await fetch(videoUrl);
+      if (!response.ok) {
+        throw new Error('Failed to fetch video');
+      }
+      
+      const blob = await response.blob();
+      
+      // 创建临时下载链接
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || 'video.mp4';
+      document.body.appendChild(link);
+      link.click();
+      
+      // 清理
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Error downloading video:', error);
+      // 如果 fetch 失败（可能是 CORS 问题），尝试直接打开链接
+      window.open(videoUrl, '_blank');
+    }
+  };
+
   const removeStartFrame = () => {
     setFormData(prev => ({ ...prev, startFrame: null }));
     setStartFramePreview(null);
@@ -423,12 +484,10 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     const newType = value as "text" | "image";
     setFormData(prev => ({ ...prev, inputType: newType }));
     // 更新URL路径
-    const hasLocale = pathname?.split('/')[1] && pathname.split('/')[1] !== 'animation-ai-generator' && pathname.split('/')[1] !== 'generate' && pathname.split('/')[1] !== 'faq';
-    const basePath = hasLocale ? `/${locale}/animation-ai-generator` : '/animation-ai-generator';
     if (newType === 'text') {
-      router.push(`${basePath}/text-to-video`);
+      router.push('/animation-ai-generator/text-to-video');
     } else {
-      router.push(`${basePath}/image-to-video`);
+      router.push('/animation-ai-generator/image-to-video');
     }
   };
 
@@ -438,11 +497,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     const imagesToProcess = images.filter(
       img => img.imageTaskId && img.imageStatus !== 'completed' && img.imageStatus !== 'failed'
     );
-    
-    console.log(`Starting to poll ${imagesToProcess.length} images sequentially`);
-    
     if (imagesToProcess.length === 0) {
-      console.warn("No images to process, skipping polling");
       return;
     }
     
@@ -455,16 +510,13 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       // 找到当前item在generatedImages中的索引
       const itemIndex = images.findIndex(img => img.id === item.id);
       if (itemIndex === -1) continue;
-      
-      console.log(`Processing image ${i + 1}/${imagesToProcess.length}, taskId: ${item.imageTaskId}`);
-      
       // 设置当前正在生成的索引
       setCurrentGeneratingIndex(itemIndex);
       
       // 更新状态为"生成中"
       setGeneratedImages(prev => prev.map(img => 
         img.id === item.id 
-          ? { ...img, imageStatus: 'generating', isGeneratingImage: true }
+          ? { ...img, imageStatus: 'generating' as const, isGeneratingImage: true }
           : img
       ));
       
@@ -508,7 +560,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                           ...img, 
                           imageUrl: finalImageUrl,
                           isGeneratingImage: false,
-                          imageStatus: 'completed',
+                          imageStatus: 'completed' as const,
                           imageTaskId: undefined
                         }
                       : img
@@ -525,7 +577,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         imageUrl: finalImageUrl,
                       }),
                     }).catch(updateError => {
-                      console.error("Error updating image URL in database:", updateError);
                     });
                   }
                   
@@ -537,7 +588,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                 successCount++;
                 return true; // 成功，继续下一个
               } catch (uploadError) {
-                console.error("Error uploading image:", uploadError);
                 // 即使上传失败，也使用原始URL
                 setGeneratedImages(prev => prev.map(img => 
                   img.id === item.id 
@@ -545,7 +595,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         ...img, 
                         imageUrl: imageUrl,
                         isGeneratingImage: false,
-                        imageStatus: 'completed',
+                        imageStatus: 'completed' as const,
                         imageTaskId: undefined
                       }
                     : img
@@ -560,7 +610,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                   ? { 
                       ...img, 
                       isGeneratingImage: false,
-                      imageStatus: 'failed',
+                      imageStatus: 'failed' as const,
                       imageGenerationFailed: true,
                       imageTaskId: undefined
                     }
@@ -596,7 +646,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             });
           }
         } catch (error) {
-          console.error("Error polling image status:", error);
           // 出错后继续轮询，但间隔更长
           return new Promise<boolean>((resolve) => {
             setTimeout(async () => {
@@ -619,8 +668,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     // 所有图片处理完成后，扣除积分
     // 只要有至少一张图片成功生成，就扣除积分
     if (successCount > 0 && sceneId) {
-      console.log(`All images processed. Success: ${successCount}, Failed: ${failedCount}. Deducting credits...`);
-      
       // 扣除分镜积分（一次性扣除20积分）
       const deductResult = await deductStoryboardCredits({
         sceneId: sceneId,
@@ -628,14 +675,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       });
       
       if (!deductResult.success) {
-        console.error("Failed to deduct storyboard credits:", deductResult.error);
-        console.error("Deduct result:", deductResult);
         // 使用 setTimeout 延迟显示 alert，确保 UI 已经更新
         setTimeout(() => {
-          alert(`分镜生成成功，但积分扣除失败：${deductResult.error}。请联系客服处理。`);
+          alert(`Story script generated successfully, but credit deduction failed: ${deductResult.error}. Please contact support.`);
         }, 500);
       } else {
-        console.log("Storyboard credits deducted successfully:", deductResult);
         // 更新积分余额
         const updatedBalance = await checkCreditsBalance(0);
         if (updatedBalance.balance !== undefined) {
@@ -643,7 +687,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         }
       }
     } else if (successCount === 0) {
-      console.warn("No images were successfully generated, skipping credit deduction");
     }
   };
 
@@ -652,8 +695,8 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       alert("Please enter a description");
       return;
     }
-    if (formData.inputType === "image" && (!formData.startFrame || !formData.endFrame)) {
-      alert("Please upload start and end frames");
+    if (formData.inputType === "image" && !formData.startFrame) {
+      alert("Please upload start frame");
       return;
     }
 
@@ -713,8 +756,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         const result = await response.json();
         
         if (result.success && result.data) {
-          console.log("Received scene generation result:", result.data);
-          
           // 初始化所有分镜条目，第一个标记为生成中，其他为等待中
           const newImages: GeneratedImage[] = result.data.scenes.map((scene: any, index: number) => ({
             id: `img-${Date.now()}-${index}`,
@@ -732,12 +773,8 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             imageGenerationFailed: scene.imageGenerationFailed || false,
             sceneItemId: scene.sceneItemId,
             imageTaskId: scene.imageTaskId || null, // 图片生成任务ID
-            imageStatus: scene.imageUrl ? 'completed' : (index === 0 && scene.imageTaskId ? 'generating' : 'pending'), // 第一个为生成中，其他为等待中
+            imageStatus: scene.imageUrl ? ('completed' as const) : (index === 0 && scene.imageTaskId ? ('generating' as const) : ('pending' as const)), // 第一个为生成中，其他为等待中
           }));
-          
-          console.log("Setting generatedImages:", newImages.length, "scenes");
-          console.log("Current isGenerating:", isGenerating);
-          
           // 先设置图片数据，确保分镜预览区域能显示
           setGeneratedImages(newImages);
           
@@ -754,14 +791,10 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           }
           
           // 立即更新 isGenerating 状态，让分镜预览区域显示内容
-          console.log("Setting isGenerating to false");
           setIsGenerating(false);
           
           // 强制触发一次重新渲染，确保 UI 更新
           await new Promise(resolve => setTimeout(resolve, 0));
-          
-          console.log("After state update, checking if preview should show");
-          
           // 依次轮询每个图片的生成状态（一个完成后才开始下一个）
           // 使用 setTimeout 确保 state 已更新
           // 积分扣除将在所有图片生成完成后进行
@@ -773,17 +806,14 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           setTimeout(() => {
             const previewSection = document.getElementById('scene-preview-section');
             if (previewSection) {
-              console.log("Scrolling to preview section");
               previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             } else {
-              console.warn("Preview section not found");
             }
           }, 300);
         } else {
           throw new Error("Invalid response format");
         }
       } catch (error) {
-        console.error("Error generating scenes:", error);
         alert(error instanceof Error ? error.message : "Failed to generate scenes. Please try again.");
       } finally {
         setIsGenerating(false);
@@ -820,7 +850,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       try {
         // 检查积分余额
         const currentQuality = formData.quality || "480p";
-        const currentDuration = parseInt(formData.duration || "5");
+        const currentDuration = parseInt(formData.duration || "10");
         const resolution = currentQuality as '480p' | '720p' | '1080p';
         // 使用订阅计划相关的积分计算
         const requiredCredits = calculateVideoCredits(subscriptionPlan, resolution, currentDuration);
@@ -828,18 +858,31 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         const balanceCheck = await checkCreditsBalance(requiredCredits);
         
         if (!balanceCheck.sufficient) {
-          alert(`积分不足！生成 ${currentDuration}秒 ${currentQuality} 视频需要 ${requiredCredits} 积分，当前余额：${balanceCheck.balance || 0} 积分。请购买积分后再试。`);
+          setInsufficientCreditsData({
+            required: requiredCredits,
+            current: balanceCheck.balance || 0,
+            action: `generate ${currentDuration}s ${currentQuality} video`
+          });
+          setShowInsufficientCreditsDialog(true);
           setIsGenerating(false);
           return;
         }
         
         setTextToVideoProgress({
           status: 'generating',
-          message: '正在提交视频生成任务...'
+          message: 'Creating your video, please wait...'
         });
         
         // 自动切换到 My Creations tab
         setActiveTab('my-creations');
+        
+        // 滚动到 My Creations 位置
+        setTimeout(() => {
+          const myCreationsTab = document.querySelector('[value="my-creations"]');
+          if (myCreationsTab) {
+            myCreationsTab.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
 
         // 使用表单中选择框的默认参数
         const currentModel = formData.model || "2d"; // 默认值：2d
@@ -856,41 +899,33 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         };
         const stylePrompt = stylePrompts[currentModel] || "2D动画风格";
         
-        // 文生视频使用 wan2.5-t2v-preview 模型
-        const dashScopeModel = "wan2.5-t2v-preview";
+        // 使用Sora API生成视频（文生视频，不传图片）
+        // 根据分辨率和时长选择模型
+        const selectedModel = currentDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
         
-        // 映射分辨率到 size（文生视频使用 size 参数，格式：宽*高）
-        const sizeMap: Record<string, string> = {
-          "480p": "832*480",   // 16:9
-          "720p": "1280*720",  // 16:9
-          "1080p": "1920*1080", // 16:9
+        // 根据分辨率设置size
+        const resolutionMap: Record<string, string> = {
+          "480p": "1280x704",
+          "720p": "1280x704",
+          "1080p": "1920x1080",
         };
-        const dashScopeSize = sizeMap[currentQuality] || "832*480"; // 默认 480p
+        const size = resolutionMap[currentQuality] || "1280x704";
         
         // 映射时长（已在前面定义，直接使用）
         const duration = currentDuration; // currentDuration 已经是数字类型
         
-        console.log("Generating text-to-video with parameters:", {
-          model: currentModel,
-          dashScopeModel,
-          quality: currentQuality,
-          size: dashScopeSize,
-          duration,
-        });
-        
-        // 步骤1: 提交视频生成任务
-        const response = await fetch("/api/video/generate", {
+        // 步骤1: 提交视频生成任务（文生视频，不传imageUrl）
+        const response = await fetch("/api/video/generate-sora-video2", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             prompt: `${formData.textPrompt}，${stylePrompt}`, // 添加风格提示词
-            model: dashScopeModel,
-            size: dashScopeSize,
-            duration: duration,
-            promptExtend: true,
-            audio: true, // wan2.5-t2v-preview 默认开启自动配音
+            size: size,
+            seconds: duration,
+            model: selectedModel,
+            // 不传 imageUrl，表示文生视频
           }),
         });
 
@@ -904,11 +939,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
 
         setTextToVideoProgress({
           status: 'polling',
-          message: '视频生成中，请稍候...',
+          message: 'Creating your video, please wait...',
           taskId: taskId
         });
 
-        // 步骤2: 轮询视频生成状态（根据 DashScope 建议，间隔 15 秒）
+        // 步骤2: 轮询视频生成状态（Sora API，间隔 15 秒）
         const maxAttempts = 40; // 最多轮询 40 次（10分钟）
         const interval = 15000; // 15 秒间隔
         
@@ -916,170 +951,120 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           try {
             await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 0 : interval));
             
-            const statusResponse = await fetch(`/api/video/status?taskId=${taskId}`);
-            
-            // 检查 Content-Type 是否为 JSON
-            const contentType = statusResponse.headers.get("content-type");
-            const isJson = contentType && contentType.includes("application/json");
-            
+            const statusResponse = await fetch(`/api/video/status-sora-video2?taskId=${taskId}`);
             if (!statusResponse.ok) {
-              let errorMessage = `HTTP ${statusResponse.status}: ${statusResponse.statusText}`;
-              if (isJson) {
-                try {
-                  const errorData = await statusResponse.json();
-                  errorMessage = errorData.error || errorMessage;
-                } catch (e) {
-                  // 忽略 JSON 解析错误
-                }
-              } else {
-                try {
-                  const errorText = await statusResponse.text();
-                  if (errorText) errorMessage = errorText;
-                } catch (e) {
-                  // 忽略文本读取错误
-                }
-              }
-              throw new Error(errorMessage);
-            }
-
-            const statusResult = isJson ? await statusResponse.json() : {};
-            
-            if (!statusResult.success) {
-              throw new Error(statusResult.error || "Failed to get video status");
-            }
-
-            const status = statusResult.data?.status;
-            const videoUrl = statusResult.data?.output?.video_url;
-
-            if (status === "SUCCEEDED" && videoUrl) {
-              // 视频生成成功，先上传到存储，然后保存到数据库
+              let errorData: any = {};
+              const contentType = statusResponse.headers.get("content-type");
+              
               try {
-                // 扣除积分
-                const resolution = currentQuality as '480p' | '720p' | '1080p';
-                const deductResult = await deductVideoCredits(resolution, duration, {
-                  taskId,
-                  isTextToVideo: true,
-                  prompt: formData.textPrompt,
-                }, subscriptionPlan);
-                
-                if (!deductResult.success) {
-                  console.error("Failed to deduct credits:", deductResult.error);
-                  // 即使扣除失败，也继续处理视频，但记录错误
+                if (contentType && contentType.includes("application/json")) {
+                  errorData = await statusResponse.json();
+                } else {
+                  const text = await statusResponse.text();
+                  errorData = { raw: text };
                 }
-                
-                setTextToVideoProgress({
-                  status: 'polling',
-                  message: '正在上传视频到存储...',
-                  taskId: taskId
-                });
+              } catch (parseError) {
+                errorData = { parseError: String(parseError) };
+              }
+              
+              const errorMessage = errorData.error || errorData.message || `HTTP ${statusResponse.status}: ${statusResponse.statusText}`;
+              throw new Error(`Failed to get video status: ${errorMessage}`);
+            }
 
-                // 步骤1: 上传视频到 Supabase Storage
-                const uploadResponse = await fetch("/api/video/upload", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    videoUrl: videoUrl,
-                  }),
-                });
+            const statusResult = await statusResponse.json();
+            const status = statusResult.data;
 
-                if (!uploadResponse.ok) {
-                  const uploadError = await uploadResponse.json();
-                  throw new Error(uploadError.error || "Failed to upload video");
-                }
-
-                const uploadResult = await uploadResponse.json();
-                const storedVideoUrl = uploadResult.data.url;
-
-                // 步骤2: 保存视频信息到数据库
-                const statusData = statusResult.data;
-                const saveResponse = await fetch("/api/video/save", {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify({
-                    videoUrl: storedVideoUrl, // 使用上传后的 URL
-                    prompt: formData.textPrompt,
-                    resolution: dashScopeSize, // 文生视频使用 size 格式
-                    size: dashScopeSize, // 保存 size 格式
-                    taskId: taskId,
-                    requestId: statusData.requestId || statusResult.request_id,
-                    status: 'completed',
-                    submitTime: statusData.output?.submit_time,
-                    scheduledTime: statusData.output?.scheduled_time,
-                    endTime: statusData.output?.end_time,
-                    origPrompt: statusData.output?.orig_prompt,
-                    actualPrompt: statusData.output?.actual_prompt,
-                    duration: duration,
-                    videoCount: statusData.usage?.video_count || 1,
-                  }),
-                });
-
-                if (!saveResponse.ok) {
-                  const saveError = await saveResponse.json();
-                  console.error("Failed to save video:", saveError);
-                  // 即使保存失败，也显示视频（使用原始 URL）
-                }
-
-                setTextToVideoProgress({
-                  status: 'completed',
-                  message: '视频生成完成！',
-                  videoUrl: storedVideoUrl, // 使用上传后的 URL
-                  taskId: taskId
-                });
-                
-                // 将生成的视频添加到 My Creations 列表的最前面
-                setMyVideos(prev => {
-                  const newVideo = {
-                    url: storedVideoUrl,
-                    filename: `generated-${taskId}.mp4`,
-                    title: formData.textPrompt.length > 50 ? formData.textPrompt.substring(0, 50) + '...' : formData.textPrompt
-                  };
-                  // 检查是否已存在，避免重复添加
-                  const exists = prev.some(v => v.url === storedVideoUrl);
-                  if (exists) {
-                    return prev;
+            // Sora API返回的状态格式：status为"completed"或"SUCCEEDED"，url字段包含视频URL
+            if ((status.status === "completed" || status.status === "SUCCEEDED") && status.url) {
+              // 使用Sora API的下载接口上传到TOS
+              const downloadResponse = await fetch("/api/video/download-sora-video2", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  taskId: taskId,
+                  // 文生视频不需要 sceneItemId 和 shotNumber
+                }),
+              });
+              
+              if (!downloadResponse.ok) {
+                const downloadError = await downloadResponse.json();
+                throw new Error(downloadError.error || "Failed to download and upload video");
+              }
+              
+              const downloadResult = await downloadResponse.json();
+              const videoUrl = downloadResult.data.videoUrl;
+              
+              // 扣除积分
+              const resolution = currentQuality as '480p' | '720p' | '1080p';
+              const deductResult = await deductVideoCredits(resolution, duration, {
+                taskId,
+                isTextToVideo: true,
+                prompt: formData.textPrompt,
+              }, subscriptionPlan);
+              
+              if (!deductResult.success) {
+                // 即使扣除失败，也继续处理视频，但记录错误
+              } else {
+                // 实时更新积分余额
+                if (deductResult.newBalance !== undefined) {
+                  setCreditsBalance(deductResult.newBalance);
+                } else {
+                  // 如果API没有返回新余额，立即查询
+                  const updatedBalance = await checkCreditsBalance(0);
+                  if (updatedBalance.balance !== undefined) {
+                    setCreditsBalance(updatedBalance.balance);
                   }
-                  return [newVideo, ...prev].slice(0, 50); // 最多保留50个
-                });
-                
-                // 刷新 My Creations 列表（从数据库获取最新数据）
-                fetch('/api/videos/my-creations')
-                  .then((r) => r.json())
-                  .then((data) => {
-                    if (Array.isArray(data?.videos)) {
-                      setMyVideos(data.videos);
-                    }
-                  })
-                  .catch((error) => {
-                    console.error('Error refreshing my videos:', error);
-                  });
-                
-                // 如果当前不在 My Creations tab，切换到该 tab
-                if (activeTab !== 'my-creations') {
-                  setActiveTab('my-creations');
                 }
-                
-                setIsGenerating(false);
-                return;
-              } catch (error) {
-                console.error("Error uploading/saving video:", error);
-                // 如果上传失败，仍然显示原始视频 URL
-                setTextToVideoProgress({
-                  status: 'completed',
-                  message: '视频生成完成！（存储失败，使用临时链接）',
+                // 触发Header组件刷新积分（通过事件或直接调用）
+                window.dispatchEvent(new CustomEvent('creditsUpdated'));
+              }
+
+              // 保存视频信息到数据库
+              const saveResponse = await fetch("/api/video/save", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
                   videoUrl: videoUrl,
-                  taskId: taskId
-                });
-                
-                // 将生成的视频添加到 My Creations 列表的最前面（即使上传失败）
-                setMyVideos(prev => {
-                  const newVideo = {
-                    url: videoUrl,
-                    filename: `generated-${taskId}.mp4`,
-                    title: formData.textPrompt.length > 50 ? formData.textPrompt.substring(0, 50) + '...' : formData.textPrompt
+                  prompt: formData.textPrompt,
+                  resolution: size, // 使用Sora API的size格式
+                  size: size, // 保存 size 格式
+                  taskId: taskId,
+                  status: 'completed',
+                  duration: duration,
+                }),
+              });
+
+              if (!saveResponse.ok) {
+                const saveError = await saveResponse.json();
+                // 即使保存失败，也显示视频
+              }
+
+              setTextToVideoProgress({
+                status: 'completed',
+                message: 'Your video is ready!',
+                videoUrl: videoUrl,
+                taskId: taskId
+              });
+              
+              setIsGenerating(false);
+              
+              // 再次刷新积分余额，确保显示最新值
+              const finalBalance = await checkCreditsBalance(0);
+              if (finalBalance.balance !== undefined) {
+                setCreditsBalance(finalBalance.balance);
+                window.dispatchEvent(new CustomEvent('creditsUpdated'));
+              }
+              
+              // 将生成的视频添加到 My Creations 列表的最前面
+              setMyVideos(prev => {
+                const newVideo = {
+                  url: videoUrl,
+                  filename: `generated-${taskId}.mp4`,
+                  title: formData.textPrompt.length > 50 ? formData.textPrompt.substring(0, 50) + '...' : formData.textPrompt
                   };
                   // 检查是否已存在，避免重复添加
                   const exists = prev.some(v => v.url === videoUrl);
@@ -1098,7 +1083,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                     }
                   })
                   .catch((error) => {
-                    console.error('Error refreshing my videos:', error);
                   });
                 
                 // 如果当前不在 My Creations tab，切换到该 tab
@@ -1107,35 +1091,31 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                 }
                 
                 setIsGenerating(false);
-                return;
+                return; // 成功，退出轮询
+              } else if (status.status === "FAILED" || status.status === "CANCELED") {
+                // 视频生成失败或已取消
+                throw new Error(status.message || `Video generation ${status.status.toLowerCase()}`);
+              } else if (status.status === "UNKNOWN") {
+                // 任务不存在或状态未知
+                throw new Error("Video generation task not found or status unknown");
               }
-            }
-
-            if (status === "FAILED" || status === "CANCELED") {
-              const errorMsg = statusResult.data?.message || `Video generation ${status.toLowerCase()}`;
-              throw new Error(errorMsg);
-            }
-
-            if (status === "UNKNOWN") {
-              throw new Error("Video generation task not found or status unknown");
-            }
-
-            // 更新进度消息
-            const statusMessages: Record<string, string> = {
-              "PENDING": "任务排队中...",
-              "RUNNING": "视频生成中，请稍候...",
-            };
-            setTextToVideoProgress({
-              status: 'polling',
-              message: statusMessages[status] || "处理中...",
-              taskId: taskId
-            });
+              // 如果还在处理中（PENDING 或 RUNNING），继续轮询
+              
+              // 更新进度消息
+              const statusMessages: Record<string, string> = {
+                "PENDING": "任务排队中...",
+                "RUNNING": "视频生成中，请稍候...",
+              };
+              setTextToVideoProgress({
+                status: 'polling',
+                message: statusMessages[status.status] || "处理中...",
+                taskId: taskId
+              });
 
           } catch (error) {
-            console.error("Error polling video status:", error);
             setTextToVideoProgress({
               status: 'error',
-              message: error instanceof Error ? error.message : "视频生成失败",
+              message: error instanceof Error ? error.message : "Video generation failed",
               taskId: taskId
             });
             setIsGenerating(false);
@@ -1146,19 +1126,18 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         // 超时
         setTextToVideoProgress({
           status: 'error',
-          message: "视频生成超时，请重试",
+          message: "Video generation timed out, please try again",
           taskId: taskId
         });
         setIsGenerating(false);
 
       } catch (error) {
-        console.error("Error generating video:", error);
         setTextToVideoProgress({
           status: 'error',
-          message: error instanceof Error ? error.message : "视频生成失败，请重试"
+          message: error instanceof Error ? error.message : "Video generation failed, please try again"
         });
         setIsGenerating(false);
-        alert(error instanceof Error ? error.message : "视频生成失败，请重试");
+        alert(error instanceof Error ? error.message : "Video generation failed, please try again");
       }
     }
   };
@@ -1166,7 +1145,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
   const handleGenerateVideo = async (imageId: string) => {
     const imageItem = generatedImages.find(img => img.id === imageId);
     if (!imageItem || !imageItem.imageUrl) {
-      alert("请先上传或生成图片");
+      alert("Please upload or generate an image first");
       return;
     }
 
@@ -1180,7 +1159,12 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     const balanceCheck = await checkCreditsBalance(requiredCredits);
     
     if (!balanceCheck.sufficient) {
-      alert(`积分不足！生成 ${currentDuration}秒 ${currentQuality} 视频需要 ${requiredCredits} 积分，当前余额：${balanceCheck.balance || 0} 积分。请购买积分后再试。`);
+      setInsufficientCreditsData({
+        required: requiredCredits,
+        current: balanceCheck.balance || 0,
+        action: `generate ${currentDuration}s ${currentQuality} video`
+      });
+      setShowInsufficientCreditsDialog(true);
       return;
     }
 
@@ -1209,42 +1193,26 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
       };
       const stylePrompt = stylePrompts[currentModel] || "2D动画风格";
       
-      // DashScope API 统一使用 wan2.5-i2v-preview 模型
-      const dashScopeModel = "wan2.5-i2v-preview";
-      
-      // 映射分辨率（前端使用小写，API 需要大写）
+      // 使用Sora API生成视频
+      // 根据分辨率设置size（API 会根据 size 自动选择正确的模型）
       const resolutionMap: Record<string, string> = {
-        "480p": "480P",
-        "720p": "720P",
-        "1080p": "1080P",
+        "480p": "1280x704",
+        "720p": "1280x704",
+        "1080p": "1920x1080",
       };
-      const dashScopeResolution = resolutionMap[currentQuality] || "480P"; // 使用默认值 480P
+      const size = resolutionMap[currentQuality] || "1280x704";
       
-      // 映射时长（已在前面定义，直接使用）
-      const duration = currentDuration; // currentDuration 已经是数字类型
-      
-      console.log("Generating video with parameters:", {
-        model: currentModel,
-        dashScopeModel,
-        quality: currentQuality,
-        resolution: dashScopeResolution,
-        duration,
-      });
-      
-      const response = await fetch("/api/video/generate", {
+      const response = await fetch("/api/video/generate-sora-video2", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: `${imageItem.text || "动画视频"}，${stylePrompt}`, // 添加风格提示词
-          sceneDetail: imageItem.sceneDetail || "", // 传递画面描述
+          prompt: imageItem.text || "动画视频",
           imageUrl: imageItem.imageUrl,
-          model: dashScopeModel,
-          resolution: dashScopeResolution,
-          duration: duration,
-          promptExtend: true,
-          audio: true, // wan2.5-i2v-preview 默认开启自动配音
+          size: size,
+          seconds: currentDuration,
+          // 不传递 model，让 API 根据 size 自动选择（竖屏用 sora_video2，横屏用 sora_video2-landscape）
         }),
       });
 
@@ -1265,7 +1233,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           try {
             await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 0 : interval));
             
-            const statusResponse = await fetch(`/api/video/status?taskId=${taskId}`);
+            const statusResponse = await fetch(`/api/video/status-sora-video2?taskId=${taskId}`);
             if (!statusResponse.ok) {
               let errorData: any = {};
               const contentType = statusResponse.headers.get("content-type");
@@ -1282,23 +1250,33 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               }
               
               const errorMessage = errorData.error || errorData.message || `HTTP ${statusResponse.status}: ${statusResponse.statusText}`;
-              console.error("Video status API error:", {
-                status: statusResponse.status,
-                statusText: statusResponse.statusText,
-                error: errorMessage,
-                errorData: errorData,
-                url: `/api/video/status?taskId=${taskId}`,
-              });
               throw new Error(`Failed to get video status: ${errorMessage}`);
             }
 
             const statusResult = await statusResponse.json();
             const status = statusResult.data;
-            const requestId = status.requestId || statusResult.request_id; // 从响应中获取 request_id
 
-            if (status.status === "SUCCEEDED" && status.output?.video_url) {
-              // 视频生成成功
-              const videoUrl = status.output.video_url;
+            // Sora API返回的状态格式：status为"completed"或"SUCCEEDED"，url字段包含视频URL
+            if ((status.status === "completed" || status.status === "SUCCEEDED") && status.url) {
+              // 使用Sora API的下载接口上传到TOS
+              const downloadResponse = await fetch("/api/video/download-sora-video2", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  taskId: taskId,
+                  sceneItemId: imageItem.sceneItemId,
+                }),
+              });
+              
+              if (!downloadResponse.ok) {
+                const downloadError = await downloadResponse.json();
+                throw new Error(downloadError.error || "Failed to download and upload video");
+              }
+              
+              const downloadResult = await downloadResponse.json();
+              const videoUrl = downloadResult.data.videoUrl;
               
               // 扣除积分
               const resolution = currentQuality as '480p' | '720p' | '1080p';
@@ -1309,8 +1287,17 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               }, subscriptionPlan);
               
               if (!deductResult.success) {
-                console.error("Failed to deduct credits:", deductResult.error);
                 // 即使扣除失败，也继续保存视频，但记录错误
+              } else {
+                // 更新积分余额
+                if (deductResult.newBalance !== undefined) {
+                  setCreditsBalance(deductResult.newBalance);
+                } else {
+                  const updatedBalance = await checkCreditsBalance(0);
+                  if (updatedBalance.balance !== undefined) {
+                    setCreditsBalance(updatedBalance.balance);
+                  }
+                }
               }
             
               // 使用函数式更新确保获取最新状态
@@ -1341,7 +1328,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       imageUrl: currentImageItem.imageUrl,
                       resolution: "1080P",
                       taskId: taskId,
-                      requestId: requestId, // DashScope API 请求ID
                       status: "completed",
                       submitTime: status.output?.submit_time, // DashScope API 任务提交时间
                       scheduledTime: status.output?.scheduled_time, // DashScope API 任务计划执行时间
@@ -1353,7 +1339,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       sr: status.usage?.SR, // 采样率/分辨率
                     }),
                   }).catch(error => {
-                    console.error("Error saving video to database:", error);
                   });
                 }
 
@@ -1369,7 +1354,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             }
             // 如果还在处理中（PENDING 或 RUNNING），继续轮询
           } catch (error) {
-            console.error("Error polling video status:", error);
             // 如果是最后一次尝试，抛出错误
             if (attempt === maxAttempts - 1) {
               setGeneratedImages(prev => 
@@ -1379,7 +1363,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                     : img
                 )
               );
-              alert(error instanceof Error ? error.message : "视频生成超时，请重试");
+              alert(error instanceof Error ? error.message : "Video generation timeout, please try again");
               return;
             }
             // 否则继续轮询
@@ -1394,13 +1378,12 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               : img
           )
         );
-        alert("视频生成超时，请重试");
+        alert("Video generation timeout, please try again");
       };
 
       // 开始轮询（立即开始第一次查询）
       pollStatus();
     } catch (error) {
-      console.error("Error generating video:", error);
       setGeneratedImages(prev => 
         prev.map(img => 
           img.id === imageId 
@@ -1408,7 +1391,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             : img
         )
       );
-      alert(error instanceof Error ? error.message : "视频生成失败，请重试");
+      alert(error instanceof Error ? error.message : "Video generation failed, please try again");
     }
   };
 
@@ -1437,7 +1420,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           }),
         });
       } catch (error) {
-        console.error("Error updating text in database:", error);
       }
     }
   };
@@ -1466,7 +1448,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           }),
         });
       } catch (error) {
-        console.error("Error deleting image from database:", error);
       }
     }
   };
@@ -1520,8 +1501,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           });
         }
       } catch (error) {
-        console.error("Error uploading image:", error);
-        alert("图片上传失败，请重试");
+        alert("Image upload failed, please try again");
       }
     }
   };
@@ -1544,29 +1524,27 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
           method: "DELETE",
         });
       } catch (error) {
-        console.error("Error deleting video from database:", error);
       }
     }
   };
 
   const allModels = [
-    { value: "2d", label: "2D动画", description: "2D animated video style" },
-    { value: "3d", label: "3D动画", description: "3D animated video style" },
-    { value: "anime", label: "日本二次元", description: "Japanese anime style" },
-    { value: "clay", label: "粘土", description: "Clay animation style" },
-    { value: "comic", label: "美漫", description: "American comic style" },
-    { value: "cartoon", label: "动漫", description: "Cartoon animation style" },
-    { value: "cyberpunk", label: "赛博朋克", description: "Cyberpunk style" },
+    { value: "2d", label: "2D Animation", description: "2D animated video style" },
+    { value: "3d", label: "3D Animation", description: "3D animated video style" },
+    { value: "anime", label: "Anime", description: "Japanese anime style" },
+    { value: "clay", label: "Clay", description: "Clay animation style" },
+    { value: "comic", label: "Comic", description: "American comic style" },
+    { value: "cartoon", label: "Cartoon", description: "Cartoon animation style" },
+    { value: "cyberpunk", label: "Cyberpunk", description: "Cyberpunk style" },
   ];
 
-  // 根据订阅计划过滤动画风格
-  const models = allModels.filter(model => 
-    isAnimationStyleAllowed(subscriptionPlan, model.value)
-  );
+  // 移除风格限制，所有风格都可以选择
+  const models = allModels;
 
+  // 移除秒数限制，允许自定义时长
   const durations = [
-    { value: "5", label: "5s" },
-    { value: "10", label: "10s", requiresSubscription: true }
+    { value: "10", label: "10s" },
+    { value: "15", label: "15s" },
   ];
 
   const allQualities = [
@@ -1575,33 +1553,30 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
     { value: "1080p", label: "1080p", requiresSubscription: true }
   ];
 
-  // 根据订阅计划过滤分辨率
-  const qualities = allQualities.filter(quality => 
-    isResolutionAllowed(subscriptionPlan, quality.value as '480p' | '720p' | '1080p')
-  );
+  // 根据订阅计划过滤分辨率 - 只判断是否是高级订阅（pro 或 studio）来显示 1080p
+  const isPremiumSubscription = subscriptionPlan === 'pro' || subscriptionPlan === 'studio';
+  const qualities = allQualities.filter(quality => {
+    if (quality.value === '1080p') {
+      return isPremiumSubscription;
+    }
+    return true; // 480p 和 720p 所有人都可以使用
+  });
   
   // 检查当前选择是否被订阅计划支持
-  const isCurrentQualityAllowed = isResolutionAllowed(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p');
-  const isCurrentModelAllowed = isAnimationStyleAllowed(subscriptionPlan, formData.model);
+  const isCurrentQualityAllowed = formData.quality === '1080p' ? isPremiumSubscription : true;
+  const isCurrentModelAllowed = true; // 所有模型都可以使用（已移除风格限制）
   
-  // 获取需要升级的分辨率和动画风格
+  // 获取订阅计划名称
+  const planConfig = subscriptionPlan !== null ? getSubscriptionPlanConfig(subscriptionPlan) : null;
+  const planName = planConfig?.name || 'Free';
+  
+  // 获取需要升级的分辨率提示
   const getUpgradeMessage = () => {
     if (!isCurrentQualityAllowed) {
       if (subscriptionPlan === null) {
-        return `您需要订阅才能使用 ${formData.quality} 分辨率。请前往订阅页面选择套餐。`;
+        return `You need a Pro or Studio subscription to use ${formData.quality} resolution. Please go to the subscription page to choose a plan.`;
       }
-      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-      const allowedResolutions = planConfig.videoResolutions.join(' / ');
-      return `当前订阅计划（${planConfig.name}）仅支持 ${allowedResolutions} 分辨率。请升级套餐以使用 ${formData.quality} 分辨率。`;
-    }
-    if (!isCurrentModelAllowed) {
-      if (subscriptionPlan === null) {
-        const selectedModel = allModels.find(m => m.value === formData.model);
-        return `"${selectedModel?.label || formData.model}" 动画风格需要订阅才能使用。请前往订阅页面选择套餐。`;
-      }
-      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-      const selectedModel = allModels.find(m => m.value === formData.model);
-      return `当前订阅计划（${planConfig.name}）不支持 "${selectedModel?.label || formData.model}" 动画风格。请升级到 Pro 或 Studio 套餐以使用所有动画风格。`;
+      return `Your current subscription plan (${planName}) does not support ${formData.quality} resolution. Please upgrade to Pro or Studio plan to use ${formData.quality} resolution.`;
     }
     return null;
   };
@@ -1618,7 +1593,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             transition={{ duration: 0.5 }}
             className="text-2xl md:text-3xl font-bold text-white leading-tight"
           >
-            Create Your Video Idea with Animation AI Generator | Animaker AI
+            {pathname?.includes('image-to-video') 
+              ? 'Image-to-Video Animation Generator'
+              : isSceneMode 
+                ? 'AI Storyboard Generator'
+                : 'Text-to-Animation AI Generator'}
           </motion.h1>
           <motion.h2 
             initial={{ opacity: 0, y: 20 }}
@@ -1737,10 +1716,10 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="bg-gray-800 border-gray-700">
-                              <SelectItem value="儿童" className="text-white">儿童</SelectItem>
-                              <SelectItem value="青少年" className="text-white">青少年</SelectItem>
-                              <SelectItem value="成人" className="text-white">成人</SelectItem>
-                              <SelectItem value="全年龄" className="text-white">全年龄</SelectItem>
+                              <SelectItem value="Children" className="text-white">Children</SelectItem>
+                              <SelectItem value="Teen" className="text-white">Teen</SelectItem>
+                              <SelectItem value="Adult" className="text-white">Adult</SelectItem>
+                              <SelectItem value="All Ages" className="text-white">All Ages</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1757,7 +1736,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       {/* Start Frame */}
                       <div className="flex flex-col items-center gap-2">
                         <label className="text-sm font-medium text-gray-300">
-                          Start Frame
+                          Start Frame <span className="text-red-400">*</span>
                         </label>
                         {startFramePreview ? (
                           <div className="relative group h-12 w-12">
@@ -1808,7 +1787,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       {/* End Frame */}
                       <div className="flex flex-col items-center gap-2">
                         <label className="text-sm font-medium text-gray-300">
-                          End Frame
+                          End Frame <span className="text-gray-500 text-xs">(可选)</span>
                         </label>
                         {endFramePreview ? (
                           <div className="relative group h-12 w-12">
@@ -1865,9 +1844,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       className="min-h-[180px] w-full resize-none bg-gray-800 border-gray-700 text-white placeholder:text-gray-500 focus:border-blue-500"
                       rows={7}
                     />
-                    
-                    {/* 文生视频进度显示（非分镜模式） */}
-                    {formData.inputType === "text" && !isSceneMode && textToVideoProgress.status !== 'idle' && (
+                  </div>
+                )}
+
+                {/* Text-to-Video Progress Display (Non-Storyboard Mode) */}
+                {formData.inputType === "text" && !isSceneMode && textToVideoProgress.status !== 'idle' && (
                       <div className="mt-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
                         {textToVideoProgress.status === 'generating' && (
                           <div className="flex items-center gap-3">
@@ -1916,27 +1897,21 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                     setFailedVideoUrls(prev => new Set(prev).add(videoUrl));
                                   }
                                   
-                                  // 提取详细的错误信息
-                                  try {
-                                    const errorInfo = {
-                                      error: target.error ? {
-                                        code: target.error.code,
-                                        message: target.error.message,
-                                        name: target.error.name,
-                                      } : null,
-                                      networkState: target.networkState,
-                                      readyState: target.readyState,
-                                      src: videoUrl,
-                                      currentSrc: target.currentSrc,
+                                  // 静默处理视频错误 - 只标记为失败
+                                  // 仅在存在特定错误代码时记录
+                                  const error = target.error;
+                                  if (error && error.code !== null && error.code !== undefined) {
+                                    const errorMessages: Record<number, string> = {
+                                      1: 'MEDIA_ERR_ABORTED',
+                                      2: 'MEDIA_ERR_NETWORK',
+                                      3: 'MEDIA_ERR_DECODE',
+                                      4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
                                     };
-                                    console.error('Video load error:', errorInfo);
-                                  } catch (err) {
-                                    // 如果序列化失败，只记录基本信息
-                                    console.error('Video load error:', {
-                                      src: videoUrl,
-                                      networkState: target.networkState,
-                                      readyState: target.readyState,
-                                    });
+                                    
+                                    const errorType = errorMessages[error.code] || `Error code ${error.code}`;
+                                    // 仅记录网络和解码错误，忽略中止错误
+                                    if (error.code === 2 || error.code === 3) {
+                                    }
                                   }
                                 }}
                               >
@@ -1956,8 +1931,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         )}
                       </div>
                     )}
-                  </div>
-                )}
 
                 {/* Settings and Button */}
                 <div className="flex flex-col lg:flex-row gap-4 items-center">
@@ -1969,80 +1942,29 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.model}
                         onValueChange={(value) => {
-                          // 检查是否被订阅计划支持
-                          if (!isAnimationStyleAllowed(subscriptionPlan, value)) {
-                            if (subscriptionPlan === null) {
-                              // 用户没有订阅
-                              const selectedModel = allModels.find(m => m.value === value);
-                              alert(`"${selectedModel?.label || value}" 动画风格需要订阅才能使用。\n\n点击确定前往订阅页面。`);
-                              router.push('/pricing');
-                            } else {
-                              // 用户有订阅但计划不支持
-                              const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                              const selectedModel = allModels.find(m => m.value === value);
-                              alert(`当前订阅计划（${planConfig.name}）不支持 "${selectedModel?.label || value}" 动画风格。\n\n请升级到 Pro 或 Studio 套餐以使用所有动画风格。\n\n点击确定前往定价页面。`);
-                              router.push('/pricing');
-                            }
-                            return;
-                          }
+                          // 移除风格限制，所有风格都可以选择
                           setFormData(prev => ({ ...prev, model: value }));
                         }}
                       >
-                        <SelectTrigger className={`w-auto min-w-fit bg-transparent border-gray-700 text-white h-10 px-3 ${!isCurrentModelAllowed ? 'border-red-500' : ''}`}>
+                        <SelectTrigger className="w-auto min-w-fit bg-transparent border-gray-700 text-white h-10 px-3">
                           <SelectValue placeholder="Pick a style or mood for your animation">
                             {(() => {
                               const selectedModel = allModels.find(m => m.value === formData.model);
                               if (!selectedModel) return formData.model;
-                              return (
-                                <span className="flex items-center gap-2">
-                                  {selectedModel.label}
-                                  {!isCurrentModelAllowed && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(需订阅)</span>
-                                  )}
-                                  {!isCurrentModelAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-red-400 font-medium">(需升级)</span>
-                                  )}
-                                </span>
-                              );
+                              return selectedModel.label;
                             })()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
-                          {allModels.map((model) => {
-                            const isAllowed = isAnimationStyleAllowed(subscriptionPlan, model.value);
-                            const isDisabled = !isAllowed;
-                            return (
-                              <SelectItem 
-                                key={model.value} 
-                                value={model.value}
-                                disabled={isDisabled}
-                                className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
-                                onSelect={(e) => {
-                                  if (isDisabled) {
-                                    e.preventDefault();
-                                    if (subscriptionPlan === null) {
-                                      alert(`"${model.label}" 动画风格需要订阅才能使用。\n\n点击确定前往订阅页面。`);
-                                      router.push('/pricing');
-                                    } else {
-                                      const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                      alert(`当前订阅计划（${planConfig.name}）不支持 "${model.label}" 动画风格。\n\n请升级到 Pro 或 Studio 套餐以使用所有动画风格。\n\n点击确定前往定价页面。`);
-                                      router.push('/pricing');
-                                    }
-                                  }
-                                }}
-                              >
-                                <span className="flex items-center gap-2">
-                                  {model.label}
-                                  {!isAllowed && subscriptionPlan === null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
-                                  )}
-                                  {!isAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
-                                  )}
-                                </span>
-                              </SelectItem>
-                            );
-                          })}
+                          {allModels.map((model) => (
+                            <SelectItem 
+                              key={model.value} 
+                              value={model.value}
+                              className="text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A] data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]"
+                            >
+                              {model.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -2053,13 +1975,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.duration}
                         onValueChange={(value) => {
-                          const selectedDuration = durations.find(d => d.value === value);
-                          // 如果选择需要订阅的选项且用户没有订阅，跳转到订阅页
-                          if (selectedDuration?.requiresSubscription && subscriptionPlan === null) {
-                            alert('此功能需要订阅才能使用。\n\n点击确定前往订阅页面。');
-                            router.push('/pricing');
-                            return;
-                          }
+                          // 移除秒数限制，所有时长都可以选择
                           setFormData(prev => ({ ...prev, duration: value }));
                         }}
                       >
@@ -2068,45 +1984,23 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             {(() => {
                               const selectedDuration = durations.find(d => d.value === formData.duration);
                               if (!selectedDuration) return formData.duration;
-                              return (
-                                <span className="flex items-center gap-2">
-                                  {selectedDuration.label}
-                                  {selectedDuration.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(需订阅)</span>
-                                  )}
-                                  {selectedDuration.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                </span>
-                              );
+                              return selectedDuration.label;
                             })()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
                           {durations.map((duration) => {
-                            const isDisabled = duration.requiresSubscription && subscriptionPlan === null;
+                            const durationValue = parseInt(duration.value);
+                            const resolution = formData.quality as '480p' | '720p' | '1080p';
+                            const creditsForDuration = calculateVideoCredits(subscriptionPlan, resolution, durationValue);
                             return (
                               <SelectItem 
                                 key={duration.value} 
                                 value={duration.value}
-                                disabled={isDisabled}
-                                className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
-                                onSelect={(e) => {
-                                  if (isDisabled) {
-                                    e.preventDefault();
-                                    alert('此功能需要订阅才能使用。\n\n点击确定前往订阅页面。');
-                                    router.push('/pricing');
-                                  }
-                                }}
+                                className="text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A] data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]"
                               >
                                 <span className="flex items-center gap-2">
                                   {duration.label}
-                                  {duration.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
-                                  )}
-                                  {duration.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
                                 </span>
                               </SelectItem>
                             );
@@ -2121,19 +2015,13 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       <Select
                         value={formData.quality}
                         onValueChange={(value) => {
-                          const selectedQuality = allQualities.find(q => q.value === value);
-                          // 如果选择需要订阅的选项且用户没有订阅，跳转到订阅页
-                          if (selectedQuality?.requiresSubscription && subscriptionPlan === null) {
-                            alert('此功能需要订阅才能使用。\n\n点击确定前往订阅页面。');
-                            router.push('/pricing');
-                            return;
-                          }
-                          // 检查是否被订阅计划支持
-                          if (!isResolutionAllowed(subscriptionPlan, value as '480p' | '720p' | '1080p')) {
-                            const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                            const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                            alert(`当前订阅计划（${planConfig.name}）仅支持 ${allowedResolutions} 分辨率。\n\n请升级套餐以使用 ${value} 分辨率。\n\n点击确定前往定价页面。`);
-                            // 跳转到定价页面
+                          // 只检查 1080p 是否需要高级订阅
+                          if (value === '1080p' && !isPremiumSubscription) {
+                            if (subscriptionPlan === null) {
+                              alert('1080p resolution requires a Pro or Studio subscription.\n\nClick OK to go to the subscription page.');
+                            } else {
+                              alert(`Your current subscription plan (${planName}) does not support 1080p resolution.\n\nPlease upgrade to Pro or Studio plan to use 1080p resolution.\n\nClick OK to go to the pricing page.`);
+                            }
                             router.push('/pricing');
                             return;
                           }
@@ -2148,14 +2036,11 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               return (
                                 <span className="flex items-center gap-2">
                                   {selectedQuality.label}
-                                  {selectedQuality.requiresSubscription && subscriptionPlan === null && (
-                                    <span className="text-xs text-red-400 font-medium">(需订阅)</span>
+                                  {selectedQuality.value === '1080p' && !isPremiumSubscription && (
+                                    <span className="text-xs text-red-400 font-medium">(Pro/Studio only)</span>
                                   )}
-                                  {selectedQuality.requiresSubscription && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                  {!isCurrentQualityAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-red-400 font-medium">(需升级)</span>
+                                  {selectedQuality.value === '1080p' && isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">({planName})</span>
                                   )}
                                 </span>
                               );
@@ -2164,9 +2049,9 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         </SelectTrigger>
                         <SelectContent className="bg-gray-800 border-gray-700 text-white">
                           {allQualities.map((quality) => {
-                            const requiresSub = quality.requiresSubscription && subscriptionPlan === null;
-                            const isAllowed = isResolutionAllowed(subscriptionPlan, quality.value as '480p' | '720p' | '1080p');
-                            const isDisabled = requiresSub || !isAllowed;
+                            const is1080p = quality.value === '1080p';
+                            const isDisabled = is1080p && !isPremiumSubscription;
+                            
                             return (
                               <SelectItem 
                                 key={quality.value} 
@@ -2174,29 +2059,24 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                 disabled={isDisabled}
                                 className={`${isDisabled ? 'text-gray-600 opacity-50 cursor-not-allowed' : 'text-gray-500 data-[highlighted]:bg-transparent data-[state=checked]:text-[#FFDA2A]'} data-[state=checked]:bg-transparent data-[state=checked]:[&>span>svg]:text-[#FFDA2A]`}
                                 onSelect={(e) => {
-                                  if (requiresSub) {
+                                  if (isDisabled) {
                                     e.preventDefault();
-                                    alert('此功能需要订阅才能使用。\n\n点击确定前往订阅页面。');
-                                    router.push('/pricing');
-                                  } else if (!isAllowed) {
-                                    e.preventDefault();
-                                    const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                    const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                                    alert(`当前订阅计划（${planConfig.name}）仅支持 ${allowedResolutions} 分辨率。\n\n请升级套餐以使用 ${quality.value} 分辨率。\n\n点击确定前往定价页面。`);
+                                    if (subscriptionPlan === null) {
+                                      alert('1080p resolution requires a Pro or Studio subscription.\n\nClick OK to go to the subscription page.');
+                                    } else {
+                                      alert(`Your current subscription plan (${planName}) does not support 1080p resolution.\n\nPlease upgrade to Pro or Studio plan to use 1080p resolution.\n\nClick OK to go to the pricing page.`);
+                                    }
                                     router.push('/pricing');
                                   }
                                 }}
                               >
                                 <span className="flex items-center gap-2">
                                   {quality.label}
-                                  {requiresSub && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
+                                  {is1080p && !isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">(Pro/Studio only)</span>
                                   )}
-                                  {quality.requiresSubscription && subscriptionPlan !== null && isAllowed && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
-                                  )}
-                                  {!isAllowed && subscriptionPlan !== null && (
-                                    <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
+                                  {is1080p && isPremiumSubscription && (
+                                    <span className="text-xs text-[#FFDA2A] font-medium">({planName})</span>
                                   )}
                                 </span>
                               </SelectItem>
@@ -2235,7 +2115,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                       variant={undefined}
                       disabled={
                         (formData.inputType === "text" && !formData.textPrompt.trim()) ||
-                        (formData.inputType === "image" && (!formData.startFrame || !formData.endFrame)) ||
+                        (formData.inputType === "image" && !formData.startFrame) ||
                         isGenerating ||
                         !isCurrentQualityAllowed ||
                         !isCurrentModelAllowed
@@ -2248,7 +2128,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         e.currentTarget.style.setProperty('background-color', '#FFDA2A', 'important');
                         e.currentTarget.style.setProperty('background', '#FFDA2A', 'important');
                       }}
-                      className="w-full px-6 text-gray-900 font-semibold rounded-lg flex flex-row items-center justify-center gap-2 h-10 disabled:opacity-50 disabled:cursor-not-allowed !bg-[#FFDA2A] hover:!bg-[#FFDA2A] active:!bg-[#FFDA2A] focus:!bg-[#FFDA2A]"
+                      className="w-full px-4 text-gray-900 font-semibold rounded-lg flex flex-row items-center justify-center gap-2 h-8 disabled:opacity-50 disabled:cursor-not-allowed !bg-[#FFDA2A] hover:!bg-[#FFDA2A] active:!bg-[#FFDA2A] focus:!bg-[#FFDA2A]"
                     >
                       {isGenerating ? (
                         <>
@@ -2256,16 +2136,32 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             key="loading-spinner"
                             animate={{ rotate: 360 }}
                             transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                            className="w-6 h-6"
+                            className="w-4 h-4"
                           >
-                            <Sparkles className="w-6 h-6 text-gray-900" />
+                            <Sparkles className="w-4 h-4 text-gray-900" />
                           </motion.div>
-                          <span>{formData.inputType === "text" && isSceneMode ? '生成故事剧本中...' : '生成视频中...'}</span>
+                          <span className="text-xs">{formData.inputType === "text" && isSceneMode ? 'Generating story script...' : 'Generating video...'}</span>
                         </>
                       ) : (
                         <>
                           <Diamond className="w-5 h-5 text-gray-900" />
-                          <span>{formData.inputType === "text" && isSceneMode ? '生成故事剧本' : '生成视频'}</span>
+                          <span className="text-xs">
+                            {isGenerating && textToVideoProgress.status !== 'idle' 
+                              ? 'Generating...' 
+                              : formData.inputType === "text" && isSceneMode 
+                                ? 'Generate Story Script' 
+                                : 'Generate Video'}
+                            {!isGenerating && formData.inputType === "text" && !isSceneMode && (
+                              <span className="ml-2 text-xs opacity-90">
+                                {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "10"))}
+                              </span>
+                            )}
+                            {!isGenerating && formData.inputType === "image" && (
+                              <span className="ml-2 text-xs opacity-90">
+                                {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "10"))}
+                              </span>
+                            )}
+                          </span>
                         </>
                       )}
                     </Button>
@@ -2292,15 +2188,15 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                   >
                     <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                   </motion.div>
-                  <p className="text-gray-400 text-lg">生成中...</p>
+                  <p className="text-gray-400 text-lg">Generating...</p>
                 </div>
               </div>
             ) : generatedImages.length > 0 ? (
               // 只要有分镜数据就显示，即使图片还在生成中或生成失败
               <div className="space-y-8">
                 <div className="mb-6">
-                  <h3 className="text-xl font-semibold text-white mb-2">故事剧本预览</h3>
-                  <p className="text-sm text-gray-400">将文本描述生成对应的故事剧本，每个场景对应一段文本描述，点击"生成video"按钮可为每个场景生成动画视频</p>
+                  <h3 className="text-xl font-semibold text-white mb-2">Story Script Preview</h3>
+                  <p className="text-sm text-gray-400">Generate story scripts from text descriptions. Each scene corresponds to a text description. Click the "Generate Video" button to create animated videos for each scene.</p>
                 </div>
                 <AnimatePresence mode="popLayout">
                   {generatedImages.map((item, index) => {
@@ -2335,7 +2231,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             >
                               <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                             </motion.div>
-                            <span className="text-sm text-[#FFDA2A] font-medium">生成中...</span>
+                            <span className="text-sm text-[#FFDA2A] font-medium">Generating...</span>
                           </div>
                         )}
                         
@@ -2343,7 +2239,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {isPending && (
                           <div className="absolute inset-0 bg-black/40 rounded-xl flex flex-col items-center justify-center gap-2 z-40 pointer-events-none">
                             <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                            <span className="text-xs text-gray-400">等待中...</span>
+                            <span className="text-xs text-gray-400">Waiting...</span>
                           </div>
                         )}
                         
@@ -2352,7 +2248,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                           <div className="flex-shrink-0 flex flex-col items-center gap-3">
                             <div className="flex items-center justify-center gap-2">
                               <Info className="w-5 h-5 text-gray-400" />
-                              <span className="text-sm text-gray-300 font-medium">场景{item.sceneNumber}</span>
+                              <span className="text-sm text-gray-300 font-medium">Scene {item.sceneNumber}</span>
                             </div>
                             {/* 图片显示区域 */}
                             <div className="relative w-56 h-40">
@@ -2360,8 +2256,8 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                 // 生成失败状态
                                 <div className="relative w-full h-full border-2 border-dashed border-gray-600 rounded-lg flex flex-col items-center justify-center gap-2 bg-gray-800/50">
                                   <ImageIcon className="w-16 h-16 text-gray-600" />
-                                  <span className="text-xs text-gray-500 text-center px-2">图片生成失败</span>
-                                  <span className="text-xs text-gray-400 text-center px-2">可手动上传图片</span>
+                                  <span className="text-xs text-gray-500 text-center px-2">Image generation failed</span>
+                                  <span className="text-xs text-gray-400 text-center px-2">You can upload manually</span>
                                 </div>
                               ) : item.imageUrl ? (
                                 // 已完成状态 - 显示图片
@@ -2371,13 +2267,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                     alt={`场景${item.sceneNumber}: ${item.text}`}
                                     className="w-full h-full object-cover rounded-lg border-2 border-gray-700 group-hover:border-[#FFDA2A]/50 transition-all"
                                     onError={async (e) => {
-                                      console.error('Image load error for scene item:', {
-                                        id: item.id,
-                                        sceneNumber: item.sceneNumber,
-                                        imageUrl: item.imageUrl,
-                                        error: e,
-                                      });
-                                      
                                       // 如果图片加载失败，可能是预签名 URL 过期，尝试重新生成
                                       // 检查是否是 TOS URL（不依赖环境变量）
                                       const isTosUrl = item.imageUrl && (
@@ -2398,7 +2287,6 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                             }
                                           } catch (urlError) {
                                             // URL 解析失败，使用原始 URL
-                                            console.warn('Failed to parse URL:', urlError);
                                           }
                                           
                                           // 调用 API 获取新的预签名 URL
@@ -2415,28 +2303,21 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                                   ? { ...img, imageUrl: presignedResult.data.imageUrl }
                                                   : img
                                               ));
-                                              console.log('Updated image URL with new presigned URL');
                                             }
                                           }
                                         } catch (error) {
-                                          console.error('Error refreshing presigned URL:', error);
                                         }
                                       }
                                     }}
                                     onLoad={() => {
-                                      console.log('Image loaded successfully:', {
-                                        id: item.id,
-                                        sceneNumber: item.sceneNumber,
-                                        imageUrl: item.imageUrl,
-                                      });
                                     }}
                                   />
                                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-3">
-                                    <span className="text-white text-xs font-medium">预览图片</span>
+                                    <span className="text-white text-xs font-medium">Preview Image</span>
                                     <button
                                       onClick={() => handleDeleteImage(item.id)}
                                       className="bg-red-500/80 hover:bg-red-500 text-white p-1.5 rounded transition-colors"
-                                      title="删除图片"
+                                      title="Delete Image"
                                     >
                                       <X className="w-4 h-4" />
                                     </button>
@@ -2456,7 +2337,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                       }}
                                     />
                                     <ImageIcon className="w-8 h-8 text-gray-500 mb-2" />
-                                    <span className="text-xs text-gray-400">上传图片</span>
+                                    <span className="text-xs text-gray-400">Upload Image</span>
                                   </label>
                                 </div>
                               )}
@@ -2469,7 +2350,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {item.sceneTitle && (
                           <div>
                             <div className="mb-2">
-                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">场景标题</span>
+                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Scene Title</span>
                             </div>
                             <div className="bg-gray-900/50 border border-gray-700 rounded-md p-2 text-gray-200 text-sm font-medium">
                               {item.sceneTitle}
@@ -2480,13 +2361,13 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {/* 文案描述 */}
                         <div>
                           <div className="mb-3">
-                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">文案描述</span>
+                            <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Description</span>
                           </div>
                           <Textarea
                             value={item.text}
                             onChange={(e) => handleUpdateText(item.id, e.target.value)}
                             className="bg-gray-900/50 border-gray-700 text-gray-200 text-base leading-relaxed resize-none h-40 focus:border-[#FFDA2A]/50 focus:ring-[#FFDA2A]/20"
-                            placeholder="输入场景描述..."
+                            placeholder="Enter scene description..."
                           />
                         </div>
                         
@@ -2494,7 +2375,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {item.sceneDetail && (
                           <div>
                             <div className="mb-3">
-                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">画面描述</span>
+                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Visual Description</span>
                             </div>
                             <div className="bg-gray-900/50 border border-gray-700 rounded-md p-3 text-gray-300 text-sm leading-relaxed max-h-40 overflow-y-auto">
                               {item.sceneDetail}
@@ -2506,7 +2387,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {item.camera && (
                           <div>
                             <div className="mb-2">
-                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">镜头语言</span>
+                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Camera Language</span>
                             </div>
                             <div className="bg-gray-900/50 border border-gray-700 rounded-md p-2 text-gray-300 text-sm">
                               {item.camera}
@@ -2518,7 +2399,7 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {item.dialogue && item.dialogue.length > 0 && (
                           <div>
                             <div className="mb-2">
-                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">对白</span>
+                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Dialogue</span>
                             </div>
                             <div className="bg-gray-900/50 border border-gray-700 rounded-md p-3 text-gray-300 text-sm leading-relaxed">
                               {item.dialogue.map((line, idx) => (
@@ -2534,10 +2415,10 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                         {item.sceneDuration && (
                           <div>
                             <div className="mb-2">
-                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">持续时间</span>
+                              <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">Duration</span>
                             </div>
                             <div className="bg-gray-900/50 border border-gray-700 rounded-md p-2 text-gray-300 text-sm">
-                              {item.sceneDuration} 秒
+                              {item.sceneDuration} seconds
                             </div>
                           </div>
                         )}
@@ -2553,9 +2434,9 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               className="px-6 py-3 bg-[#FFDA2A] text-gray-900 font-semibold rounded-lg hover:bg-[#FFDA2A]/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg shadow-[#FFDA2A]/20 hover:shadow-[#FFDA2A]/30 flex items-center gap-2"
                               title={
                                 !item.imageUrl 
-                                  ? "请先上传或生成图片" 
+                                  ? "Please upload or generate an image first" 
                                   : hasGeneratingImages || !allImagesGenerated
-                                  ? "请等待所有图片生成完成"
+                                  ? "Please wait for all images to finish generating"
                                   : ""
                               }
                             >
@@ -2569,20 +2450,20 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                   >
                                     <Sparkles className="w-4 h-4 text-gray-900" />
                                   </motion.div>
-                                  <span>生成中...</span>
+                                  <span>Generating...</span>
                                 </>
                               ) : (
                                 <>
                                   <Video className="w-4 h-4" />
-                                  <span>生成video</span>
+                                  <span>Generate Video</span>
                                 </>
                               )}
                             </Button>
-                            <span className="text-xs text-gray-500 text-center">点击生成动画视频</span>
+                            <span className="text-xs text-gray-500 text-center">Click to generate animated video</span>
                           </div>
                         ) : (
                           <div className="flex flex-col items-center gap-2">
-                            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">结果视频</div>
+                            <div className="text-xs text-gray-500 font-medium uppercase tracking-wide mb-1">Result Video</div>
                             <div className="relative group">
                               <video
                                 controls
@@ -2596,27 +2477,21 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                                     setFailedVideoUrls(prev => new Set(prev).add(videoUrl));
                                   }
                                   
-                                  // 提取详细的错误信息
-                                  try {
-                                    const errorInfo = {
-                                      error: target.error ? {
-                                        code: target.error.code,
-                                        message: target.error.message,
-                                        name: target.error.name,
-                                      } : null,
-                                      networkState: target.networkState,
-                                      readyState: target.readyState,
-                                      src: videoUrl,
-                                      currentSrc: target.currentSrc,
+                                  // 静默处理视频错误 - 只标记为失败
+                                  // 仅在存在特定错误代码时记录
+                                  const error = target.error;
+                                  if (error && error.code !== null && error.code !== undefined) {
+                                    const errorMessages: Record<number, string> = {
+                                      1: 'MEDIA_ERR_ABORTED',
+                                      2: 'MEDIA_ERR_NETWORK',
+                                      3: 'MEDIA_ERR_DECODE',
+                                      4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
                                     };
-                                    console.error('Video load error:', errorInfo);
-                                  } catch (err) {
-                                    // 如果序列化失败，只记录基本信息
-                                    console.error('Video load error:', {
-                                      src: videoUrl,
-                                      networkState: target.networkState,
-                                      readyState: target.readyState,
-                                    });
+                                    
+                                    const errorType = errorMessages[error.code] || `Error code ${error.code}`;
+                                    // 仅记录网络和解码错误，忽略中止错误
+                                    if (error.code === 2 || error.code === 3) {
+                                    }
                                   }
                                 }}
                               >
@@ -2626,12 +2501,12 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                               <button
                                 onClick={() => handleDeleteVideo(item.id)}
                                 className="absolute top-2 right-2 bg-red-500/80 hover:bg-red-500 text-white p-1.5 rounded transition-colors z-10"
-                                title="删除视频"
+                                title="Delete Video"
                               >
                                 <X className="w-4 h-4" />
                               </button>
                               <div className="absolute top-2 left-2 bg-[#FFDA2A] text-gray-900 text-xs font-bold px-2 py-1 rounded">
-                                完成
+                                Complete
                               </div>
                             </div>
                           </div>
@@ -2647,9 +2522,9 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               <div className="flex flex-col items-center justify-center py-12">
                 <div className="text-center space-y-4">
                   <Info className="w-12 h-12 text-gray-500 mx-auto" />
-                  <h3 className="text-lg font-semibold text-white">故事剧本预览</h3>
+                  <h3 className="text-lg font-semibold text-white">Story Script Preview</h3>
                   <p className="text-sm text-gray-400 max-w-md">
-                    点击"生成故事剧本"按钮，系统将根据您的文本描述生成对应的故事剧本，自动生成多个场景图片
+                    Click the "Generate Story Script" button, and the system will generate a corresponding story script based on your text description, automatically creating multiple scene images.
                   </p>
                 </div>
               </div>
@@ -2717,54 +2592,21 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                           // 记录失败的视频URL
                           setFailedVideoUrls(prev => new Set(prev).add(videoUrl));
                           
-                          // 提取详细的错误信息
-                          try {
-                            const errorInfo: Record<string, any> = {
-                              src: videoUrl || 'unknown',
-                              currentSrc: target.currentSrc || 'none',
-                              networkState: target.networkState ?? 'unknown',
-                              readyState: target.readyState ?? 'unknown',
-                              videoWidth: target.videoWidth || 0,
-                              videoHeight: target.videoHeight || 0,
+                          // 静默处理视频错误 - 只标记为失败
+                          // 仅在存在特定错误代码时记录
+                          const error = target.error;
+                          if (error && error.code !== null && error.code !== undefined) {
+                            const errorMessages: Record<number, string> = {
+                              1: 'MEDIA_ERR_ABORTED',
+                              2: 'MEDIA_ERR_NETWORK',
+                              3: 'MEDIA_ERR_DECODE',
+                              4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
                             };
                             
-                            if (target.error) {
-                              try {
-                                errorInfo.error = {
-                                  code: target.error.code ?? 'unknown',
-                                  message: target.error.message || 'No error message',
-                                  name: target.error.name || 'UnknownError',
-                                };
-                                
-                                // Log error code meanings
-                                const errorMessages: Record<number, string> = {
-                                  1: 'MEDIA_ERR_ABORTED - The user aborted the loading',
-                                  2: 'MEDIA_ERR_NETWORK - A network error occurred',
-                                  3: 'MEDIA_ERR_DECODE - An error occurred while decoding',
-                                  4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - The video format is not supported'
-                                };
-                                
-                                if (target.error.code !== null && target.error.code !== undefined && errorMessages[target.error.code]) {
-                                  errorInfo.errorDescription = errorMessages[target.error.code];
-                                }
-                              } catch (err) {
-                                errorInfo.errorSerializationFailed = true;
-                                errorInfo.errorString = String(target.error);
-                              }
-                            } else {
-                              errorInfo.error = 'Unknown error (error object is null)';
+                            const errorType = errorMessages[error.code] || `Error code ${error.code}`;
+                            // 仅记录网络和解码错误，忽略中止错误
+                            if (error.code === 2 || error.code === 3) {
                             }
-                            
-                            console.error('Video load error:', JSON.stringify(errorInfo, null, 2));
-                          } catch (err) {
-                            // 如果序列化失败，只记录基本信息
-                            console.error('Video load error (fallback):', {
-                              src: videoUrl || 'unknown',
-                              networkState: target.networkState ?? 'unknown',
-                              readyState: target.readyState ?? 'unknown',
-                              currentSrc: target.currentSrc || 'none',
-                              serializationError: err instanceof Error ? err.message : String(err),
-                            });
                           }
                         }}
                       >
@@ -2800,31 +2642,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
             </div>
           </TabsContent>
           <TabsContent value="my-creations" className="mt-8">
-            {/* 非分镜模式下的生成状态显示 */}
+            {/* 非分镜模式下的生成状态显示 - 简化显示 */}
             {formData.inputType === "text" && !isSceneMode && textToVideoProgress.status !== 'idle' && (
-              <div className="mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                {textToVideoProgress.status === 'generating' && (
-                  <div className="flex items-center gap-3">
+              <div className="mb-6 p-6 bg-gray-800/50 rounded-lg border border-gray-700">
+                {(textToVideoProgress.status === 'generating' || textToVideoProgress.status === 'polling') && (
+                  <div className="flex flex-col items-center justify-center gap-4">
                     <motion.div
                       animate={{ rotate: 360 }}
                       transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="w-5 h-5"
+                      className="w-12 h-12"
                     >
-                      <Sparkles className="w-5 h-5 text-[#FFDA2A]" />
+                      <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                     </motion.div>
-                    <span className="text-gray-300">{textToVideoProgress.message}</span>
-                  </div>
-                )}
-                {textToVideoProgress.status === 'polling' && (
-                  <div className="flex items-center gap-3">
-                    <motion.div
-                      animate={{ rotate: 360 }}
-                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                      className="w-5 h-5"
-                    >
-                      <Sparkles className="w-5 h-5 text-[#FFDA2A]" />
-                    </motion.div>
-                    <span className="text-gray-300">{textToVideoProgress.message}</span>
+                    <span className="text-white text-lg font-medium">Video in production, please wait...</span>
                   </div>
                 )}
                 {textToVideoProgress.status === 'completed' && textToVideoProgress.videoUrl && (
@@ -2888,20 +2718,22 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             // 记录失败的视频URL
                             setFailedVideoUrls(prev => new Set(prev).add(videoUrl));
                             
-                            // 提取详细的错误信息
-                            const errorInfo = {
-                              error: target.error ? {
-                                code: target.error.code,
-                                message: target.error.message,
-                                name: target.error.name,
-                              } : null,
-                              networkState: target.networkState,
-                              readyState: target.readyState,
-                              src: videoUrl,
-                              currentSrc: target.currentSrc,
-                            };
-                            
-                            console.error('Video load error:', errorInfo);
+                            // 静默处理视频错误 - 只标记为失败
+                            // 仅在存在特定错误代码时记录
+                            const error = target.error;
+                            if (error && error.code !== null && error.code !== undefined) {
+                              const errorMessages: Record<number, string> = {
+                                1: 'MEDIA_ERR_ABORTED',
+                                2: 'MEDIA_ERR_NETWORK',
+                                3: 'MEDIA_ERR_DECODE',
+                                4: 'MEDIA_ERR_SRC_NOT_SUPPORTED'
+                              };
+                              
+                              const errorType = errorMessages[error.code] || `Error code ${error.code}`;
+                              // 仅记录网络和解码错误，忽略中止错误
+                              if (error.code === 2 || error.code === 3) {
+                              }
+                            }
                           }}
                         >
                           <source src={video.url} type="video/mp4" />
@@ -2923,6 +2755,17 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
                             </svg>
                           </div>
                         </div>
+                        {/* 下载按钮 */}
+                        <button
+                          className="absolute top-2 right-2 bg-gray-900/80 hover:bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDownloadVideo(video.url, video.filename);
+                          }}
+                          title="Download video"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
                         <div className="absolute bottom-2 left-2 bg-gray-900/70 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1 pointer-events-none">
                           <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                             <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
@@ -2982,13 +2825,19 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
               answer: "Creating anime-style art is easy with our tool. Start by describing your anime character or scene in the text input box. Be specific about what you want - mention things like 'anime style', 'manga character', or describe typical anime features like big eyes, colorful hair, or dramatic expressions. You can also use our scene generation feature to create multiple anime-style frames. Once you generate your images, you can then turn them into animated videos. The key is being descriptive in your prompts - the more details you give about the anime aesthetic you're going for, the better the results will be."
             },
             {
-              question: "如何制作 text to video 分镜？",
-              answer: "制作 text to video 分镜非常简单。首先，在 Text to Video 模式下输入您的场景描述，然后勾选'分镜'选项。点击'生成分镜'按钮后，系统会自动将您的文本按句子分段，为每个分镜生成对应的预览图片。您可以为每个分镜编辑文案、上传自定义图片，然后分别为每个分镜生成动画视频。这样可以让您更好地控制视频的每个场景，创作出更精细的动画作品。"
-            },
-            {
-              question: "分镜选项是干什么的？",
-              answer: "分镜选项是 Text to Video 模式下的一个功能开关。当您勾选'分镜'选项时，系统会将您的文本描述自动拆分成多个分镜，每个分镜对应一段文本和一张预览图片。这样您可以：1) 预览每个分镜的效果；2) 单独编辑每个分镜的文案和图片；3) 为每个分镜独立生成动画视频。如果不勾选分镜选项，系统会直接将整个文本描述生成一个完整的视频。分镜功能特别适合需要精细控制视频内容的创作者。"
-            }
+
+              Question: "How to create text-to-video storyboards?",
+              
+              Answer: "Creating text-to-video storyboards is very simple. First, enter your scene description in Text to Video mode, then check the 'Storyboard' option. After clicking the 'Generate Storyboard' button, the system will automatically divide your text into sentences and generate a corresponding preview image for each storyboard. You can edit the text and upload custom images for each storyboard, and then generate animated videos for each storyboard. This allows you to better control each scene in the video and create more refined animated works."
+              
+              },
+              
+              {
+              Question: "What is the storyboard option for?",
+              
+              Answer: "The storyboard option is a function switch in Text to Video mode. When you check the 'Storyboard' option, the system will automatically split your text description into multiple storyboards, each storyboard corresponding to a text and a preview image. This allows you to: 1) Preview the effect of each storyboard; 2) Edit the text and images of each storyboard individually; 3) Generates an independent animated video for each storyboard shot. If the storyboard option is not selected, the system will directly generate a complete video from the entire text description. The storyboard function is particularly suitable for creators who need precise control over the video content."
+              
+              }
           ].map((faq, index) => (
             <motion.div
               key={index}
@@ -3030,6 +2879,17 @@ export default function AnimationGeneratorForm({ isStoryboardMode = false }: Ani
         </div>
       </div>
       <Footer />
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

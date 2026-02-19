@@ -1,177 +1,228 @@
-# OpenCut UI 组件对比报告
+Video AI Music 网站 SEO 首页与结构布局分析文档
+1. 项目背景与目标
+产品核心能力
 
-## OpenCut 中的 UI 组件（共 58 个）
+AI 生成音乐（AI Music Generation）
 
-根据 `OpenCut-main/apps/web/src/components/ui` 目录：
+音乐 → 视频（Music to Video）
 
-1. accordion.tsx
-2. alert-dialog.tsx
-3. alert.tsx
-4. aspect-ratio.tsx
-5. audio-player.tsx
-6. avatar.tsx
-7. badge.tsx
-8. breadcrumb.tsx
-9. button.tsx ✅
-10. calendar.tsx
-11. card.tsx ✅
-12. carousel.tsx
-13. chart.tsx
-14. checkbox.tsx ✅
-15. collapsible.tsx
-16. color-picker.tsx ✅
-17. command.tsx
-18. context-menu.tsx ✅
-19. dialog.tsx ✅
-20. draggable-item.tsx (在 lib/opencut/components/ui/)
-21. drawer.tsx
-22. dropdown-menu.tsx ✅
-23. editable-timecode.tsx ✅
-24. font-picker.tsx ✅
-25. form.tsx
-26. hover-card.tsx
-27. image-timeline-treatment.tsx
-28. input-otp.tsx
-29. input-with-back.tsx ✅
-30. input.tsx ✅
-31. label.tsx ✅
-32. menubar.tsx
-33. navigation-menu.tsx
-34. pagination.tsx
-35. phone-input.tsx
-36. popover.tsx ✅
-37. progress.tsx ✅
-38. prose.tsx
-39. radio-group.tsx ✅
-40. resizable.tsx ✅
-41. scroll-area.tsx ✅
-42. select.tsx ✅
-43. separator.tsx ✅
-44. sheet.tsx ✅
-45. sidebar.tsx
-46. skeleton.tsx
-47. slider.tsx ✅
-48. sonner.tsx
-49. split-button.tsx ✅
-50. sponsor-button.tsx
-51. switch.tsx
-52. table.tsx
-53. tabs.tsx ✅
-54. textarea.tsx ✅
-55. toast.tsx ✅
-56. toaster.tsx
-57. toggle-group.tsx
-58. toggle.tsx
-59. tooltip.tsx ✅
-60. video-player.tsx
+人物对口型 / 唱歌视频（AI Lip Sync Music Video）
 
-## 项目中已有的 UI 组件（共 25 个）
+自动分镜 + 视频生成（≤15s 单段）
 
-根据 `components/ui` 目录：
+SEO 总目标
 
-1. button.tsx ✅
-2. card.tsx ✅
-3. checkbox.tsx ✅
-4. color-picker.tsx ✅
-5. context-menu.tsx ✅
-6. dialog.tsx ✅
-7. dropdown-menu.tsx ✅
-8. editable-timecode.tsx ✅
-9. font-picker.tsx ✅
-10. input-with-back.tsx ✅
-11. input.tsx ✅
-12. label.tsx ✅
-13. popover.tsx ✅
-14. progress.tsx ✅
-15. radio-group.tsx ✅
-16. resizable.tsx ✅
-17. scroll-area.tsx ✅
-18. select.tsx ✅
-19. separator.tsx ✅
-20. sheet.tsx ✅
-21. slider.tsx ✅
-22. split-button.tsx ✅
-23. tabs.tsx ✅
-24. textarea.tsx ✅
-25. tooltip.tsx ✅
-26. toast.tsx ✅ (项目中有 toast-notification.tsx)
+围绕 video ai music 构建品牌认知
 
-## 缺失的 UI 组件（共 33 个）
+通过 功能页 + 长尾词 实现持续自然流量
 
-以下组件在 OpenCut 中存在，但项目中还没有：
+推动可转化、高价值功能页（Lip Sync / Music Video）
 
-1. **accordion.tsx** - 手风琴组件
-2. **alert-dialog.tsx** - 警告对话框
-3. **alert.tsx** - 警告提示
-4. **aspect-ratio.tsx** - 宽高比组件（在 lib/opencut/components/ui/ 中）
-5. **audio-player.tsx** - 音频播放器
-6. **avatar.tsx** - 头像组件
-7. **badge.tsx** - 徽章组件
-8. **breadcrumb.tsx** - 面包屑导航
-9. **calendar.tsx** - 日历组件
-10. **carousel.tsx** - 轮播图
-11. **chart.tsx** - 图表组件
-12. **collapsible.tsx** - 可折叠组件
-13. **command.tsx** - 命令面板
-14. **drawer.tsx** - 抽屉组件
-15. **form.tsx** - 表单组件
-16. **hover-card.tsx** - 悬停卡片
-17. **image-timeline-treatment.tsx** - 图片时间线处理
-18. **input-otp.tsx** - OTP 输入
-19. **menubar.tsx** - 菜单栏
-20. **navigation-menu.tsx** - 导航菜单
-21. **pagination.tsx** - 分页组件
-22. **phone-input.tsx** - 电话输入
-23. **prose.tsx** - 散文样式
-24. **sidebar.tsx** - 侧边栏
-25. **skeleton.tsx** - 骨架屏
-26. **sonner.tsx** - Sonner toast 通知
-27. **sponsor-button.tsx** - 赞助按钮
-28. **switch.tsx** - 开关组件
-29. **table.tsx** - 表格组件
-30. **toaster.tsx** - Toast 容器
-31. **toggle-group.tsx** - 切换组
-32. **toggle.tsx** - 切换按钮
-33. **video-player.tsx** - 视频播放器
+2. 关键词「video ai music」的定位判断
+搜索意图分析（结论）
 
-## 当前 OpenCut 代码中实际使用的组件
+不是大流量词
 
-根据 `lib/opencut` 目录中的导入分析，以下组件是**实际被使用的**：
+是高意图工具搜索词
 
-✅ **已复制且在使用中：**
-- button.tsx
-- checkbox.tsx
-- color-picker.tsx
-- context-menu.tsx
-- dialog.tsx
-- dropdown-menu.tsx
-- editable-timecode.tsx
-- font-picker.tsx
-- input.tsx
-- input-with-back.tsx
-- label.tsx
-- popover.tsx
-- progress.tsx
-- resizable.tsx
-- scroll-area.tsx
-- select.tsx
-- separator.tsx
-- sheet.tsx
-- slider.tsx
-- split-button.tsx
-- tabs.tsx
-- textarea.tsx
-- tooltip.tsx
+搜索用户多为：
 
-## 建议
+内容创作者
 
-1. **优先复制实际使用的组件** - 当前所有被使用的组件都已复制 ✅
-2. **按需复制其他组件** - 如果后续功能需要，再复制其他组件
-3. **注意特殊组件** - `aspect-ratio.tsx` 和 `draggable-item.tsx` 在 `lib/opencut/components/ui/` 目录中，这是正确的
+音乐 / 视频制作者
 
-## 总结
+已清楚自己要「音乐 + 视频 + AI」
 
-✅ **所有 OpenCut 代码中实际使用的 UI 组件都已复制完成！**
+正确定位方式
 
-剩余未复制的组件都是 OpenCut 中定义但当前集成代码中未使用的组件。如果后续需要这些功能，可以按需复制。
+✅ video ai music = 品牌词 + 行业定义词
 
+错误用法（需避免）
+
+堆砌在标题 / 段落中
+
+首页重复出现 10+ 次
+
+多个页面抢同一个词
+
+3. 整站 SEO 结构策略（核心）
+总体原则
+
+首页 = 品牌 + 行业定义
+
+功能页 = 吃真实搜索量
+
+少而精准，而不是全堆在首页
+
+4. 页面结构推荐（核心执行方案）
+4.1 首页 /
+
+定位
+
+品牌入口
+
+定义什么是 video ai music
+
+SEO 策略
+
+用自然语言解释产品能力
+
+只出现 1–2 次「video ai music」
+
+Meta Title
+
+Create Music Videos with AI | Music to Video Generator
+
+Meta Description
+
+Generate original music and turn it into visually synced videos. Create AI-powered music videos with realistic vocal performance and style.
+
+4.2 AI 音乐生成页 /ai-music-generator
+
+主服务
+
+生成歌曲
+
+为视频服务的音乐
+
+关键词覆盖
+
+ai music generator
+
+generate music for video
+
+create original songs with AI
+
+H1
+
+AI Music Generator for Video & Creative Projects
+
+功能重点
+
+多风格
+
+节奏 / 氛围
+
+商用 / 内容创作
+
+4.3 AI 对口型视频页 /ai-lip-sync-video（重点盈利页）
+
+商业价值
+
+高 CPC
+
+强转化
+
+明确需求
+
+关键词覆盖
+
+ai lip sync
+
+singing character video
+
+vocal synced video
+
+music performance video
+
+H1
+
+AI Lip Sync Music Videos — Make Characters Sing
+
+功能说明
+
+音乐驱动嘴型
+
+情绪 / 强度匹配
+
+适合虚拟人物 / IP
+
+4.4 Music to Video 页面 /music-to-video
+
+搜索意图
+
+已有音乐
+
+想要视觉表达
+
+关键词覆盖
+
+music to video ai
+
+turn music into video
+
+ai music video generator
+
+H1
+
+Turn Music into Video with AI
+
+内容重点
+
+节奏可视化
+
+情绪驱动镜头
+
+适配短视频 / MV
+
+4.5 Use Cases 页面 /use-cases（可选）
+
+作用
+
+承接模糊搜索
+
+丰富语义
+
+H1
+
+Create AI Music Videos for Any Use Case
+
+子模块
+
+Music Promotion
+
+TikTok / Shorts
+
+Virtual Singer
+
+Demo Visualization
+
+5. 「video ai music」在页面中的正确用法
+✅ 推荐出现位置
+
+首页 Hero 文案
+
+Footer 品牌说明
+
+About 页面
+
+示例
+
+An all-in-one platform for video AI music creation
+We’re building tools for the future of video AI music.
+
+❌ 避免方式
+
+keyword stuffing
+
+强行拼接：
+
+video ai music generator
+
+video ai music online
+
+best video ai music tool
+
+6. 内容调性要求（避免 AI 味）
+
+不用「revolutionary」「ultimate」「next-gen」
+
+用 具体功能 + 使用场景
+
+写给「正在做视频的人」，而不是写给 Google
+
+7. SEO + 商业协同总结（一句话）
+
+用 video ai music 建立品牌认知
+用 Lip Sync / Music to Video 赚流量和钱
+用 功能页结构 让 Google 长期给曝光

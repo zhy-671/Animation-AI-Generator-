@@ -1,8 +1,81 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { headers } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCreemWebhookSignature, getCreemOrderStatus } from '@/lib/payment/creem';
-import { operateCredits } from '@/lib/supabase/customers';
-import type { CreamPaymentWebhook } from '@/lib/payment/types';
+import type { CreemWebhookEvent, CreamPaymentWebhook } from '@/lib/payment/types';
+
+const CREEM_WEBHOOK_SECRET = process.env.CREEM_WEBHOOK_SECRET;
+
+/**
+ * Webhook 专用的积分操作函数（不需要用户认证）
+ * 使用服务端权限客户端，直接操作数据库
+ */
+async function operateCreditsForWebhook(params: {
+  customerId: string;
+  amount: number;
+  type: 'add' | 'subtract';
+  description: string;
+  metadata?: Record<string, any>;
+}): Promise<{ success: boolean; error?: string }> {
+  const serviceClient = createServiceClient();
+
+  // 获取客户信息
+  const { data: customer, error: customerError } = await serviceClient
+    .from('anim_customers')
+    .select('*')
+    .eq('id', params.customerId)
+    .single();
+
+  if (customerError || !customer) {
+    return { success: false, error: `Customer not found: ${customerError?.message || 'Unknown error'}` };
+  }
+
+  // 检查积分是否足够（如果是扣除操作）
+  if (params.type === 'subtract' && customer.credits < params.amount) {
+    return { success: false, error: 'Insufficient credits' };
+  }
+
+  // 计算新积分
+  const newCredits = params.type === 'add' 
+    ? customer.credits + params.amount
+    : customer.credits - params.amount;
+
+  // 更新积分
+  const { error: updateError } = await serviceClient
+    .from('anim_customers')
+    .update({ credits: newCredits })
+    .eq('id', customer.id);
+
+  if (updateError) {
+    return { success: false, error: updateError.message };
+  }
+
+  // 记录积分历史（包含完整的 metadata，包括 creem_order_id）
+  const { error: historyError } = await serviceClient
+    .from('anim_credits_history')
+    .insert({
+      customer_id: customer.id,
+      amount: params.amount,
+      type: params.type,
+      description: params.description || null,
+      metadata: params.metadata || {}, // 包含 creem_order_id, order_id 等关联信息
+    });
+
+  if (historyError) {
+    // 如果历史记录失败，回滚积分更新
+    await serviceClient
+      .from('anim_customers')
+      .update({ credits: customer.credits })
+      .eq('id', customer.id);
+    
+    return { 
+      success: false, 
+      error: `Failed to record credits history: ${historyError.message}` 
+    };
+  }
+  return { success: true };
+}
 
 /**
  * Cream支付Webhook回调处理
@@ -16,278 +89,618 @@ import type { CreamPaymentWebhook } from '@/lib/payment/types';
  * 5. 订单存在性验证
  */
 export async function POST(request: NextRequest) {
+  let body = '';
+  
   try {
-    const supabase = await createClient();
-    
-    // 🔒 安全措施1: 获取原始请求体（用于签名验证）
-    const rawBody = await request.text();
-    const signature = request.headers.get('x-creem-signature') || '';
-    const creemIp = request.headers.get('x-forwarded-for') || '';
+    body = await request.text();
 
-    // 🔒 安全措施2: 验证webhook签名（必须通过）
-    if (!verifyCreemWebhookSignature(rawBody, signature)) {
-      console.error('Invalid webhook signature', {
-        ip: creemIp,
-        signature: signature.substring(0, 20) + '...',
-        timestamp: new Date().toISOString(),
-      });
+    // Validate body is not empty
+    if (!body || body.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Invalid signature' },
+        { error: 'Empty request body' },
+        { status: 400 }
+      );
+    }
+
+    // Read signature header (support common casings)
+    const h = await headers();
+    const signature =
+      h.get('creem-signature') ||
+      h.get('Creem-Signature') ||
+      h.get('CREEM-SIGNATURE') ||
+      h.get('x-creem-signature') ||
+      h.get('x-signature') ||
+      '';
+
+    if (!CREEM_WEBHOOK_SECRET) {
+      return NextResponse.json(
+        { error: 'Server misconfiguration: CREEM_WEBHOOK_SECRET is not set' },
+        { status: 500 }
+      );
+    }
+
+    // Verify the webhook signature
+    if (!signature) {
+      return NextResponse.json(
+        { error: 'Missing signature header' },
         { status: 401 }
       );
     }
 
-    // 解析webhook数据
-    let webhookData: CreamPaymentWebhook;
+    const isValid = verifyCreemWebhookSignature(body, signature, CREEM_WEBHOOK_SECRET);
+    if (!isValid) {
+      return NextResponse.json(
+        { error: 'Invalid signature' },
+        { status: 401 }
+      );
+    }
+    // Parse JSON with error handling
+    let event: CreemWebhookEvent;
     try {
-      webhookData = JSON.parse(rawBody);
-    } catch (error) {
+      event = JSON.parse(body) as CreemWebhookEvent;
+    } catch (parseError) {
+      const errorMsg = parseError instanceof Error ? parseError.message : 'Unknown parse error';
       return NextResponse.json(
-        { success: false, error: 'Invalid JSON payload' },
+        { 
+          error: 'Invalid JSON body',
+          details: errorMsg
+        },
         { status: 400 }
       );
     }
 
-    const { order_id, payment_id, status, amount, payment_method, metadata } = webhookData;
-
-    // 🔒 安全措施3: 查找订单（使用creem_order_id）
-    const { data: order, error: orderError } = await supabase
-      .from('payment_orders')
-      .select('*, anim_customers!inner(user_id)')
-      .eq('creem_order_id', order_id)
-      .single();
-
-    if (orderError || !order) {
-      console.error('Order not found:', {
-        creem_order_id: order_id,
-        error: orderError,
-        ip: creemIp,
-      });
+    // Validate event structure
+    if (!event || !event.eventType) {
       return NextResponse.json(
-        { success: false, error: 'Order not found' },
-        { status: 404 }
-      );
-    }
-
-    // 🔒 安全措施4: 验证订单金额是否匹配
-    const orderAmount = parseFloat(order.amount.toString());
-    const webhookAmount = parseFloat(amount.toString());
-    const amountDifference = Math.abs(orderAmount - webhookAmount);
-    
-    // 允许0.01的误差（浮点数精度问题）
-    if (amountDifference > 0.01) {
-      console.error('Amount mismatch:', {
-        order_id: order.id,
-        order_amount: orderAmount,
-        webhook_amount: webhookAmount,
-        difference: amountDifference,
-        ip: creemIp,
-      });
-      return NextResponse.json(
-        { success: false, error: 'Amount mismatch' },
+        { error: 'Invalid event structure: missing eventType' },
         { status: 400 }
       );
     }
 
-    // 🔒 安全措施5: 幂等性检查 - 如果订单已经完成，避免重复处理
-    if (order.status === 'completed') {
-      // 验证是否已经添加过积分
-      const { data: existingHistory } = await supabase
-        .from('anim_credits_history')
-        .select('id')
-        .eq('customer_id', order.customer_id)
-        .eq('type', 'add')
-        .eq('amount', order.credits_amount)
-        .contains('metadata', { order_id: order.id })
-        .limit(1);
-
-      if (existingHistory && existingHistory.length > 0) {
-        console.log('Order already processed, skipping:', {
-          order_id: order.id,
-          creem_order_id: order_id,
-        });
-        return NextResponse.json({
-          success: true,
-          message: 'Order already processed',
-        });
+    // Log received event for debugging
+    // Handle different event types with error handling
+    try {
+      switch (event.eventType) {
+        case 'checkout.completed':
+          await handleCheckoutCompleted(event);
+          break;
+        case 'subscription.active':
+          await handleSubscriptionActive(event);
+          break;
+        case 'subscription.paid':
+          await handleSubscriptionPaid(event);
+          break;
+        case 'subscription.canceled':
+          await handleSubscriptionCanceled(event);
+          break;
+        case 'subscription.expired':
+          await handleSubscriptionExpired(event);
+          break;
+        default:
       }
+    } catch (handlerError) {
+      throw handlerError; // Re-throw to be caught by outer catch
     }
 
-    // 🔒 安全措施6: 验证订单状态（只处理pending或processing状态的订单）
-    if (order.status !== 'pending' && order.status !== 'processing') {
-      console.warn('Order status is not pending or processing:', {
-        order_id: order.id,
-        current_status: order.status,
-        webhook_status: status,
-      });
-    }
-
-    // 🔒 安全措施7: 可选 - 向Cream API验证订单状态（双重验证）
-    if (order.creem_order_id) {
-      const creemStatusCheck = await getCreemOrderStatus(order.creem_order_id);
-      if (creemStatusCheck.success && creemStatusCheck.status !== 'completed' && status === 'success') {
-        console.warn('Cream API status does not match webhook status:', {
-          order_id: order.id,
-          creem_status: creemStatusCheck.status,
-          webhook_status: status,
-        });
-        // 可以选择拒绝或记录警告
-      }
-    }
-
-    // 根据支付状态处理
-    if (status === 'success') {
-      // 🔒 安全措施8: 使用事务更新订单状态和积分
-      // 支付成功，更新订单状态
-      const { error: updateError } = await supabase
-        .from('payment_orders')
-        .update({
-          status: 'completed',
-          creem_payment_id: payment_id,
-          payment_method: payment_method || null,
-          completed_at: new Date().toISOString(),
-          metadata: {
-            ...order.metadata,
-            payment_id,
-            payment_method,
-            webhook_data: webhookData,
-            webhook_ip: creemIp,
-            processed_at: new Date().toISOString(),
-          },
-        })
-        .eq('id', order.id)
-        .eq('status', order.status); // 确保状态没有改变
-
-      if (updateError) {
-        console.error('Error updating order:', updateError);
-        return NextResponse.json(
-          { success: false, error: 'Failed to update order' },
-          { status: 500 }
-        );
-      }
-
-      // 🔒 安全措施9: 验证积分数量
-      if (!order.credits_amount || order.credits_amount <= 0) {
-        console.error('Invalid credits amount in order:', {
-          order_id: order.id,
-          credits_amount: order.credits_amount,
-        });
-        return NextResponse.json(
-          { success: false, error: 'Invalid credits amount' },
-          { status: 400 }
-        );
-      }
-
-      // 根据订单类型处理积分和订阅
-      if (order.order_type === 'subscription') {
-        // 订阅成功：增加积分并更新订阅计划
-        const creditResult = await operateCredits({
-          customerId: order.customer_id,
-          amount: order.credits_amount,
-          type: 'add',
-          description: `Subscription: ${order.plan_name} Plan - Monthly credits`,
-          metadata: {
-            order_id: order.id,
-            plan_name: order.plan_name,
-            payment_id,
-            creem_order_id: order_id,
-            type: 'subscription',
-            webhook_verified: true,
-          },
-        });
-
-        if (!creditResult.success) {
-          console.error('Error adding subscription credits:', creditResult.error);
-          // 回滚订单状态
-          await supabase
-            .from('payment_orders')
-            .update({ status: 'processing' })
-            .eq('id', order.id);
-          return NextResponse.json(
-            { success: false, error: 'Failed to add credits' },
-            { status: 500 }
-          );
-        }
-
-        // 更新用户的订阅计划
-        if (order.plan_name) {
-          const expiresAt = new Date();
-          expiresAt.setMonth(expiresAt.getMonth() + 1); // 订阅1个月
-
-          await supabase
-            .from('anim_customers')
-            .update({
-              subscription_plan: order.plan_name,
-              subscription_expires_at: expiresAt.toISOString(),
-            })
-            .eq('id', order.customer_id);
-        }
-      } else if (order.order_type === 'credits') {
-        // 购买积分成功：增加积分
-        const creditResult = await operateCredits({
-          customerId: order.customer_id,
-          amount: order.credits_amount,
-          type: 'add',
-          description: `Credit Purchase: ${order.credit_package_name}`,
-          metadata: {
-            order_id: order.id,
-            credit_package_name: order.credit_package_name,
-            payment_id,
-            creem_order_id: order_id,
-            type: 'credit_purchase',
-            webhook_verified: true,
-          },
-        });
-
-        if (!creditResult.success) {
-          console.error('Error adding purchase credits:', creditResult.error);
-          // 回滚订单状态
-          await supabase
-            .from('payment_orders')
-            .update({ status: 'processing' })
-            .eq('id', order.id);
-          return NextResponse.json(
-            { success: false, error: 'Failed to add credits' },
-            { status: 500 }
-          );
-        }
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: 'Payment processed successfully',
-      });
-    } else if (status === 'failed' || status === 'cancelled') {
-      // 支付失败或取消，更新订单状态
-      await supabase
-        .from('payment_orders')
-        .update({
-          status: status === 'failed' ? 'failed' : 'cancelled',
-          creem_payment_id: payment_id,
-          metadata: {
-            ...order.metadata,
-            payment_id,
-            webhook_data: webhookData,
-            webhook_ip: creemIp,
-          },
-        })
-        .eq('id', order.id);
-
-      return NextResponse.json({
-        success: true,
-        message: `Payment ${status}`,
-      });
-    }
-
-    return NextResponse.json({
-      success: true,
-      message: 'Webhook received',
+    return NextResponse.json({ 
+      received: true,
+      eventType: event.eventType,
+      processed: true 
     });
   } catch (error) {
-    console.error('Error in POST /api/payment/webhook:', error);
+    // Return more specific error information
+    let errorMessage = 'Unknown error';
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+    
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { 
+        error: 'Webhook processing failed', 
+        details: errorMessage,
+        timestamp: new Date().toISOString()
+      },
       { status: 500 }
     );
+  }
+}
+
+/**
+ * 提取 metadata（支持多种位置和命名）
+ */
+function extractMetadata(checkout: CreemWebhookEvent['object']): Record<string, any> {
+  // 支持多种 metadata 位置和命名（metadata 和 metaData）
+  const metadata: Record<string, any> = {};
+  
+  // checkout.metadata
+  if (checkout.metadata) {
+    Object.assign(metadata, checkout.metadata);
+  }
+  if ((checkout as any).metaData) {
+    Object.assign(metadata, (checkout as any).metaData);
+  }
+  
+  // checkout.order.metadata (需要类型断言，因为类型定义中可能没有)
+  if (checkout.order) {
+    const order = checkout.order as any;
+    if (order.metadata) {
+      Object.assign(metadata, order.metadata);
+    }
+    if (order.metaData) {
+      Object.assign(metadata, order.metaData);
+    }
+  }
+  
+  // checkout.subscription.metadata
+  if (checkout.subscription?.metadata) {
+    Object.assign(metadata, checkout.subscription.metadata);
+  }
+  if ((checkout.subscription as any)?.metaData) {
+    Object.assign(metadata, (checkout.subscription as any).metaData);
+  }
+  
+  return metadata;
+}
+
+/**
+ * 处理 checkout.completed 事件
+ */
+async function handleCheckoutCompleted(event: CreemWebhookEvent) {
+  const checkout = event.object;
+  const supabase = await createClient();
+
+  // Validate checkout object
+  if (!checkout || !checkout.id) {
+    throw new Error('Invalid checkout object: missing id');
+  }
+
+  // Validate order exists and is paid
+  if (!checkout.order) {
+    throw new Error('Order object is missing in checkout');
+  }
+
+  // Only process if order status is "paid"
+  if (checkout.order.status !== 'paid') {
+    return; // Don't throw error, just skip processing
+  }
+
+  // Extract metadata from all possible locations
+  const metadata = extractMetadata(checkout);
+  // Get user_id from metadata
+  const userId = metadata.user_id;
+  if (!userId) {
+    throw new Error('user_id is required in checkout metadata');
+  }
+
+  // Get product_type from metadata, or infer from order.type
+  let productType = metadata.product_type;
+  
+  if (!productType && checkout.order) {
+    if (checkout.order.type === 'recurring') {
+      productType = 'subscription';
+    } else if (checkout.order.type === 'one-time') {
+      productType = 'credits';
+    } else {
+      throw new Error('product_type is required in checkout metadata or order.type must be "recurring" or "one-time"');
+    }
+  }
+  // Get customer_id from metadata or find by user_id
+  let customerId: string;
+  if (metadata.customer_id) {
+    customerId = metadata.customer_id;
+  } else {
+    // Find customer by user_id
+    const { data: customer, error: customerError } = await supabase
+      .from('anim_customers')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+    
+    if (customerError || !customer) {
+      throw new Error(`Customer not found for user_id: ${userId}`);
+    }
+    customerId = customer.id;
+  }
+
+  // 查找订单：优先使用 Creem 的真实订单 ID (checkout.order.id)
+  const creemOrderId = checkout.order.id; // 这是 Creem 的真实订单 ID
+  let order = null;
+
+  // 方式1: 使用 Creem 的真实订单 ID 查找
+  if (creemOrderId) {
+    const { data, error } = await supabase
+      .from('payment_orders')
+      .select('*, anim_customers!inner(user_id)')
+      .eq('creem_order_id', creemOrderId)
+      .single();
+    
+    if (data) {
+      order = data;
+    } else {
+    }
+  }
+
+  // 方式2: 使用 metadata.order_id 查找（我们自己的订单ID）
+  if (!order && metadata.order_id) {
+    const { data, error } = await supabase
+      .from('payment_orders')
+      .select('*, anim_customers!inner(user_id)')
+      .eq('id', metadata.order_id)
+      .single();
+    
+    if (data) {
+      order = data;
+    }
+  }
+
+  // 方式3: 使用 checkout_id 查找
+  if (!order) {
+    const { data, error } = await supabase
+      .from('payment_orders')
+      .select('*, anim_customers!inner(user_id)')
+      .contains('metadata', { checkout_id: checkout.id })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (data) {
+      order = data;
+    }
+  }
+
+  // 如果找不到订单，记录警告但继续处理（可能订单记录丢失）
+  if (!order) {
+  }
+
+  // 更新或创建订单记录
+  if (order) {
+    // 更新订单状态和 creem_order_id
+    const { error: updateError } = await supabase
+      .from('payment_orders')
+      .update({
+        status: 'completed',
+        creem_order_id: creemOrderId, // 使用 Creem 的真实订单 ID
+        creem_payment_id: checkout.order.transaction || creemOrderId,
+        completed_at: new Date().toISOString(),
+        metadata: {
+          ...order.metadata,
+          creem_order_id: creemOrderId,
+          payment_id: checkout.order.transaction || creemOrderId,
+          subscription_id: checkout.subscription?.id,
+          processed_at: new Date().toISOString(),
+        },
+      })
+      .eq('id', order.id);
+
+    if (updateError) {
+    } else {
+    }
+  }
+
+  // Handle credit purchases
+  if (productType === 'credits') {
+    // Get credits from metadata
+    const creditsRaw = metadata.credits;
+    const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
+    if (!credits || credits <= 0) {
+      throw new Error(`Invalid credits amount: ${creditsRaw}`);
+    }
+
+    // Add credits (使用 webhook 专用函数，不需要用户认证)
+    const creditResult = await operateCreditsForWebhook({
+      customerId: customerId,
+      amount: credits,
+      type: 'add',
+      description: `Credit Purchase: ${metadata.credit_package_name || 'Credits'}`,
+      metadata: {
+        creem_order_id: creemOrderId, // Creem 的真实订单 ID，用于关联
+        order_id: order?.id, // 我们自己的订单 ID，用于关联
+        credit_package_name: metadata.credit_package_name,
+        payment_id: checkout.order.transaction || creemOrderId,
+        checkout_id: checkout.id, // Checkout ID
+        type: 'credit_purchase',
+        webhook_verified: true,
+        processed_at: new Date().toISOString(),
+      },
+    });
+
+    if (!creditResult.success) {
+      throw new Error(`Failed to add credits: ${creditResult.error || 'Unknown error'}`);
+    }
+  }
+  // Handle subscription purchases
+  else if (productType === 'subscription') {
+    // Get monthly credits from metadata
+    const creditsRaw = metadata.credits;
+    const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
+    if (credits > 0) {
+      // Add monthly credits for initial subscription (使用 webhook 专用函数)
+      const creditResult = await operateCreditsForWebhook({
+        customerId: customerId,
+        amount: credits,
+        type: 'add',
+        description: `Monthly subscription credits: ${credits}`,
+        metadata: {
+          creem_order_id: creemOrderId, // Creem 的真实订单 ID，用于关联
+          order_id: order?.id, // 我们自己的订单 ID，用于关联
+          plan_name: metadata.plan_name,
+          payment_id: checkout.order.transaction || creemOrderId,
+          subscription_id: checkout.subscription?.id,
+          checkout_id: checkout.id, // Checkout ID
+          type: 'subscription',
+          webhook_verified: true,
+          processed_at: new Date().toISOString(),
+        },
+      });
+
+      if (!creditResult.success) {
+        throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
+      }
+    }
+
+    // Update subscription plan in anim_customers
+    if (metadata.plan_name && checkout.subscription) {
+      const subscriptionId = checkout.subscription.id;
+      const expiresAt = new Date((checkout.subscription as any).current_period_end_date || new Date().setMonth(new Date().getMonth() + 1));
+      const { error: updateError, data: updateData } = await supabase
+        .from('anim_customers')
+        .update({
+          subscription_plan: metadata.plan_name,
+          subscription_expires_at: expiresAt.toISOString(),
+          subscription_id: subscriptionId, // 保存 subscription_id
+        })
+        .eq('id', customerId)
+        .select('subscription_plan, subscription_expires_at, subscription_id');
+
+      if (updateError) {
+      } else {
+        // Verify the update
+        const { data: verifyData, error: verifyError } = await supabase
+          .from('anim_customers')
+          .select('subscription_plan, subscription_expires_at, subscription_id')
+          .eq('id', customerId)
+          .single();
+        
+        if (verifyError) {
+        } else {
+        }
+      }
+    } else {
+    }
+  } else {
+    throw new Error(`Unknown product type: ${productType}`);
+  }
+}
+
+/**
+ * 处理 subscription.active 事件
+ */
+async function handleSubscriptionActive(event: CreemWebhookEvent) {
+  // 对于 subscription 事件，event.object 就是 subscription 对象
+  const subscription = event.object as any;
+  const supabase = await createClient();
+  // Get user_id from subscription metadata
+  const metadata = subscription.metadata || {};
+  const userId = metadata.user_id;
+  
+  if (!userId) {
+    throw new Error('user_id is required in subscription metadata');
+  }
+  // Find customer by user_id
+  const { data: customer, error: customerError } = await supabase
+    .from('anim_customers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (customerError || !customer) {
+    throw new Error(`Customer not found for user_id: ${userId}`);
+  }
+
+  const customerId = customer.id;
+  // Update subscription plan
+  if (metadata.plan_name) {
+    const subscriptionId = subscription.id;
+    const expiresAt = new Date(subscription.current_period_end_date);
+    const { error: updateError, data: updateData } = await supabase
+      .from('anim_customers')
+      .update({
+        subscription_plan: metadata.plan_name,
+        subscription_expires_at: expiresAt.toISOString(),
+        subscription_id: subscriptionId, // 保存 subscription_id
+      })
+      .eq('id', customerId)
+      .select('subscription_plan, subscription_expires_at, subscription_id');
+
+    if (updateError) {
+    } else {
+      // Verify the update
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('anim_customers')
+        .select('subscription_plan, subscription_expires_at, subscription_id')
+        .eq('id', customerId)
+        .single();
+      
+      if (verifyError) {
+      } else {
+      }
+    }
+  } else {
+  }
+
+  // Get monthly credits from metadata
+  const creditsRaw = metadata.credits;
+  const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
+
+  if (credits > 0) {
+    // Add monthly credits (使用 webhook 专用函数)
+    const creditResult = await operateCreditsForWebhook({
+      customerId: customerId,
+      amount: credits,
+      type: 'add',
+      description: `Monthly subscription credits: ${credits}`,
+      metadata: {
+        subscription_id: subscription.id,
+        plan_name: metadata.plan_name,
+        type: 'subscription',
+        webhook_verified: true,
+        processed_at: new Date().toISOString(),
+      },
+    });
+
+    if (!creditResult.success) {
+      throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
+    }
+  }
+}
+
+/**
+ * 处理 subscription.paid 事件
+ */
+async function handleSubscriptionPaid(event: CreemWebhookEvent) {
+  // 对于 subscription 事件，event.object 就是 subscription 对象
+  const subscription = event.object as any;
+  const supabase = await createClient();
+  // Get user_id from subscription metadata
+  const metadata = subscription.metadata || {};
+  const userId = metadata.user_id;
+  
+  if (!userId) {
+    throw new Error('user_id is required in subscription metadata');
+  }
+
+  // Find customer by user_id
+  const { data: customer, error: customerError } = await supabase
+    .from('anim_customers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (customerError || !customer) {
+    throw new Error(`Customer not found for user_id: ${userId}`);
+  }
+
+  const customerId = customer.id;
+  // Update subscription plan
+  if (metadata.plan_name) {
+    const subscriptionId = subscription.id;
+    const expiresAt = new Date(subscription.current_period_end_date);
+    const { error: updateError, data: updateData } = await supabase
+      .from('anim_customers')
+      .update({
+        subscription_plan: metadata.plan_name,
+        subscription_expires_at: expiresAt.toISOString(),
+        subscription_id: subscriptionId, // 保存 subscription_id
+      })
+      .eq('id', customerId)
+      .select('subscription_plan, subscription_expires_at, subscription_id');
+
+    if (updateError) {
+    } else {
+      // Verify the update
+      const { data: verifyData, error: verifyError } = await supabase
+        .from('anim_customers')
+        .select('subscription_plan, subscription_expires_at, subscription_id')
+        .eq('id', customerId)
+        .single();
+      
+      if (verifyError) {
+      } else {
+      }
+    }
+  } else {
+  }
+
+  // Get monthly credits from metadata
+  const creditsRaw = metadata.credits;
+  const credits = typeof creditsRaw === 'string' ? parseInt(creditsRaw, 10) : Number(creditsRaw || 0);
+
+  if (credits > 0) {
+    // Add monthly credits for renewal (使用 webhook 专用函数)
+    const creditResult = await operateCreditsForWebhook({
+      customerId: customerId,
+      amount: credits,
+      type: 'add',
+      description: `Monthly subscription renewal: ${credits} credits`,
+      metadata: {
+        subscription_id: subscription.id,
+        plan_name: metadata.plan_name,
+        type: 'subscription_renewal',
+        webhook_verified: true,
+        processed_at: new Date().toISOString(),
+      },
+    });
+
+    if (!creditResult.success) {
+      throw new Error(`Failed to add subscription credits: ${creditResult.error || 'Unknown error'}`);
+    }
+  }
+}
+
+/**
+ * 处理 subscription.canceled 事件
+ */
+async function handleSubscriptionCanceled(event: CreemWebhookEvent) {
+  // 对于 subscription 事件，event.object 就是 subscription 对象
+  const subscription = event.object as any;
+  const supabase = await createClient();
+  const metadata = subscription.metadata || {};
+  const userId = metadata.user_id;
+  
+  if (!userId) {
+    return;
+  }
+
+  // Find customer by user_id
+  const { data: customer } = await supabase
+    .from('anim_customers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (customer) {
+    // Clear subscription plan
+    await supabase
+      .from('anim_customers')
+      .update({
+        subscription_plan: null,
+        subscription_expires_at: null,
+        subscription_id: null, // 清除 subscription_id
+      })
+      .eq('id', customer.id);
+  }
+}
+
+/**
+ * 处理 subscription.expired 事件
+ */
+async function handleSubscriptionExpired(event: CreemWebhookEvent) {
+  // 对于 subscription 事件，event.object 就是 subscription 对象
+  const subscription = event.object as any;
+  const supabase = await createClient();
+  const metadata = subscription.metadata || {};
+  const userId = metadata.user_id;
+  
+  if (!userId) {
+    return;
+  }
+
+  // Find customer by user_id
+  const { data: customer } = await supabase
+    .from('anim_customers')
+    .select('id')
+    .eq('user_id', userId)
+    .single();
+
+  if (customer) {
+    // Clear subscription plan
+    await supabase
+      .from('anim_customers')
+      .update({
+        subscription_plan: null,
+        subscription_expires_at: null,
+        subscription_id: null, // 清除 subscription_id
+      })
+      .eq('id', customer.id);
   }
 }

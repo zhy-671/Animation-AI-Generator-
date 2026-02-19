@@ -27,8 +27,8 @@ const pageVariants = {
 };
 
 const pageTransition = {
-  type: "tween",
-  ease: [0.25, 0.1, 0.25, 1], // 更平滑的缓动函数
+  type: "tween" as const,
+  ease: [0.25, 0.1, 0.25, 1] as const, // 更平滑的缓动函数
   duration: 0.35,
 };
 

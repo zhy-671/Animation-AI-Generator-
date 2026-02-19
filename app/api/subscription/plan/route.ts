@@ -26,7 +26,6 @@ export async function GET(request: NextRequest) {
       .single();
 
     if (customerError) {
-      console.error('Error fetching subscription plan:', customerError);
       return NextResponse.json(
         { success: false, error: 'Failed to fetch subscription plan' },
         { status: 500 }
@@ -50,7 +49,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error in GET /api/subscription/plan:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

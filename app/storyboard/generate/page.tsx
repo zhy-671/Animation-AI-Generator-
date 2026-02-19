@@ -1,4 +1,5 @@
 import { Metadata } from "next";
+import { Suspense } from "react";
 import StoryScriptPage from "@/components/storyboard/story-script-page";
 
 export const metadata: Metadata = {
@@ -11,6 +12,10 @@ export const metadata: Metadata = {
 };
 
 export default function GenerateStoryPage() {
-  return <StoryScriptPage />;
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center">Loading...</div>}>
+      <StoryScriptPage />
+    </Suspense>
+  );
 }
 

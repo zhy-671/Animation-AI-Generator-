@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/header/header";
-import AnimationHero from "@/components/hero/animation-hero";
+import MusicVideoHero from "@/components/hero/music-video-hero";
 import FeaturesShowcase from "@/components/features/features-showcase";
 import UseCases from "@/components/usecases/use-cases";
 import ProcessFlow from "@/components/process/process-flow";
@@ -51,14 +51,14 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "WebSite",
-            "name": "Animation AI Generator | Animaker AI",
-            "url": "https://animationaigenerator.com",
-            "description": "Create stunning animated videos with AI-powered 2D and 3D animation tools. Animaker AI - the ultimate animation generator.",
+            "name": "VerseMovie - AI Music Video Generator",
+            "url": "https://videoaimusic.com",
+            "description": "Turn lyrics into cinematic AI music videos. Create professional MV videos from song lyrics instantly with our AI-powered music video generator.",
             "potentialAction": {
               "@type": "SearchAction",
               "target": {
                 "@type": "EntryPoint",
-                "urlTemplate": "https://animationaigenerator.com/animation-ai-generator/text-to-video"
+                "urlTemplate": "https://videoaimusic.com/animation-ai-generator/text-to-video"
               },
               "query-input": "required name=search_term_string"
             }
@@ -71,10 +71,10 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "Organization",
-            "name": "Animation AI Generator | Animaker AI",
-            "url": "https://animationaigenerator.com",
-            "logo": "https://animationaigenerator.com/images/logo.png",
-            "description": "AI-powered animation generator (Animaker AI) for creating 2D and 3D animated videos",
+            "name": "VerseMovie",
+            "url": "https://videoaimusic.com",
+            "logo": "https://videoaimusic.com/images/versemovie-logo.png",
+            "description": "AI-powered music video generator that transforms lyrics into cinematic music videos instantly",
             "sameAs": []
           })
         }}
@@ -85,35 +85,37 @@ export default function HomeClient() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "Animation AI Generator | Animaker AI",
+            "name": "VerseMovie - AI Music Video Generator",
             "applicationCategory": "MultimediaApplication",
             "operatingSystem": "Web Browser",
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
             },
-            "description": "Create animated videos from text or images using AI-powered animation tools. Animaker AI technology for seamless video generation.",
+            "description": "Turn lyrics into cinematic AI music videos. Create professional MV videos from song lyrics instantly with our AI-powered music video generator.",
             "aggregateRating": {
               "@type": "AggregateRating",
-              "ratingValue": "4.8",
-              "reviewCount": "1250",
+              "ratingValue": "4.9",
+              "reviewCount": "2500",
               "bestRating": "5",
               "worstRating": "1"
             },
             "featureList": [
-              "Text-to-video animation",
-              "Image-to-video animation",
-              "2D and 3D animation styles",
-              "Short-form video creation",
-              "TikTok, Instagram Reels, YouTube Shorts optimization"
+              "Lyrics to music video conversion",
+              "AI-powered character generation",
+              "Cinematic video styles",
+              "Professional MV quality",
+              "Multiple aspect ratios (9:16, 16:9)",
+              "Auto-generated storyboards"
             ]
           })
         }}
       />
-      <div className="min-h-screen bg-white dark:bg-gray-900">
+      <div className="min-h-screen bg-transparent">
         <Header />
-        <AnimationHero />
+        <MusicVideoHero />
         <FeaturesShowcase />
         <Examples />
         <UseCases />
@@ -133,10 +135,10 @@ export default function HomeClient() {
             className="fixed bottom-0 left-0 right-0 z-50 p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 md:hidden"
           >
             <Button
-              onClick={() => router.push(`/animation-ai-generator/text-to-video`)}
+              onClick={() => router.push(`/ai-music-video-generator`)}
               className="w-full h-12 text-base font-medium bg-[#FFDA2A] text-gray-900 hover:bg-[#FFDA2A]/90 transition-all duration-200 rounded-full shadow-lg"
             >
-              Generate Video Free
+              Start Free Now
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
           </motion.div>

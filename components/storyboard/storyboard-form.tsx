@@ -16,7 +16,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, X, Sparkles, Diamond, Info, Plus, Trash2, ArrowLeft } from "lucide-react";
+import { Upload, X, Sparkles, Diamond, Info, Plus, Trash2, ArrowLeft, Coins, Clock } from "lucide-react";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
+import { DeleteConfirmDialog } from "@/components/ui/delete-confirm-dialog";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import {
@@ -30,7 +32,7 @@ import {
 interface FormData {
   textPrompt: string;
   referenceImage: File | null;
-  readerGroup: "儿童" | "青少年" | "成人" | "全年龄";
+  readerGroup: "Children" | "Teen" | "Adult" | "All Ages";
   model: string;
   duration: string;
   quality: string;
@@ -61,9 +63,9 @@ export default function StoryboardForm() {
   const [formData, setFormData] = useState<FormData>({
     textPrompt: "",
     referenceImage: null,
-    readerGroup: "全年龄",
+    readerGroup: "All Ages",
     model: "2d",
-    duration: "5",
+    duration: "10",
     quality: "480p"
   });
 
@@ -75,6 +77,14 @@ export default function StoryboardForm() {
   const [creditsBalance, setCreditsBalance] = useState<number | null>(null);
   const [subscriptionPlan, setSubscriptionPlan] = useState<SubscriptionPlan>(null);
   const [isMounted, setIsMounted] = useState(false);
+  
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false); // 是否显示创作区域
   const [showIdeaInput, setShowIdeaInput] = useState(false); // 是否显示初始想法输入界面
   const [ideaText, setIdeaText] = useState(""); // 初始想法文本
@@ -87,6 +97,9 @@ export default function StoryboardForm() {
     updated_at: string;
   }>>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
@@ -100,12 +113,17 @@ export default function StoryboardForm() {
           setSubscriptionPlan(planData.plan);
         }
         
-        const balanceCheck = await checkCreditsBalance(0);
-        if (balanceCheck.balance !== undefined) {
-          setCreditsBalance(balanceCheck.balance);
-        }
+        // 延迟加载积分余额，避免与 Header 组件同时调用
+        // Header 组件会在页面加载时查询积分，这里延迟 500ms 再查询
+        setTimeout(async () => {
+          if (isMounted) {
+            const balanceCheck = await checkCreditsBalance(0);
+            if (balanceCheck.balance !== undefined) {
+              setCreditsBalance(balanceCheck.balance);
+            }
+          }
+        }, 500);
       } catch (error) {
-        console.error("Error loading user data:", error);
       }
     };
     
@@ -150,14 +168,12 @@ export default function StoryboardForm() {
                               }
                             }
                           } catch (error) {
-                            console.error("Error generating presigned URL for cover:", error);
                           }
                         }
                       }
                     }
                   }
                 } catch (error) {
-                  console.error("Error loading cover image:", error);
                 }
               } else {
                 // 如果已有封面图，检查是否是TOS URL并生成预签名URL
@@ -172,7 +188,6 @@ export default function StoryboardForm() {
                       }
                     }
                   } catch (error) {
-                    console.error("Error generating presigned URL for cover:", error);
                   }
                 }
               }
@@ -188,7 +203,6 @@ export default function StoryboardForm() {
         }
       }
     } catch (error) {
-      console.error("Error loading projects:", error);
     } finally {
       setLoadingProjects(false);
     }
@@ -203,9 +217,9 @@ export default function StoryboardForm() {
     setFormData({
       textPrompt: "",
       referenceImage: null,
-      readerGroup: "全年龄",
+      readerGroup: "All Ages",
       model: "2d",
-      duration: "5",
+      duration: "10",
       quality: "480p"
     });
     setReferenceImagePreview(null);
@@ -222,9 +236,9 @@ export default function StoryboardForm() {
     setFormData({
       textPrompt: "",
       referenceImage: null,
-      readerGroup: "全年龄",
+      readerGroup: "All Ages",
       model: "2d",
-      duration: "5",
+      duration: "10",
       quality: "480p"
     });
     setReferenceImagePreview(null);
@@ -234,7 +248,7 @@ export default function StoryboardForm() {
 
   const handleNextStep = () => {
     if (!ideaText.trim()) {
-      alert("请输入你的想法或创意");
+      alert("Please enter your idea or creative concept");
       return;
     }
     setShowIdeaInput(false);
@@ -282,7 +296,6 @@ export default function StoryboardForm() {
                       }
                     }
                   } catch (error) {
-                    console.error('Error generating presigned URL:', error);
                   }
                 }
               }
@@ -302,7 +315,7 @@ export default function StoryboardForm() {
                 isGeneratingImage: false,
                 imageGenerationFailed: false,
                 sceneItemId: item.id,
-                imageStatus: displayImageUrl ? 'completed' : 'failed',
+                imageStatus: displayImageUrl ? ('completed' as const) : ('failed' as const),
               };
             })
           );
@@ -318,25 +331,28 @@ export default function StoryboardForm() {
         }
       }
     } catch (error) {
-      console.error("Error loading project:", error);
-      alert("加载项目失败");
+      alert("Failed to load project");
     }
   };
 
-  const handleDeleteProject = async (sceneId: string, e: React.MouseEvent) => {
+  const handleDeleteClick = (sceneId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("确定要删除这个项目吗？")) {
-      return;
-    }
+    setProjectToDelete(sceneId);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!projectToDelete) return;
     
+    setIsDeleting(true);
     try {
-      const response = await fetch(`/api/scenes?sceneId=${sceneId}`, {
+      const response = await fetch(`/api/scenes?sceneId=${projectToDelete}`, {
         method: "DELETE",
       });
       
       if (response.ok) {
-        setMyProjects(prev => prev.filter(p => p.id !== sceneId));
-        if (currentSceneId === sceneId) {
+        setMyProjects(prev => prev.filter(p => p.id !== projectToDelete));
+        if (currentSceneId === projectToDelete) {
           setCurrentSceneId(null);
           setGeneratedImages([]);
           setShowCreateForm(false);
@@ -345,8 +361,10 @@ export default function StoryboardForm() {
         throw new Error("Failed to delete project");
       }
     } catch (error) {
-      console.error("Error deleting project:", error);
-      alert("删除项目失败");
+      alert("Failed to delete project");
+    } finally {
+      setIsDeleting(false);
+      setProjectToDelete(null);
     }
   };
 
@@ -366,7 +384,7 @@ export default function StoryboardForm() {
 
   const handleGenerate = async () => {
     if (!formData.textPrompt.trim()) {
-      alert("请输入故事描述");
+      alert("Please enter story description");
       return;
     }
 
@@ -427,7 +445,7 @@ export default function StoryboardForm() {
           imageGenerationFailed: scene.imageGenerationFailed || false,
           sceneItemId: scene.sceneItemId,
           imageTaskId: scene.imageTaskId || null,
-          imageStatus: scene.imageUrl ? 'completed' : (index === 0 && scene.imageTaskId ? 'generating' : 'pending'),
+          imageStatus: scene.imageUrl ? ('completed' as const) : (index === 0 && scene.imageTaskId ? ('generating' as const) : ('pending' as const)),
         }));
         
         setGeneratedImages(newImages);
@@ -460,7 +478,6 @@ export default function StoryboardForm() {
         }, 100);
       }
     } catch (error) {
-      console.error("Error generating storyboard:", error);
       alert(error instanceof Error ? error.message : "Failed to generate story script");
       setIsGenerating(false);
     }
@@ -487,7 +504,7 @@ export default function StoryboardForm() {
       
       setGeneratedImages(prev => prev.map(img => 
         img.id === item.id 
-          ? { ...img, imageStatus: 'generating', isGeneratingImage: true }
+          ? { ...img, imageStatus: 'generating' as const, isGeneratingImage: true }
           : img
       ));
       
@@ -527,7 +544,7 @@ export default function StoryboardForm() {
                           ...img, 
                           imageUrl: finalImageUrl,
                           isGeneratingImage: false,
-                          imageStatus: 'completed',
+                          imageStatus: 'completed' as const,
                           imageTaskId: undefined
                         }
                       : img
@@ -543,7 +560,6 @@ export default function StoryboardForm() {
                         imageUrl: finalImageUrl,
                       }),
                     }).catch(updateError => {
-                      console.error("Error updating image URL in database:", updateError);
                     });
                   }
                   
@@ -554,7 +570,6 @@ export default function StoryboardForm() {
                 successCount++;
                 return true;
               } catch (uploadError) {
-                console.error("Error uploading image:", uploadError);
                 setGeneratedImages(prev => prev.map(img => 
                   img.id === item.id 
                     ? { 
@@ -575,7 +590,7 @@ export default function StoryboardForm() {
                   ? { 
                       ...img, 
                       isGeneratingImage: false,
-                      imageStatus: 'failed',
+                      imageStatus: 'failed' as const,
                       imageGenerationFailed: true,
                       imageTaskId: undefined
                     }
@@ -596,7 +611,6 @@ export default function StoryboardForm() {
           
           return false;
         } catch (error) {
-          console.error("Error polling image status:", error);
           setGeneratedImages(prev => prev.map(img => 
             img.id === item.id 
               ? { 
@@ -625,19 +639,24 @@ export default function StoryboardForm() {
   const handleGenerateVideo = async (imageId: string) => {
     const imageItem = generatedImages.find(img => img.id === imageId);
     if (!imageItem || !imageItem.imageUrl) {
-      alert("请先上传或生成图片");
+      alert("Please upload or generate an image first");
       return;
     }
 
     const currentQuality = formData.quality || "480p";
-    const currentDuration = parseInt(formData.duration || "5");
+    const currentDuration = parseInt(formData.duration || "10");
     const resolution = currentQuality as '480p' | '720p' | '1080p';
     const requiredCredits = calculateVideoCredits(subscriptionPlan, resolution, currentDuration);
     
     const balanceCheck = await checkCreditsBalance(requiredCredits);
     
     if (!balanceCheck.sufficient) {
-      alert(`积分不足！生成 ${currentDuration}秒 ${currentQuality} 视频需要 ${requiredCredits} 积分，当前余额：${balanceCheck.balance || 0} 积分。请购买积分后再试。`);
+      setInsufficientCreditsData({
+        required: requiredCredits,
+        current: balanceCheck.balance || 0,
+        action: `generate ${currentDuration}s ${currentQuality} video`
+      });
+      setShowInsufficientCreditsDialog(true);
       return;
     }
 
@@ -662,29 +681,29 @@ export default function StoryboardForm() {
       };
       const stylePrompt = stylePrompts[currentModel] || "2D动画风格";
       
-      const dashScopeModel = "wan2.5-i2v-preview";
-      const resolutionMap: Record<string, string> = {
-        "480p": "480P",
-        "720p": "720P",
-        "1080p": "1080P",
-      };
-      const dashScopeResolution = resolutionMap[currentQuality] || "480P";
-      const duration = currentDuration;
+      // 使用Sora API生成视频
+      // 根据分辨率选择模型
+      const selectedModel = currentDuration === 15 ? "sora_video2-landscape-15s" : "sora_video2-landscape";
       
-      const response = await fetch("/api/video/generate", {
+      // 根据分辨率设置size
+      const resolutionMap: Record<string, string> = {
+        "480p": "1280x704",
+        "720p": "1280x704",
+        "1080p": "1920x1080",
+      };
+      const size = resolutionMap[currentQuality] || "1280x704";
+      
+      const response = await fetch("/api/video/generate-sora-video2", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          prompt: `${imageItem.text || "动画视频"}，${stylePrompt}`,
-          sceneDetail: imageItem.sceneDetail || "",
+          prompt: imageItem.text || "动画视频",
           imageUrl: imageItem.imageUrl,
-          model: dashScopeModel,
-          resolution: dashScopeResolution,
-          duration: duration,
-          promptExtend: true,
-          audio: true,
+          size: size,
+          seconds: currentDuration,
+          model: selectedModel,
         }),
       });
 
@@ -704,7 +723,7 @@ export default function StoryboardForm() {
           try {
             await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 0 : interval));
             
-            const statusResponse = await fetch(`/api/video/status?taskId=${taskId}`);
+            const statusResponse = await fetch(`/api/video/status-sora-video2?taskId=${taskId}`);
             if (!statusResponse.ok) {
               let errorData: any = {};
               const contentType = statusResponse.headers.get("content-type");
@@ -726,10 +745,27 @@ export default function StoryboardForm() {
 
             const statusResult = await statusResponse.json();
             const status = statusResult.data;
-            const requestId = status.requestId || statusResult.request_id;
 
-            if (status.status === "SUCCEEDED" && status.output?.video_url) {
-              const videoUrl = status.output.video_url;
+            // Sora API返回的状态格式：status为"completed"或"SUCCEEDED"，url字段包含视频URL
+            if ((status.status === "completed" || status.status === "SUCCEEDED") && status.url) {
+              // 使用Sora API的下载接口上传到TOS
+              const downloadResponse = await fetch("/api/video/download-sora-video2", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                  taskId: taskId,
+                }),
+              });
+              
+              if (!downloadResponse.ok) {
+                const downloadError = await downloadResponse.json();
+                throw new Error(downloadError.error || "Failed to download and upload video");
+              }
+              
+              const downloadResult = await downloadResponse.json();
+              const storedVideoUrl = downloadResult.data.videoUrl;
               
               const resolution = currentQuality as '480p' | '720p' | '1080p';
               const deductResult = await deductVideoCredits(resolution, currentDuration, {
@@ -739,26 +775,25 @@ export default function StoryboardForm() {
               }, subscriptionPlan);
               
               if (!deductResult.success) {
-                console.error("Failed to deduct credits:", deductResult.error);
+              } else {
+                // 更新积分余额
+                if (deductResult.newBalance !== undefined) {
+                  setCreditsBalance(deductResult.newBalance);
+                } else {
+                  const updatedBalance = await checkCreditsBalance(0);
+                  if (updatedBalance.balance !== undefined) {
+                    setCreditsBalance(updatedBalance.balance);
+                  }
+                }
               }
             
-              const uploadResponse = await fetch("/api/video/upload", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  videoUrl: videoUrl,
-                }),
-              });
-
-              if (!uploadResponse.ok) {
-                const uploadError = await uploadResponse.json();
-                throw new Error(uploadError.error || "Failed to upload video");
-              }
-
-              const uploadResult = await uploadResponse.json();
-              const storedVideoUrl = uploadResult.data.url;
+              // 视频已经通过download-sora-video2上传到TOS，直接保存
+              const resolutionMap: Record<string, string> = {
+                "480p": "480P",
+                "720p": "720P",
+                "1080p": "1080P",
+              };
+              const dashScopeResolution = resolutionMap[currentQuality] || "480P";
 
               await fetch("/api/video/save", {
                 method: "POST",
@@ -772,7 +807,7 @@ export default function StoryboardForm() {
                   imageUrl: imageItem.imageUrl,
                   resolution: dashScopeResolution,
                   taskId: taskId,
-                  requestId: requestId,
+                  requestId: taskId,
                   sceneItemId: imageItem.sceneItemId,
                 }),
               });
@@ -791,11 +826,10 @@ export default function StoryboardForm() {
               }
               
               return;
-            } else if (status.status === "FAILED") {
+            } else if (status.status === "FAILED" || status.status === "failed") {
               throw new Error(status.message || "Video generation failed");
             }
           } catch (error) {
-            console.error("Error polling video status:", error);
             setGeneratedImages(prev => 
               prev.map(img => 
                 img.id === imageId 
@@ -803,7 +837,7 @@ export default function StoryboardForm() {
                   : img
               )
             );
-            alert(error instanceof Error ? error.message : "视频生成失败");
+            alert(error instanceof Error ? error.message : "Video generation failed");
             return;
           }
         }
@@ -813,7 +847,6 @@ export default function StoryboardForm() {
 
       await pollStatus();
     } catch (error) {
-      console.error("Error generating video:", error);
       setGeneratedImages(prev => 
         prev.map(img => 
           img.id === imageId 
@@ -821,7 +854,7 @@ export default function StoryboardForm() {
             : img
         )
       );
-      alert(error instanceof Error ? error.message : "生成视频失败");
+      alert(error instanceof Error ? error.message : "Video generation failed");
     }
   };
 
@@ -846,7 +879,8 @@ export default function StoryboardForm() {
   const isCurrentModelAllowed = isAnimationStyleAllowed(subscriptionPlan, formData.model);
 
   return (
-    <div className="min-h-screen bg-black text-white">
+    <>
+      <div className="min-h-screen bg-black text-white">
       <Header />
       
       <div className="container mx-auto px-4 py-8 max-w-6xl">
@@ -985,7 +1019,7 @@ export default function StoryboardForm() {
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="flex flex-col items-center gap-2">
                   <label className="text-sm font-medium text-gray-300">
-                    参考图（可选）
+                    Reference Image (Optional)
                   </label>
                   {referenceImagePreview ? (
                     <div className="relative group h-12 w-12">
@@ -1032,7 +1066,7 @@ export default function StoryboardForm() {
 
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-medium text-gray-300">
-                    读者群
+                    Reader Group
                   </label>
                   <Select
                     value={formData.readerGroup}
@@ -1042,10 +1076,10 @@ export default function StoryboardForm() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="全年龄">全年龄</SelectItem>
-                      <SelectItem value="儿童">儿童</SelectItem>
-                      <SelectItem value="青少年">青少年</SelectItem>
-                      <SelectItem value="成人">成人</SelectItem>
+                      <SelectItem value="All Ages">All Ages</SelectItem>
+                      <SelectItem value="Children">Children</SelectItem>
+                      <SelectItem value="Teen">Teen</SelectItem>
+                      <SelectItem value="Adult">Adult</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1074,7 +1108,7 @@ export default function StoryboardForm() {
                               if (!isAllowed) {
                                 e.preventDefault();
                                 const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
-                                alert(`当前订阅计划（${planConfig.name}）不支持 ${model.label} 风格。\n\n请升级套餐以使用此风格。\n\n点击确定前往定价页面。`);
+                                alert(`Your current subscription plan (${planConfig.name}) does not support ${model.label} style.\n\nPlease upgrade your plan to use this style.\n\nClick OK to go to the pricing page.`);
                                 router.push('/pricing');
                               }
                             }}
@@ -1082,10 +1116,10 @@ export default function StoryboardForm() {
                             <span className="flex items-center gap-2">
                               {model.label}
                               {requiresSub && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
                               )}
                               {!isAllowed && subscriptionPlan !== null && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
                               )}
                             </span>
                           </SelectItem>
@@ -1120,7 +1154,7 @@ export default function StoryboardForm() {
                                 e.preventDefault();
                                 const planConfig = getSubscriptionPlanConfig(subscriptionPlan);
                                 const allowedResolutions = planConfig.videoResolutions.join(' / ');
-                                alert(`当前订阅计划（${planConfig.name}）仅支持 ${allowedResolutions} 分辨率。\n\n请升级套餐以使用 ${quality.value} 分辨率。\n\n点击确定前往定价页面。`);
+                                alert(`Your current subscription plan (${planConfig.name}) only supports ${allowedResolutions} resolution.\n\nPlease upgrade your plan to use ${quality.value} resolution.\n\nClick OK to go to the pricing page.`);
                                 router.push('/pricing');
                               }
                             }}
@@ -1128,13 +1162,13 @@ export default function StoryboardForm() {
                             <span className="flex items-center gap-2">
                               {quality.label}
                               {requiresSub && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需订阅)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Subscription)</span>
                               )}
                               {quality.requiresSubscription && subscriptionPlan !== null && isAllowed && (
                                 <span className="text-xs text-[#FFDA2A] font-medium">(Subscribe)</span>
                               )}
                               {!isAllowed && subscriptionPlan !== null && (
-                                <span className="text-xs text-[#FFDA2A] font-medium">(需升级)</span>
+                                <span className="text-xs text-[#FFDA2A] font-medium">(Requires Upgrade)</span>
                               )}
                             </span>
                           </SelectItem>
@@ -1156,8 +1190,8 @@ export default function StoryboardForm() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="5">5 seconds</SelectItem>
                       <SelectItem value="10">10 seconds</SelectItem>
+                      <SelectItem value="15">15 seconds</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1187,14 +1221,18 @@ export default function StoryboardForm() {
                 </>
               ) : (
                 <>
-                  <Diamond className="w-5 h-5 text-gray-900" />
-                  <span>Generate Story Script</span>
+                  <Diamond className="w-7 h-7 text-gray-900" />
+                  <span className="text-sm">
+                    Generate Story Script
+                    <span className="ml-2 text-xs opacity-90">
+                      {calculateVideoCredits(subscriptionPlan, formData.quality as '480p' | '720p' | '1080p', parseInt(formData.duration || "10"))}
+                    </span>
+                  </span>
                 </>
               )}
             </Button>
           </div>
-        </div>
-            </motion.div>
+        </motion.div>
           )}
         </AnimatePresence>
 
@@ -1234,14 +1272,6 @@ export default function StoryboardForm() {
                   className="bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-[#FFDA2A]/50 transition-all cursor-pointer group relative"
                   onClick={() => handleLoadProject(project.id)}
                 >
-                  {/* 删除按钮 */}
-                  <button
-                    onClick={(e) => handleDeleteProject(project.id, e)}
-                    className="absolute top-2 right-2 p-2 bg-red-500/80 hover:bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity z-10"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                  
                   {/* 封面图 */}
                   <div className="aspect-video bg-gray-800 relative overflow-hidden">
                     {project.cover_image_url ? (
@@ -1294,8 +1324,8 @@ export default function StoryboardForm() {
           <div id="scene-preview-section" className="mt-8 bg-gray-900 rounded-xl p-6 md:p-8 shadow-xl">
             <div className="space-y-8">
               <div className="mb-6">
-                <h3 className="text-xl font-semibold text-white mb-2">故事剧本预览</h3>
-                <p className="text-sm text-gray-400">将文本描述生成对应的故事剧本，每个场景对应一段文本描述，点击"生成video"按钮可为每个场景生成动画视频</p>
+                <h3 className="text-xl font-semibold text-white mb-2">Story Script Preview</h3>
+                <p className="text-sm text-gray-400">Generate story scripts from text descriptions. Each scene corresponds to a text description. Click the "Generate Video" button to create animated videos for each scene.</p>
               </div>
               <AnimatePresence mode="popLayout">
                 {generatedImages.map((item, index) => {
@@ -1328,14 +1358,14 @@ export default function StoryboardForm() {
                           >
                             <Sparkles className="w-12 h-12 text-[#FFDA2A]" />
                           </motion.div>
-                          <span className="text-sm text-[#FFDA2A] font-medium">生成中...</span>
+                          <span className="text-sm text-[#FFDA2A] font-medium">Generating...</span>
                         </div>
                       )}
                       
                       {isPending && (
                         <div className="absolute inset-0 bg-black/40 rounded-xl flex flex-col items-center justify-center gap-2 z-40 pointer-events-none">
                           <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                          <span className="text-xs text-gray-400">等待中...</span>
+                          <span className="text-xs text-gray-400">Waiting...</span>
                         </div>
                       )}
                       
@@ -1343,24 +1373,24 @@ export default function StoryboardForm() {
                         <div className="flex-shrink-0 flex flex-col items-center gap-3">
                           <div className="flex items-center justify-center gap-2">
                             <Info className="w-5 h-5 text-gray-400" />
-                            <span className="text-sm text-gray-300 font-medium">场景{item.sceneNumber}</span>
+                            <span className="text-sm text-gray-300 font-medium">Scene {item.sceneNumber}</span>
                           </div>
                           <div className="relative w-56 h-40">
                             {item.imageStatus === 'failed' || (item.imageGenerationFailed && !item.imageUrl) ? (
                               <div className="w-full h-full bg-gray-700 rounded-lg flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-600">
                                 <Upload className="w-8 h-8 text-gray-500" />
-                                <span className="text-xs text-gray-400">图片生成失败</span>
+                                <span className="text-xs text-gray-400">Image generation failed</span>
                               </div>
                             ) : item.imageUrl ? (
                               <img
                                 src={item.imageUrl}
-                                alt={`场景${item.sceneNumber}: ${item.text}`}
+                                alt={`Scene ${item.sceneNumber}: ${item.text}`}
                                 className="w-full h-full object-cover rounded-lg border-2 border-gray-700"
                               />
                             ) : (
                               <div className="w-full h-full bg-gray-700 rounded-lg flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-600">
                                 <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
-                                <span className="text-xs text-gray-400">生成中...</span>
+                                <span className="text-xs text-gray-400">Generating...</span>
                               </div>
                             )}
                           </div>
@@ -1381,14 +1411,14 @@ export default function StoryboardForm() {
                           
                           {item.camera && (
                             <div>
-                              <span className="text-xs text-gray-500">镜头：</span>
+                              <span className="text-xs text-gray-500">Camera: </span>
                               <span className="text-sm text-gray-400">{item.camera}</span>
                             </div>
                           )}
                           
                           {item.dialogue && item.dialogue.length > 0 && (
                             <div>
-                              <span className="text-xs text-gray-500">对白：</span>
+                              <span className="text-xs text-gray-500">Dialogue: </span>
                               <div className="mt-1 space-y-1">
                                 {item.dialogue.map((line, idx) => (
                                   <p key={idx} className="text-sm text-gray-300">"{line}"</p>
@@ -1402,7 +1432,7 @@ export default function StoryboardForm() {
                             disabled={item.isGeneratingVideo || !item.imageUrl || hasGeneratingImages || !allImagesGenerated}
                             className="px-6 py-3 bg-[#FFDA2A] text-gray-900 font-semibold rounded-lg hover:bg-[#FFDA2A]/90 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            {item.isGeneratingVideo ? '生成中...' : item.videoUrl ? '重新生成视频' : '生成视频'}
+                            {item.isGeneratingVideo ? 'Generating...' : item.videoUrl ? 'Regenerate Video' : 'Generate Video'}
                           </Button>
                           
                           {item.videoUrl && (
@@ -1428,7 +1458,30 @@ export default function StoryboardForm() {
       </div>
 
       <Footer />
-    </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={handleDeleteConfirm}
+        title="Delete Project"
+        description="Are you sure you want to delete this project? This action cannot be undone and all associated data (scenes, storyboards, characters, etc.) will be permanently removed."
+        itemName="project"
+        isLoading={isDeleting}
+      />
+      </div>
+    </>
   );
 }
 

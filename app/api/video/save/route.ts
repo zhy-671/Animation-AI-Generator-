@@ -116,7 +116,6 @@ export async function POST(request: NextRequest) {
       data: video,
     });
   } catch (error) {
-    console.error("Error saving video:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to save video",

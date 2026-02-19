@@ -7,20 +7,20 @@ const steps = [
   {
     number: "01",
     icon: Type,
-    title: "Describe Your Idea",
-    description: "Enter a text prompt or upload an image (e.g. \"A robot dancing on the moon\"). This kicks off the animation process."
+    title: "Start with Your Idea",
+    description: "Write what you want to see, or upload a reference image. Something like \"A robot dancing on the moon\" works. We'll use this to build your animation."
   },
   {
     number: "02",
     icon: Sparkles,
-    title: "Customize with AI",
-    description: "Pick a style (2D cartoon, 3D realistic, etc.) and use our AI character animator to refine characters and settings. The tools are designed for creators of all skill levels."
+    title: "Choose Style & Refine",
+    description: "Select a visual style—2D cartoon, 3D realistic, or others. Adjust characters and scenes to match your vision. Works whether you're new to video or experienced."
   },
   {
     number: "03",
     icon: ArrowRight,
-    title: "Generate & Share",
-    description: "Click \"Generate\" and watch the animation come to life. Export your creation in formats optimized for TikTok, Reels, YouTube Shorts, or any platform."
+    title: "Export & Use Anywhere",
+    description: "Get your finished animation. Download in formats that work for TikTok, Instagram Reels, YouTube Shorts, or any platform you're posting to."
   }
 ];
 
@@ -36,10 +36,10 @@ export default function ProcessFlow() {
           className="text-center space-y-4 mb-20"
         >
           <h2 className="text-4xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-5xl">
-            Create an Animation in 3 Easy Steps
+            How It Works
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400 max-w-2xl mx-auto">
-            No tutorials needed. No complex settings. Just describe, customize, and create.
+            Start with your idea, choose the look, and get a finished animation ready to share.
           </p>
         </motion.div>
 

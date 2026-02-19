@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getUserWithRetry } from "@/lib/supabase/auth-helper";
 
 /**
  * DELETE /api/storyboard/projects/[id]
@@ -30,7 +31,6 @@ export async function DELETE(
       .eq("user_id", user.id); // 双重检查确保安全
 
     if (deleteError) {
-      console.error("Error deleting project:", deleteError);
       return NextResponse.json(
         { error: deleteError.message || "Failed to delete project" },
         { status: 500 }
@@ -41,7 +41,6 @@ export async function DELETE(
       success: true,
     });
   } catch (error) {
-    console.error("Error in DELETE /api/storyboard/projects/[id]:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to delete project",
@@ -61,11 +60,37 @@ export async function GET(
 ) {
   try {
     const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { user, error: authError, isNetworkError } = await getUserWithRetry(supabase);
 
-    if (authError || !user) {
+    if (authError) {
+      if (isNetworkError) {
+        return NextResponse.json(
+          { 
+            success: false,
+            error: "Network connection timeout. Please check your internet connection and try again.",
+            details: authError.message,
+            isNetworkError: true
+          },
+          { status: 503 } // Service Unavailable for network errors
+        );
+      }
+      
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { 
+          success: false,
+          error: "Unauthorized: Authentication failed",
+          details: authError.message 
+        },
+        { status: 401 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { 
+          success: false,
+          error: "Unauthorized: User not authenticated" 
+        },
         { status: 401 }
       );
     }
@@ -81,8 +106,6 @@ export async function GET(
       .single();
 
     if (fetchError) {
-      console.error("Error fetching project:", fetchError);
-      
       // PGRST116 错误表示查询结果为空（0行），应该返回 404 而不是 500
       if (fetchError.code === 'PGRST116' || fetchError.message?.includes('0 rows')) {
         return NextResponse.json(
@@ -121,12 +144,7 @@ export async function GET(
       .maybeSingle(); // 使用 maybeSingle 而不是 single，避免找不到数据时报错
 
     if (scriptError) {
-      console.error("Error fetching story script:", scriptError);
     } else {
-      console.log("=== GET /api/storyboard/projects/[id] - 故事剧本数据 ===");
-      console.log("storyScript exists:", !!storyScript);
-      console.log("storyScript content length:", storyScript?.content?.length || 0);
-      console.log("storyScript content preview:", storyScript?.content?.substring(0, 200) || "");
     }
 
     // 从新表获取故事大纲和角色信息
@@ -137,32 +155,11 @@ export async function GET(
       .maybeSingle(); // 使用 maybeSingle 而不是 single，避免找不到数据时报错
 
     if (outlineError) {
-      console.error("Error fetching story outline:", outlineError);
     } else {
-      console.log("=== GET /api/storyboard/projects/[id] - 故事大纲数据 ===");
-      console.log("storyOutline exists:", !!storyOutline);
       if (storyOutline) {
-        console.log("storyOutline.story_outline type:", typeof storyOutline.story_outline);
-        console.log("storyOutline.story_outline keys:", storyOutline.story_outline ? Object.keys(storyOutline.story_outline) : "null");
-        console.log("storyOutline.story_outline.theme:", storyOutline.story_outline?.theme);
-        console.log("storyOutline.story_outline.summary:", storyOutline.story_outline?.summary?.substring(0, 100));
-        console.log("storyOutline.story_outline.chapters:", storyOutline.story_outline?.chapters ? `exists (${storyOutline.story_outline.chapters.length} items)` : "null");
-        console.log("storyOutline.characters:", storyOutline.characters ? `exists (${storyOutline.characters.length} items)` : "null");
         if (storyOutline.characters && Array.isArray(storyOutline.characters)) {
-          console.log("characters preview:", storyOutline.characters.slice(0, 2).map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            age: c.age,
-            gender: c.gender,
-            hasAppearance: !!c.appearance,
-            appearanceType: typeof c.appearance,
-            hasClothingStyle: !!c.clothing_style,
-            clothingStyleType: typeof c.clothing_style,
-            allKeys: Object.keys(c),
-          })));
           // 打印第一个角色的完整数据用于调试
           if (storyOutline.characters.length > 0) {
-            console.log("第一个角色的完整数据:", storyOutline.characters[0]);
           }
         }
       }
@@ -179,7 +176,6 @@ export async function GET(
     
     // 如果 story_outline 中也有 characters 字段（可能是原始AI生成的数据），优先使用
     if (storyOutlineData.characters && Array.isArray(storyOutlineData.characters)) {
-      console.log("发现 story_outline.story_outline 中也包含 characters，检查是否需要合并...");
       // 检查哪个包含更完整的信息
       const sampleFromStoryOutline = storyOutlineData.characters[0];
       const sampleFromCharacters = fullCharactersData[0];
@@ -197,13 +193,8 @@ export async function GET(
         sampleFromCharacters.age ||
         sampleFromCharacters.gender
       );
-      
-      console.log("story_outline.characters 是否有完整信息:", storyOutlineHasFullInfo);
-      console.log("characters 字段是否有完整信息:", charactersHasFullInfo);
-      
       // 如果 story_outline 中的角色信息更完整，使用它，然后用 characters 字段中的图片URL补充
       if (storyOutlineHasFullInfo && !charactersHasFullInfo) {
-        console.log("使用 story_outline 中的完整角色信息，并用 characters 字段中的图片URL补充");
         fullCharactersData = storyOutlineData.characters.map((char: any) => {
           const charFromSimple = fullCharactersData.find((c: any) => c.id === char.id || c.name === char.name);
           return {
@@ -230,25 +221,13 @@ export async function GET(
       // 向后兼容：character_design 字段从 story_outlines.characters 获取
       character_design: fullCharactersData.length > 0 ? JSON.stringify(fullCharactersData) : null,
     };
-
-    console.log("=== GET /api/storyboard/projects/[id] - 合并后的数据 ===");
-    console.log("mergedData.content length:", mergedData.content?.length || 0);
-    console.log("mergedData.story_outline:", mergedData.story_outline ? "exists" : "null");
     if (mergedData.story_outline) {
-      console.log("mergedData.story_outline keys:", Object.keys(mergedData.story_outline));
-      console.log("mergedData.story_outline.theme:", mergedData.story_outline.theme);
-      console.log("mergedData.story_outline.summary:", mergedData.story_outline.summary?.substring(0, 100));
-      console.log("mergedData.story_outline.chapters:", mergedData.story_outline.chapters ? `exists (${mergedData.story_outline.chapters.length} items)` : "null");
-      console.log("mergedData.story_outline.characters:", mergedData.story_outline.characters ? `exists (${mergedData.story_outline.characters.length} items)` : "null");
     }
-    console.log("mergedData.character_design:", mergedData.character_design ? `exists (${mergedData.character_design.length} chars)` : "null");
-
     return NextResponse.json({
       success: true,
       data: mergedData,
     });
   } catch (error) {
-    console.error("Error in GET /api/storyboard/projects/[id]:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to fetch project",
@@ -299,8 +278,6 @@ export async function PATCH(
         .single();
 
       if (updateError) {
-        console.error("Error updating project:", updateError);
-        
         // PGRST116 错误表示查询结果为空（0行），项目不存在
         if (updateError.code === 'PGRST116' || updateError.message?.includes('0 rows')) {
           return NextResponse.json(
@@ -345,7 +322,6 @@ export async function PATCH(
         });
 
       if (scriptError) {
-        console.error("Error updating story script:", scriptError);
         return NextResponse.json(
           { 
             success: false,
@@ -368,7 +344,6 @@ export async function PATCH(
             ? JSON.parse(character_design) 
             : character_design;
         } catch (e) {
-          console.error("Error parsing character_design:", e);
         }
       }
 
@@ -413,7 +388,6 @@ export async function PATCH(
         });
 
       if (outlineError) {
-        console.error("Error updating story outline:", outlineError);
         return NextResponse.json(
           { 
             success: false,
@@ -459,7 +433,6 @@ export async function PATCH(
       data: mergedData,
     });
   } catch (error) {
-    console.error("Error in PATCH /api/storyboard/projects/[id]:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to update project",

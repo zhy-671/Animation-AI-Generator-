@@ -1,10 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { Suspense } from 'react'
+import Header from '@/components/header/header'
 
 // Google Icon Component
 function GoogleIcon() {
@@ -35,13 +37,68 @@ function GoogleIcon() {
   )
 }
 
-export default function LoginPage() {
+function LoginPageContent() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  // Save current page URL when component mounts (if not already saved)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const from = searchParams.get('from')
+      // Only save if not already set via query param
+      if (!from && !sessionStorage.getItem('loginRedirectUrl')) {
+        // Try to get from document.referrer or default to home
+        const referrer = document.referrer
+        const currentUrl = window.location.href
+        // Don't save if referrer is login page or auth callback
+        if (referrer && !referrer.includes('/login') && !referrer.includes('/auth/callback')) {
+          try {
+            const referrerUrl = new URL(referrer)
+            // Only save if same origin
+            if (referrerUrl.origin === window.location.origin) {
+              sessionStorage.setItem('loginRedirectUrl', referrerUrl.pathname + referrerUrl.search)
+            }
+          } catch (e) {
+            // Invalid URL, ignore
+          }
+        }
+      }
+    }
+  }, [searchParams])
+
+  // Get the redirect URL from query params or sessionStorage
+  const getRedirectUrl = () => {
+    const from = searchParams.get('from')
+    let redirectUrl = '/'
+    
+    if (from) {
+      redirectUrl = decodeURIComponent(from)
+    } else if (typeof window !== 'undefined') {
+      // Try to get from sessionStorage
+      const savedUrl = sessionStorage.getItem('loginRedirectUrl')
+      if (savedUrl) {
+        sessionStorage.removeItem('loginRedirectUrl')
+        redirectUrl = savedUrl
+      }
+    }
+    
+    // Normalize redirect URL - don't redirect to non-existent pages
+    if (redirectUrl === '/sign-in' || redirectUrl.startsWith('/sign-in')) {
+      redirectUrl = '/'
+    }
+    
+    // Don't redirect back to login or auth pages
+    if (redirectUrl === '/login' || redirectUrl.startsWith('/auth/')) {
+      redirectUrl = '/'
+    }
+    
+    return redirectUrl
+  }
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -57,8 +114,10 @@ export default function LoginPage() {
       setError(error.message)
       setIsLoading(false)
     } else {
-      router.push('/')
-      router.refresh()
+      // Get redirect URL and navigate back
+      const redirectUrl = getRedirectUrl()
+      // Force a full page reload to ensure Header updates
+      window.location.href = redirectUrl
     }
   }
 
@@ -85,26 +144,56 @@ export default function LoginPage() {
   }
 
   const handleGoogleSignIn = async () => {
-    setIsLoading(true)
-    setError(null)
+    try {
+      setIsLoading(true)
+      setError(null)
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-      },
-    })
+      // Save redirect URL for OAuth callback
+      const redirectUrl = getRedirectUrl()
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('loginRedirectUrl', redirectUrl)
+      }
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(redirectUrl)}`,
+        },
+      })
+      if (error) {
+        setError(error.message || 'Failed to initiate Google sign in. Please check your Google OAuth configuration.')
+        setIsLoading(false)
+        return
+      }
 
-    if (error) {
-      setError(error.message)
+      // Check if we got a URL to redirect to
+      if (data?.url) {
+        // Validate that the URL is actually a Google OAuth URL
+        if (data.url.includes('accounts.google.com') || data.url.includes('supabase.co')) {
+          // Manually redirect to the OAuth URL
+          window.location.href = data.url
+          return
+        } else {
+          // URL doesn't look like a valid OAuth URL
+          setError('Invalid OAuth URL received. Please check your Google OAuth configuration in Supabase Dashboard.')
+          setIsLoading(false)
+          return
+        }
+      }
+
+      // If no URL was returned, show an error
+      setError('Failed to initiate Google sign in. Please check your Google OAuth configuration in Supabase Dashboard.')
+      setIsLoading(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred')
       setIsLoading(false)
     }
-    // 如果成功，用户会被重定向到 Google，然后回到 callback
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
-      <div className="max-w-md w-full space-y-8">
+    <>
+      <Header />
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 px-4">
+        <div className="max-w-md w-full space-y-8">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-white">Welcome Back</h1>
           <p className="mt-2 text-gray-400">Sign in to your account</p>
@@ -204,8 +293,21 @@ export default function LoginPage() {
             </Link>
           </div>
         </form>
+        </div>
       </div>
-    </div>
+    </>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gray-900">
+        <div className="text-white">Loading...</div>
+      </div>
+    }>
+      <LoginPageContent />
+    </Suspense>
   )
 }
 

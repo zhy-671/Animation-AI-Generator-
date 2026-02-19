@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { getUserWithRetry } from "@/lib/supabase/auth-helper";
 
 /**
  * POST /api/storyboard/projects
@@ -8,11 +9,28 @@ import { createClient } from "@/lib/supabase/server";
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { user, error: authError, isNetworkError } = await getUserWithRetry(supabase);
 
-    if (authError || !user) {
+    if (authError) {
+      if (isNetworkError) {
+        return NextResponse.json(
+          { 
+            success: false,
+            error: "Network connection timeout. Please check your internet connection and try again.",
+            isNetworkError: true
+          },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
@@ -56,7 +74,6 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError) {
-      console.error("Error creating project:", insertError);
       return NextResponse.json(
         { error: insertError.message || "Failed to create project" },
         { status: 500 }
@@ -74,7 +91,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error in POST /api/storyboard/projects:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to create project",
@@ -91,11 +107,28 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { user, error: authError, isNetworkError } = await getUserWithRetry(supabase);
 
-    if (authError || !user) {
+    if (authError) {
+      if (isNetworkError) {
+        return NextResponse.json(
+          { 
+            success: false,
+            error: "Network connection timeout. Please check your internet connection and try again.",
+            isNetworkError: true
+          },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
         { status: 401 }
       );
     }
@@ -107,7 +140,6 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false });
 
     if (fetchError) {
-      console.error("Error fetching projects:", fetchError);
       return NextResponse.json(
         { error: fetchError.message || "Failed to fetch projects" },
         { status: 500 }
@@ -159,7 +191,6 @@ export async function GET(request: NextRequest) {
             }
           }
         } catch (error) {
-          console.error(`Error fetching thumbnail for project ${project.id}:`, error);
           // 如果出错，thumbnailUrl 保持为 null
         }
 
@@ -175,7 +206,6 @@ export async function GET(request: NextRequest) {
       data: projectsWithThumbnails || [],
     });
   } catch (error) {
-    console.error("Error in GET /api/storyboard/projects:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to fetch projects",

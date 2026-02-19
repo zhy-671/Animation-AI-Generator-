@@ -15,7 +15,7 @@ export interface CreditRule {
 export const CREDIT_RULES: CreditRule[] = [
   {
     type: 'image',
-    credits: 1,
+    credits: 5,
     costCNY: 0.2,
     costUSD: 0.03,
   },
@@ -74,7 +74,7 @@ export const CREDIT_RULES: CreditRule[] = [
  */
 export function getImageCredits(): number {
   const rule = CREDIT_RULES.find(r => r.type === 'image');
-  return rule?.credits || 1;
+  return rule?.credits || 5;
 }
 
 /**
@@ -137,7 +137,7 @@ export function getCreditRulesDescription(): Array<{
   return [
     {
       label: '1 AI Image',
-      credits: 1,
+      credits: 5,
       description: 'Generate storyboard images or cover images',
     },
     {

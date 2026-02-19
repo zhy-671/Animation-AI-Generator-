@@ -77,11 +77,17 @@ export default function VideoJSPlayer({
       });
 
       player.on("timeupdate", () => {
-        onTimeUpdate?.(player.currentTime());
+        const currentTime = player.currentTime();
+        if (currentTime !== undefined && currentTime !== null) {
+          onTimeUpdate?.(currentTime);
+        }
       });
 
       player.on("loadedmetadata", () => {
-        onDurationChange?.(player.duration());
+        const duration = player.duration();
+        if (duration !== undefined && duration !== null) {
+          onDurationChange?.(duration);
+        }
       });
 
       player.on("error", () => {

@@ -10,34 +10,35 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Check, Sparkles, Zap, Crown } from "lucide-react";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
-import { subscribeToPlan, purchaseCredits, refreshCreditsBalance } from "@/lib/payment/client";
+import { subscribeToPlan, purchaseCredits, refreshCreditsBalance, refreshSubscriptionPlan } from "@/lib/payment/client";
 import { createClient } from "@/lib/supabase/client";
+import { trackCompletePayment } from "@/lib/tiktok-pixel";
 
 const subscriptionPlans = [
   {
     name: "Basic",
     price: "$19.99",
     period: "per month",
-    credits: 200,
+    credits: 1500,
     features: [
-      "200 Credits/month",
+      "1,500 Credits/month",
       "Text-to-Video Generation",
       "Image-to-Video Generation",
       "480p / 720p Resolution",
-      "4 Credits/second for video",
       "50 Images/month",
       "20 Storyboards/month",
       "60s Voiceover/month",
-      "3 Downloads per day",
-      "Video Download",
+      "Individual Video Download",
       "Email Support",
     ],
     limitations: [
       "480p / 720p only",
       "No Commercial License",
+      "No Complete Video Export",
     ],
     commercialLicense: false,
     videoResolutions: ["480p", "720p"],
+    allowsCompleteVideoExport: false,
     popular: false,
     icon: Sparkles,
   },
@@ -45,25 +46,23 @@ const subscriptionPlans = [
     name: "Pro",
     price: "$39.99",
     period: "per month",
-    credits: 700,
+    credits: 3500,
     features: [
-      "700 Credits/month",
+      "3,500 Credits/month",
       "All Basic Features",
-      "480p / 720p Resolution",
-      "5 Credits/second for video",
+      "480p / 720p / 1080p Resolution",
       "200 Images/month",
       "100 Storyboards/month",
       "300s Voiceover/month",
-      "10 Downloads per day",
+      "Individual Video Download",
+      "Complete Video Export",
       "Commercial Use License",
-      "Video Download",
       "Priority Support",
     ],
-    limitations: [
-      "480p / 720p only",
-    ],
+    limitations: [],
     commercialLicense: true,
-    videoResolutions: ["480p", "720p"],
+    videoResolutions: ["480p", "720p", "1080p"],
+    allowsCompleteVideoExport: true,
     popular: true,
     icon: Zap,
   },
@@ -71,24 +70,24 @@ const subscriptionPlans = [
     name: "Studio",
     price: "$129.99",
     period: "per month",
-    credits: 2000,
+    credits: 10000,
     features: [
-      "2,000 Credits/month",
+      "10,000 Credits/month",
       "All Pro Features",
       "720p / 1080p Resolution",
-      "720p: 4 Credits/second",
-      "1080p: 8 Credits/second",
       "500 Images/month",
       "200 Storyboards/month",
       "900s Voiceover/month",
-      "Unlimited Downloads",
+      "Individual Video Download",
+      "Complete Video Export",
       "Commercial License",
-      "Video Download & Storage",
+      "Video Storage",
       "Premium Customer Support",
     ],
     limitations: [],
     commercialLicense: true,
     videoResolutions: ["720p", "1080p"],
+    allowsCompleteVideoExport: true,
     popular: false,
     icon: Crown,
   },
@@ -132,35 +131,59 @@ const creditPackages = [
 
 export default function PricingPage() {
   const [activeTab, setActiveTab] = useState<"subscription" | "credits">("subscription");
-  const [loading, setLoading] = useState<string | null>(null); // 存储正在加载的订单ID
+  const [loading, setLoading] = useState<string | null>(null); // Store the ID of the order being loaded
   const [error, setError] = useState<string | null>(null);
   const creditsSectionRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const supabase = createClient();
 
-  // 处理订阅
+  // Handle subscription
   const handleSubscribe = async (planName: 'basic' | 'pro' | 'studio') => {
     try {
       setError(null);
       setLoading(`subscribe-${planName}`);
-      
       // 检查用户是否登录
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login?redirect=/pricing');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setLoading(null);
+        setError('Please login to continue');
+        setTimeout(() => {
+          router.push('/login?from=' + encodeURIComponent('/pricing'));
+        }, 1500);
         return;
       }
-
-      const result = await subscribeToPlan(planName);
-      
+      // 添加超时处理
+      const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) => {
+        setTimeout(() => {
+          resolve({ success: false, error: 'Request timeout. Please try again.' });
+        }, 30000); // 30秒超时
+      });
+      const result = await Promise.race([
+        subscribeToPlan(planName),
+        timeoutPromise,
+      ]);
       if (!result.success) {
-        setError(result.error || 'Failed to create subscription order');
+        const errorMessage = result.error || 'Failed to create subscription order';
+        setError(errorMessage);
+        setLoading(null);
+      } else if (result.payment_url) {
+        // If successful and payment URL exists, redirect to payment page
+        // window.location.href is already handled in subscribeToPlan
+        // If redirect fails, set a fallback timeout
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            // 如果页面还在焦点，说明跳转可能失败了
+            setError('Redirect failed. Please check the payment URL manually.');
+            setLoading(null);
+          }
+        }, 2000);
+      } else {
+        setError('Payment URL not received from server');
         setLoading(null);
       }
-      // 如果成功，会跳转到支付页面，所以不需要处理成功情况
     } catch (err) {
-      console.error('Error subscribing:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMessage);
       setLoading(null);
     }
   };
@@ -172,22 +195,48 @@ export default function PricingPage() {
       setLoading(`credits-${packageName}`);
       
       // 检查用户是否登录
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login?redirect=/pricing');
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setLoading(null);
+        setError('Please login to continue');
+        setTimeout(() => {
+          router.push('/login?from=' + encodeURIComponent('/pricing'));
+        }, 1500);
         return;
       }
+      // 添加超时处理
+      const timeoutPromise = new Promise<{ success: false; error: string }>((resolve) => {
+        setTimeout(() => {
+          resolve({ success: false, error: 'Request timeout. Please try again.' });
+        }, 30000); // 30秒超时
+      });
 
-      const result = await purchaseCredits(packageName);
-      
+      const result = await Promise.race([
+        purchaseCredits(packageName),
+        timeoutPromise,
+      ]);
       if (!result.success) {
-        setError(result.error || 'Failed to create credit purchase order');
+        const errorMessage = result.error || 'Failed to create credit purchase order';
+        setError(errorMessage);
+        setLoading(null);
+      } else if (result.payment_url) {
+        // 如果成功且有支付URL，会跳转到支付页面
+        // window.location.href 已经在 purchaseCredits 中处理了
+        // 如果跳转失败，设置一个备用超时
+        setTimeout(() => {
+          if (document.hasFocus()) {
+            // 如果页面还在焦点，说明跳转可能失败了
+            setError('Redirect failed. Please check the payment URL manually.');
+            setLoading(null);
+          }
+        }, 2000);
+      } else {
+        setError('Payment URL not received from server');
         setLoading(null);
       }
-      // 如果成功，会跳转到支付页面，所以不需要处理成功情况
     } catch (err) {
-      console.error('Error purchasing credits:', err);
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      const errorMessage = err instanceof Error ? err.message : 'An error occurred';
+      setError(errorMessage);
       setLoading(null);
     }
   };
@@ -197,14 +246,241 @@ export default function PricingPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const paymentStatus = params.get('payment_status');
+      const orderId = params.get('order_id');
+      const checkoutId = params.get('checkout_id');
+      const subscriptionId = params.get('subscription_id');
       
-      if (paymentStatus === 'success') {
-        // 支付成功，刷新积分余额
-        refreshCreditsBalance();
-        // 清除URL参数
-        window.history.replaceState({}, '', '/pricing');
+      // 如果有订单ID（无论是否有 payment_status），都尝试处理
+      // 因为 Creem 可能直接重定向到 pricing 页面，不经过 /payment/success
+      if (orderId) {
+        // 如果有 checkout_id 或 subscription_id，说明是支付成功返回
+        const isPaymentSuccess = paymentStatus === 'success' || checkoutId || subscriptionId;
+        
+        if (isPaymentSuccess) {
+        // 使用 sessionStorage 来防止重复发送事件（即使页面刷新）
+        const eventKey = `tt_payment_event_${orderId}`;
+        const eventAlreadySent = sessionStorage.getItem(eventKey);
+        
+        if (eventAlreadySent) {
+          // 清除URL参数
+          window.history.replaceState({}, '', '/pricing');
+          return;
+        }
+        
+        // 获取订单信息并验证支付状态，支持轮询等待订单完成
+        const fetchOrderInfo = async (retryCount = 0) => {
+          try {
+            // 如果有 checkout_id，也传递给 API
+            const url = checkoutId 
+              ? `/api/payment/order/${orderId}?checkout_id=${encodeURIComponent(checkoutId)}`
+              : `/api/payment/order/${orderId}`;
+            const response = await fetch(url);
+            if (response.ok) {
+              const orderData = await response.json();
+              
+              if (orderData.success && orderData.order) {
+                // 订单找到，继续处理
+                const order = orderData.order;
+                
+                // 如果订单状态为 'completed' 或 'processing'，则发送事件
+                // 因为如果积分已经增加，说明支付已经成功，即使订单状态还是 'processing'
+                if (order.status === 'completed' || order.status === 'processing') {
+                  const productType = order.product_type || 'credits';
+                  const amount = parseFloat(order.amount || '0');
+                  
+                  // 发送 CompletePayment 事件
+                  const eventSent = trackCompletePayment({
+                    content_type: 'product',
+                    value: amount,
+                    currency: 'USD',
+                    content_name: productType === 'subscription' 
+                      ? order.plan_name || 'Subscription' 
+                      : `${order.credits || 0} Credits`,
+                    content_id: orderId,
+                  });
+                  
+                  if (eventSent) {
+                    // 标记事件已发送
+                    sessionStorage.setItem(eventKey, 'true');
+                  }
+                  
+                  // 如果有 subscription_id，保存到数据库
+                  if (subscriptionId) {
+                    try {
+                      await fetch('/api/subscription/update-subscription-id', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          subscription_id: subscriptionId,
+                        }),
+                      });
+                    } catch (error) {
+                      // 静默处理错误
+                    }
+                  }
+                  
+                  // 支付成功，刷新积分余额和订阅计划（不刷新页面，只更新状态）
+                  refreshCreditsBalance();
+                  
+                  // 刷新订阅计划并保存到 Cookie（不刷新页面）
+                  const refreshSubscriptionPlanData = async () => {
+                    try {
+                      const response = await fetch('/api/subscription/plan');
+                      if (response.ok) {
+                        const data = await response.json();
+                        if (data.data?.plan) {
+                          // 保存到 Cookie
+                          const expires = new Date();
+                          expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+                          document.cookie = `subscription_plan=${data.data.plan}; expires=${expires.toUTCString()}; path=/`;
+                        }
+                      }
+                    } catch (error) {
+                      // 静默处理错误
+                    }
+                  };
+                  
+                  refreshSubscriptionPlanData();
+                  
+                  // 触发订阅计划更新事件，通知其他页面刷新
+                  refreshSubscriptionPlan();
+                  
+                  return; // 事件已发送，不再重试
+                } 
+                // 如果订单状态是 'processing'，继续轮询等待订单完成
+                else if (order.status === 'processing' && retryCount < 10) {
+                  setTimeout(() => {
+                    fetchOrderInfo(retryCount + 1);
+                  }, 2000);
+                }
+                // 如果订单状态不是 'completed' 且不是 'processing'，清除URL参数
+                else {
+                  window.history.replaceState({}, '', '/pricing');
+                }
+              } else {
+                // 如果获取订单失败，但重试次数未达上限，继续重试
+                if (retryCount < 10) {
+                  setTimeout(() => {
+                    fetchOrderInfo(retryCount + 1);
+                  }, 2000);
+                } else {
+                  // 清除URL参数
+                  window.history.replaceState({}, '', '/pricing');
+                }
+              }
+            } else {
+              // 如果订单不存在（404），但有 subscription_id，说明是订阅支付成功
+              // 可以直接发送事件，不需要等待订单
+              if (response.status === 404 && subscriptionId) {
+                // 先保存 subscription_id
+                try {
+                  await fetch('/api/subscription/update-subscription-id', {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                      subscription_id: subscriptionId,
+                    }),
+                  });
+                } catch (error) {
+                  // 静默处理错误
+                }
+                
+                // 获取订阅计划信息
+                try {
+                  const planResponse = await fetch('/api/subscription/plan');
+                  if (planResponse.ok) {
+                    const planData = await planResponse.json();
+                    if (planData.success && planData.data?.plan) {
+                      // 从配置中获取订阅计划的价格
+                      const SUBSCRIPTION_PLANS: Record<string, { price: number; credits: number }> = {
+                        basic: { price: 19.99, credits: 1500 },
+                        pro: { price: 39.99, credits: 3500 },
+                        studio: { price: 129.99, credits: 10000 },
+                      };
+                      
+                      const planInfo = SUBSCRIPTION_PLANS[planData.data.plan];
+                      if (planInfo) {
+                        const eventSent = trackCompletePayment({
+                          content_type: 'product',
+                          value: planInfo.price,
+                          currency: 'USD',
+                          content_name: planData.data.plan.charAt(0).toUpperCase() + planData.data.plan.slice(1) + ' Plan',
+                          content_id: subscriptionId,
+                        });
+                        
+                        if (eventSent) {
+                          sessionStorage.setItem(eventKey, 'true');
+                          
+                          // 刷新积分余额和订阅计划（不刷新页面，只更新状态）
+                          refreshCreditsBalance();
+                          
+                          // 刷新订阅计划并保存到 Cookie（不刷新页面）
+                          const refreshSubscriptionPlanData = async () => {
+                            try {
+                              const response = await fetch('/api/subscription/plan');
+                              if (response.ok) {
+                                const data = await response.json();
+                                if (data.data?.plan) {
+                                  // 保存到 Cookie
+                                  const expires = new Date();
+                                  expires.setTime(expires.getTime() + 30 * 24 * 60 * 60 * 1000); // 30天
+                                  document.cookie = `subscription_plan=${data.data.plan}; expires=${expires.toUTCString()}; path=/`;
+                                }
+                              }
+                            } catch (error) {
+                              // 静默处理错误
+                            }
+                          };
+                          
+                          refreshSubscriptionPlanData();
+                          
+                          // 触发订阅计划更新事件，通知其他页面刷新
+                          refreshSubscriptionPlan();
+                          
+                          return; // 事件已发送，不再重试
+                        }
+                      }
+                    }
+                  }
+                } catch (error) {
+                  // 静默处理错误
+                }
+              }
+              
+              // 如果获取订单失败，但重试次数未达上限，继续重试
+              if (retryCount < 10) {
+                setTimeout(() => {
+                  fetchOrderInfo(retryCount + 1);
+                }, 2000);
+              } else {
+                // 清除URL参数
+                window.history.replaceState({}, '', '/pricing');
+              }
+            }
+          } catch (error) {
+            // 如果出错，但重试次数未达上限，继续重试
+            if (retryCount < 10) {
+              setTimeout(() => {
+                fetchOrderInfo(retryCount + 1);
+              }, 2000);
+            } else {
+              // 清除URL参数
+              window.history.replaceState({}, '', '/pricing');
+            }
+          }
+        };
+        
+        fetchOrderInfo();
+        }
       } else if (paymentStatus === 'failed') {
         setError('Payment failed. Please try again.');
+        // 清除URL参数
+        window.history.replaceState({}, '', '/pricing');
+      } else if (paymentStatus === 'cancelled') {
         // 清除URL参数
         window.history.replaceState({}, '', '/pricing');
       }
@@ -223,6 +499,7 @@ export default function PricingPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white dark:from-gray-950 dark:to-gray-900 flex flex-col">
       <Header />
+      
       {/* Hero Section */}
       <section className="container mx-auto px-4 py-16 md:py-24 flex-grow">
         <motion.div
@@ -358,7 +635,17 @@ export default function PricingPage() {
                               : ""
                           }`}
                           variant={plan.popular ? "default" : "outline"}
-                          onClick={() => handleSubscribe(plan.name.toLowerCase() as 'basic' | 'pro' | 'studio')}
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            const planName = plan.name.toLowerCase() as 'basic' | 'pro' | 'studio';
+                            try {
+                              await handleSubscribe(planName);
+                            } catch (error) {
+                              setError(error instanceof Error ? error.message : 'An unexpected error occurred');
+                              setLoading(null);
+                            }
+                          }}
                           disabled={loading === `subscribe-${plan.name.toLowerCase()}`}
                         >
                           {loading === `subscribe-${plan.name.toLowerCase()}` ? 'Processing...' : 'Get Started'}
@@ -435,7 +722,11 @@ export default function PricingPage() {
                             : ""
                         }`}
                         variant={pkg.popular ? "default" : "outline"}
-                        onClick={() => handlePurchaseCredits(pkg.name)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handlePurchaseCredits(pkg.name);
+                        }}
                         disabled={loading === `credits-${pkg.name}`}
                       >
                         {loading === `credits-${pkg.name}` ? 'Processing...' : 'Buy Credits'}
@@ -454,13 +745,18 @@ export default function PricingPage() {
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg max-w-md"
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-20 left-1/2 -translate-x-1/2 z-[99999] bg-red-500 text-white px-6 py-3 rounded-lg shadow-2xl max-w-md border-2 border-red-600"
+            role="alert"
           >
             <div className="flex items-center justify-between gap-4">
-              <span>{error}</span>
+              <span className="font-medium text-sm">{error}</span>
               <button
-                onClick={() => setError(null)}
-                className="text-white hover:text-gray-200"
+                onClick={() => {
+                  setError(null);
+                }}
+                className="text-white hover:text-gray-200 transition-colors flex-shrink-0 text-lg font-bold leading-none"
+                aria-label="Close error message"
               >
                 ✕
               </button>

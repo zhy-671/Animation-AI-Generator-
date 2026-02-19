@@ -36,7 +36,6 @@ export async function GET(request: NextRequest) {
       data: status,
     });
   } catch (error) {
-    console.error("Error querying image status:", error);
     return NextResponse.json(
       {
         success: false,

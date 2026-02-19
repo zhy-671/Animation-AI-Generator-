@@ -23,7 +23,6 @@ class TOSClient {
     const endpoint = process.env.VOLCANO_TOS_ENDPOINT || `tos-${region}.volces.com`;
 
     if (!accessKeyId || !secretAccessKey) {
-      console.warn("VOLCANO_TOS_ACCESS_KEY_ID and VOLCANO_TOS_SECRET_ACCESS_KEY are not set");
     }
 
     this.config = {
@@ -66,7 +65,6 @@ class TOSClient {
       // 返回公开访问 URL
       return `https://${bucket}.${this.config.endpoint}/${key}`;
     } catch (error) {
-      console.error("Error uploading to TOS:", error);
       throw error;
     }
   }
@@ -93,15 +91,37 @@ class TOSClient {
   }
 
   /**
+   * 上传音频到配置的 bucket
+   */
+  async uploadAudio(file: Buffer | ArrayBuffer, filename: string, format: string = 'mp3'): Promise<string> {
+    const key = `audio/${filename}`;
+    // 根据格式确定Content-Type
+    const contentType = format === 'mp3' ? 'audio/mpeg' : 
+                        format === 'wav' ? 'audio/wav' : 
+                        format === 'm4a' ? 'audio/mp4' : 
+                        'audio/mpeg';
+    const bucket = process.env.VOLC_TOS_BUCKET || "storybooks"; // 使用图片bucket或创建新的audio bucket
+    return this.uploadFile(bucket, key, file, contentType);
+  }
+
+  /**
    * 从 URL 下载并上传图片
    */
   async uploadImageFromUrl(imageUrl: string, filename: string): Promise<string> {
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to download image: ${response.statusText}`);
+    try {
+      const response = await fetch(imageUrl);
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '无法读取错误响应');
+        throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+      }
+      const buffer = await response.arrayBuffer();
+      const uploadedUrl = await this.uploadImage(buffer, filename);
+      return uploadedUrl;
+    } catch (error) {
+      if (error instanceof Error) {
+      }
+      throw error;
     }
-    const buffer = await response.arrayBuffer();
-    return this.uploadImage(buffer, filename);
   }
 
   /**
@@ -140,7 +160,6 @@ class TOSClient {
       
       return presignedUrl;
     } catch (error) {
-      console.error("Error generating presigned URL:", error);
       // 如果生成预签名 URL 失败，返回公开访问 URL（如果 bucket 是公开的）
       return `https://${bucket}.${this.config.endpoint}/${key}`;
     }
@@ -194,14 +213,9 @@ class TOSClient {
         bucket = process.env.VOLC_TOS_BUCKET || process.env.VOLCANO_TOS_BUCKET || "storybooks";
         key = imageUrl;
       }
-      
-      console.log(`Generating presigned URL for bucket: ${bucket}, key: ${key}`);
-      
       return this.getPresignedUrl(bucket, key, expiresIn);
     } catch (error) {
-      console.error("Error generating presigned URL:", error);
       // 如果生成预签名 URL 失败，返回原始 URL
-      console.warn("Failed to generate presigned URL, returning original URL:", imageUrl);
       return imageUrl;
     }
   }

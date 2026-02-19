@@ -4,36 +4,49 @@
 
 import { getImageCredits, getVideoCredits } from './rules';
 import { calculateVideoCredits, type SubscriptionPlan } from '../subscription/rules';
+import { getApiUrlWithSubdomain, getSubdomainFetchOptions } from '../api/config';
 
 /**
  * 扣除积分
  * @param amount 积分数量
  * @param description 描述
  * @param metadata 元数据
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
 export async function deductCredits(
   amount: number,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  token?: string
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
   try {
-    console.log('Deducting credits:', { amount, description, metadata });
-    const response = await fetch('/api/credits/operate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount,
-        type: 'subtract',
-        description,
-        metadata,
-      }),
-    });
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/operate'),
+      getSubdomainFetchOptions({
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          type: 'subtract',
+          description,
+          metadata,
+        }),
+      }, accessToken)
+    );
 
     const result = await response.json();
-    console.log('Credits operate API response:', { status: response.status, result });
-
     if (!response.ok || !result.success) {
       return {
         success: false,
@@ -41,14 +54,21 @@ export async function deductCredits(
       };
     }
 
-    // 返回新的余额
+    // 从API响应中直接获取新余额（API返回credits字段）
+    if (result.credits !== undefined) {
+      return {
+        success: true,
+        newBalance: result.credits,
+      };
+    }
+
+    // 如果API没有返回余额，再次查询
     const balanceCheck = await checkCreditsBalance(0);
     return {
       success: true,
       newBalance: balanceCheck.balance,
     };
   } catch (error) {
-    console.error('Error deducting credits:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to deduct credits',
@@ -59,13 +79,41 @@ export async function deductCredits(
 /**
  * 检查积分余额是否足够
  * @param required 需要的积分数量
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
-export async function checkCreditsBalance(required: number): Promise<{ sufficient: boolean; balance?: number; error?: string }> {
+export async function checkCreditsBalance(required: number, token?: string): Promise<{ sufficient: boolean; balance?: number; error?: string }> {
   try {
-    const response = await fetch('/api/credits/balance');
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/balance'),
+      getSubdomainFetchOptions({
+        method: 'GET',
+      }, accessToken)
+    );
     const result = await response.json();
 
     if (!response.ok) {
+      // If user is not authenticated (401), return gracefully without error
+      // This is expected when user is not logged in
+      if (response.status === 401) {
+        return {
+          sufficient: false,
+          balance: 0,
+        };
+      }
+      
       return {
         sufficient: false,
         error: result.error || 'Failed to check credits balance',
@@ -78,7 +126,6 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
       balance,
     };
   } catch (error) {
-    console.error('Error checking credits balance:', error);
     return {
       sufficient: false,
       error: error instanceof Error ? error.message : 'Failed to check credits balance',
@@ -91,25 +138,40 @@ export async function checkCreditsBalance(required: number): Promise<{ sufficien
  * @param amount 积分数量
  * @param description 描述
  * @param metadata 元数据
+ * @param token 可选的 Bearer token，如果不提供则从 Supabase session 获取
  */
 export async function addCredits(
   amount: number,
   description: string,
-  metadata?: Record<string, any>
+  metadata?: Record<string, any>,
+  token?: string
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
   try {
-    const response = await fetch('/api/credits/operate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        amount,
-        type: 'add',
-        description,
-        metadata,
-      }),
-    });
+    // If token not provided, try to get it from Supabase session
+    let accessToken = token;
+    if (!accessToken && typeof window !== 'undefined') {
+      try {
+        const { createClient } = await import('@/lib/supabase/client');
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        accessToken = session?.access_token;
+      } catch (error) {
+        // If we can't get token, continue without it (will get 401)
+      }
+    }
+
+    const response = await fetch(
+      getApiUrlWithSubdomain('/api/credits/operate'),
+      getSubdomainFetchOptions({
+        method: 'POST',
+        body: JSON.stringify({
+          amount,
+          type: 'add',
+          description,
+          metadata,
+        }),
+      }, accessToken)
+    );
 
     const result = await response.json();
 
@@ -127,7 +189,6 @@ export async function addCredits(
       newBalance: balanceCheck.balance,
     };
   } catch (error) {
-    console.error('Error adding credits:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to add credits',
@@ -145,31 +206,69 @@ export async function deductImageCredits(metadata?: Record<string, any>): Promis
 
 /**
  * 扣除视频生成积分
- * @param resolution 视频分辨率
+ * @param resolution 视频分辨率（用户选择的分辨率）
  * @param duration 视频时长（秒）
  * @param metadata 元数据
  * @param subscriptionPlan 订阅计划（可选，如果提供则使用订阅计划相关的积分计算）
+ * @param isPaidUser 是否为充值用户（无订阅但充值了积分）
  */
 export async function deductVideoCredits(
   resolution: '480p' | '720p' | '1080p',
   duration: number,
   metadata?: Record<string, any>,
-  subscriptionPlan?: SubscriptionPlan
+  subscriptionPlan?: SubscriptionPlan,
+  isPaidUser?: boolean
 ): Promise<{ success: boolean; error?: string; newBalance?: number }> {
-  // 如果提供了订阅计划，使用订阅计划相关的积分计算
-  const credits = subscriptionPlan !== undefined 
-    ? calculateVideoCredits(subscriptionPlan, resolution, duration)
-    : getVideoCredits(resolution, duration);
+  let credits: number;
+  let actualResolution: '480p' | '720p' | '1080p' = resolution;
+  
+  if (subscriptionPlan !== undefined && subscriptionPlan !== null) {
+    // 订阅用户：根据订阅计划强制使用高分辨率费率
+    // Basic计划：统一按720p费率（15积分/秒）
+    // Pro计划：480p和720p按720p费率（15积分/秒），1080p按1080p费率（24积分/秒）
+    // Studio计划：统一按1080p费率（24积分/秒）
+    if (subscriptionPlan === 'basic') {
+      // Basic用户无论选择什么分辨率，都按720p费率扣除
+      actualResolution = '720p';
+      credits = calculateVideoCredits(subscriptionPlan, '720p', duration);
+    } else if (subscriptionPlan === 'pro') {
+      // Pro用户：480p和720p按720p费率扣除，1080p按1080p费率扣除
+      if (resolution === '1080p') {
+        actualResolution = '1080p';
+        credits = calculateVideoCredits(subscriptionPlan, '1080p', duration);
+      } else {
+        actualResolution = '720p';
+        credits = calculateVideoCredits(subscriptionPlan, '720p', duration);
+      }
+    } else if (subscriptionPlan === 'studio') {
+      // Studio用户无论选择什么分辨率，都按1080p费率扣除
+      actualResolution = '1080p';
+      credits = calculateVideoCredits(subscriptionPlan, '1080p', duration);
+    } else {
+      // 其他情况使用原分辨率计算
+      credits = calculateVideoCredits(subscriptionPlan, resolution, duration);
+    }
+  } else if (isPaidUser) {
+    // 充值用户（无订阅）：统一按720p费率扣除（15积分/秒）
+    actualResolution = '720p';
+    credits = getVideoCredits('720p', duration);
+  } else {
+    // Free用户或其他情况：统一按720p费率扣除（15积分/秒）
+    actualResolution = '720p';
+    credits = getVideoCredits('720p', duration);
+  }
     
   return await deductCredits(
     credits,
-    `Generated ${duration}s ${resolution} video`,
+    `Generated ${duration}s ${resolution} video (charged at ${actualResolution} rate)`,
     {
       ...metadata,
       resolution,
+      actualResolution, // 实际扣除费率对应的分辨率
       duration,
       credits,
       subscriptionPlan: subscriptionPlan || null,
+      isPaidUser: isPaidUser || false,
     }
   );
 }
@@ -187,6 +286,57 @@ export async function deductStoryboardCredits(metadata?: Record<string, any>): P
       ...metadata,
       type: 'storyboard',
       credits: STORYBOARD_CREDITS,
+    }
+  );
+}
+
+/**
+ * 扣除音乐生成积分（非歌词模式）
+ * 非歌词模式固定消耗5积分
+ */
+export async function deductMusicCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const MUSIC_CREDITS = 5;
+  return await deductCredits(
+    MUSIC_CREDITS,
+    'Generated AI music (non-lyrics)',
+    {
+      ...metadata,
+      type: 'music',
+      credits: MUSIC_CREDITS,
+    }
+  );
+}
+
+/**
+ * 扣除歌词生成积分
+ * 歌词生成固定消耗5积分
+ */
+export async function deductLyricsCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const LYRICS_CREDITS = 5;
+  return await deductCredits(
+    LYRICS_CREDITS,
+    'Generated AI lyrics',
+    {
+      ...metadata,
+      type: 'lyrics',
+      credits: LYRICS_CREDITS,
+    }
+  );
+}
+
+/**
+ * 扣除带歌词的音乐生成积分
+ * 带歌词的音乐生成固定消耗30积分
+ */
+export async function deductMusicWithLyricsCredits(metadata?: Record<string, any>): Promise<{ success: boolean; error?: string; newBalance?: number }> {
+  const MUSIC_WITH_LYRICS_CREDITS = 30;
+  return await deductCredits(
+    MUSIC_WITH_LYRICS_CREDITS,
+    'Generated AI music with lyrics',
+    {
+      ...metadata,
+      type: 'music_with_lyrics',
+      credits: MUSIC_WITH_LYRICS_CREDITS,
     }
   );
 }

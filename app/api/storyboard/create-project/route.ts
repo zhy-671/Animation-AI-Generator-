@@ -30,63 +30,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const apiKey = process.env.DASHSCOPE_API_KEY;
+    // 使用 Laozhang API Key
+    const apiKey = process.env.LAOZHANG_API_KEY_STORY;
     if (!apiKey) {
-      console.error("DASHSCOPE_API_KEY is not configured in environment variables");
       return NextResponse.json(
-        { success: false, error: "DASHSCOPE_API_KEY is not configured" },
+        { success: false, error: "LAOZHANG_API_KEY_STORY is not configured" },
         { status: 500 }
       );
     }
 
     // 构建提示词
-    const systemPrompt = `You are a professional anime and cinematic screenwriter and character designer. 
+    const systemPrompt = `You are a professional anime and cinematic screenwriter and character designer specializing in Western/international settings.
 
-Based on the following story text, generate a **complete story outline** and **extremely detailed character information** suitable for animation or cinematic adaptation.
+Based on the following story text, generate a **complete story outline** and **detailed character information** suitable for animation or cinematic adaptation.
+
+IMPORTANT REQUIREMENTS:
+
+1. All settings and scenes must be Western/international (cities, suburbs, European architecture, schools, etc.). Avoid Eastern/Asian-specific cultural elements unless requested.
+
+2. Character Names: Must be Western/international (e.g., Emma, James, Sophia, Michael, Olivia, David). No Eastern/Asian names unless explicitly requested.
+
+3. Character Appearance: Western/international facial features and characteristics:
+   - Facial features: defined cheekbones, Western nose shapes, varied eye shapes
+   - Skin tones: Caucasian, Mediterranean, Latin American, African American, etc.
+   - Hair: natural Western colors and styles
+   - Eye colors: blue, green, brown, hazel, gray
+   - Body types: diverse Western builds
 
 INSTRUCTIONS:
 
 1. Generate a **story outline**:
-
    - title
    - theme
    - summary (3–5 sentences)
-   - chapters (up to 5 chapters)
-     - For each chapter:
-       - chapter_number
-       - chapter_title
-       - chapter_summary (50–100 words)
-       - key_events (3–5 key events per chapter, briefly described)
-       - major_conflicts
+   - chapters (up to 5), each with:
+     - chapter_number
+     - chapter_title
+     - chapter_summary (50–100 words)
+     - key_events (3–5 events)
+     - major_conflicts
 
-2. Generate a **detailed character list** for all major and supporting characters. For each character, provide extremely detailed information to facilitate AI image generation:
-
-   - id (unique identifier for reference)
-   - name
-   - role (protagonist, antagonist, side character, mentor, etc.)
+2. Generate a **character list**, each including:
+   - id
+   - name (Western)
+   - role (protagonist, antagonist, mentor, supporting, etc.)
    - age
    - gender
-   - appearance:
-       - ethnicity, height, body type, weight
-       - face shape, eyes (shape, color, size), eyebrows (shape, color)
-       - nose, lips, ears, teeth, distinguishing facial features
-       - skin tone, scars, freckles, tattoos, birthmarks
-       - hair color, hair style, length, texture
-       - posture, typical gestures, expressions
-   - clothing style:
-       - typical outfits, colors, accessories, shoes
-       - functional details (pockets, belts, gloves, tools)
-       - consistency with character's occupation, personality, or story setting
-   - personality traits
-   - background and motivations
-   - relationships with other characters
-   - special traits, identifiers, or props (items, voice style, habits)
-   - **visual_reference_prompt**: a detailed AI-friendly prompt describing the character including posture, expression, clothing, hairstyle, mood, lighting, environment cues—enough to generate consistent images across scenes
-   - preferred_art_style (choose from: realistic 3D anime, healing slice-of-life, urban romance, Western comic style, cyberpunk, watercolor fantasy, Ghibli-style healing)
+   - **appearance, clothing_style, personality_traits, background, relationships, special_traits**: **total text not exceeding 700 characters per character**. Prioritize essential visual, behavioral, and contextual details for AI generation.
+   - visual_reference_prompt: detailed AI-friendly prompt emphasizing Western/international facial features, posture, clothing, hairstyle, mood, lighting, environment cues—enough to generate consistent images.
+   - preferred_art_style: choose from realistic 3D anime, healing slice-of-life, urban romance, Western comic style, cyberpunk, watercolor fantasy, Ghibli-style healing
 
-3. Ensure all characters' **visual_reference_prompt and preferred_art_style** are sufficient to generate **consistent AI images** across multiple scenes, preserving posture, expression, clothing, hairstyle, and mood.
-
-4. Output strictly in **JSON format** with the following structure:
+3. Output strictly in **valid JSON** using this structure:
 
 {
   "title": "",
@@ -108,63 +102,73 @@ INSTRUCTIONS:
       "role": "",
       "age": "",
       "gender": "",
-      "appearance": "",
-      "clothing_style": "",
-      "personality_traits": "",
-      "background": "",
-      "relationships": "",
-      "special_traits": "",
+      "appearance": "",                   ← <= part of 700 char limit
+      "clothing_style": "",               ← <= part of 700 char limit
+      "personality_traits": "",           ← <= part of 700 char limit
+      "background": "",                   ← <= part of 700 char limit
+      "relationships": "",                ← <= part of 700 char limit
+      "special_traits": "",               ← <= part of 700 char limit
       "visual_reference_prompt": "",
       "preferred_art_style": ""
     }
   ]
 }
 
-**Requirements**:
-- Character descriptions must be as detailed as possible, including physical features, clothing, posture, typical gestures, and expressions.
-- Include both major and supporting characters.
-- The JSON must be valid and strictly follow the specified structure.`;
+REQUIREMENTS:
+- All character fields must reflect Western/international contexts.
+- Character names must be Western/international.
+- Ensure **appearance, clothing, personality, background, relationships, special traits combined do not exceed 700 characters** per character.
+- visual_reference_prompt must preserve all essential visual and posture details for AI image generation.
+- JSON must be valid and parsable.
+
+**LANGUAGE REQUIREMENT (CRITICAL)**:
+- All output content MUST be in English only. No Chinese, Japanese, or any other non-English characters in the generated content.
+- All field values (title, theme, summary, chapter titles, character names, descriptions, etc.) must be in English.
+- Do not translate or include any Chinese text in the output.`;
 
     const userPrompt = `STORY:
 
 ${story_text.trim()}
 
-Please generate the complete story outline and detailed character information according to the instructions above.`;
+Please generate the complete story outline and detailed character information according to the instructions above.
 
-    // 调用 DashScope Chat Completions API
+**IMPORTANT**: All output must be in English only. Do not include any Chinese characters or translations in the generated content.`;
+
+    // 调用 Laozhang Chat Completions API
+    const requestBody = {
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      temperature: 0.7,
+      max_tokens: 8000,
+    };
+
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://api.laozhang.ai/v1/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: "qwen-plus",
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt,
-            },
-            {
-              role: "user",
-              content: userPrompt,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 8000,
-        }),
+        body: JSON.stringify(requestBody),
       }
     );
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("DashScope API error:", response.status, errorText);
       return NextResponse.json(
         {
           success: false,
-          error: `DashScope API error: ${response.status} - ${errorText}`,
+          error: `Laozhang API error: ${response.status} - ${errorText}`,
         },
         { status: response.status }
       );
@@ -418,33 +422,21 @@ Please generate the complete story outline and detailed character information ac
     try {
       parsedData = JSON.parse(cleanedJson);
     } catch (parseError) {
-      console.error("JSON parse error:", parseError);
-      console.error("Raw content preview:", rawContent.substring(0, 500));
-      
       // 第一层修复：移除括号注释
       try {
         cleanedJson = removeCommentsInValues(cleanedJson);
         parsedData = JSON.parse(cleanedJson);
-        console.log("Successfully parsed after removing comments");
       } catch (secondError) {
-        console.error("Second parse attempt failed:", secondError);
-        
         // 第二层修复：清理控制字符和中文引号
         try {
           cleanedJson = cleanJsonString(cleanedJson);
           parsedData = JSON.parse(cleanedJson);
-          console.log("Successfully parsed after cleaning string");
         } catch (thirdError) {
-          console.error("Third parse attempt failed:", thirdError);
-          
           // 第三层修复：使用额外的 JSON 错误修复
           try {
             cleanedJson = fixJsonErrors(cleanedJson);
             parsedData = JSON.parse(cleanedJson);
-            console.log("Successfully parsed after fixing JSON errors");
           } catch (fourthError) {
-            console.error("Fourth parse attempt failed:", fourthError);
-            
             // 尝试提取错误位置信息
             let errorPosition = 4252; // 默认位置
             let errorLine = 115; // 默认行号
@@ -465,13 +457,6 @@ Please generate the complete story outline and detailed character information ac
             const startPos = Math.max(0, errorPosition - 200);
             const endPos = Math.min(cleanedJson.length, errorPosition + 200);
             const errorContext = cleanedJson.substring(startPos, endPos);
-            
-            console.error("Error position:", errorPosition, `(line ${errorLine}, column ${errorColumn})`);
-            console.error("Error context:", errorContext);
-            console.error("Cleaned JSON length:", cleanedJson.length);
-            console.error("Cleaned JSON preview (first 1000 chars):", cleanedJson.substring(0, 1000));
-            console.error("Cleaned JSON preview (last 1000 chars):", cleanedJson.substring(Math.max(0, cleanedJson.length - 1000)));
-            
             // 尝试最后一次修复：使用更激进的修复策略
             try {
               // 尝试修复常见的数组错误
@@ -483,10 +468,7 @@ Please generate the complete story outline and detailed character information ac
               
               // 尝试解析
               parsedData = JSON.parse(finalJson);
-              console.log("Successfully parsed after aggressive JSON fixing");
             } catch (fifthError) {
-              console.error("Fifth parse attempt (aggressive fix) also failed:", fifthError);
-              
               return NextResponse.json(
                 {
                   success: false,
@@ -527,31 +509,6 @@ Please generate the complete story outline and detailed character information ac
     // 提取故事大纲（不包含characters）
     const { characters: _, ...storyOutlineWithoutChars } = parsedData;
     const storyOutline = storyOutlineWithoutChars;
-
-    console.log("=== 保存到数据库 - 数据结构 ===");
-    console.log("parsedData keys:", Object.keys(parsedData));
-    console.log("parsedData.title:", parsedData.title);
-    console.log("parsedData.theme:", parsedData.theme);
-    console.log("parsedData.summary:", parsedData.summary?.substring(0, 100));
-    console.log("parsedData.chapters:", parsedData.chapters ? `exists (${parsedData.chapters.length} items)` : "null");
-    console.log("parsedData.characters:", parsedData.characters ? `exists (${parsedData.characters.length} items)` : "null");
-    console.log("---");
-    console.log("storyOutline keys (保存到 story_outline 字段):", Object.keys(storyOutline));
-    console.log("storyOutline.theme:", storyOutline.theme);
-    console.log("storyOutline.summary:", storyOutline.summary?.substring(0, 100));
-    console.log("storyOutline.chapters:", storyOutline.chapters ? `exists (${storyOutline.chapters.length} items)` : "null");
-    console.log("---");
-    console.log("characters (保存到 characters 字段):", characters.length, "items");
-    console.log("characters preview:", characters.slice(0, 2).map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      age: c.age,
-      gender: c.gender,
-    })));
-    console.log("================================");
-
-    console.log("Saving project to database, projectId:", projectId, "userId:", user.id);
-
     // 1. 创建或更新项目主表
     if (projectId) {
       // 更新现有项目
@@ -567,11 +524,8 @@ Please generate the complete story outline and detailed character information ac
         .single();
 
       if (updateError) {
-        console.error("Error updating project:", updateError);
-        
         // 如果项目不存在（PGRST116），创建新项目
         if (updateError.code === 'PGRST116' || updateError.message?.includes('0 rows')) {
-          console.log("Project not found, creating new project instead");
           projectId = null; // 重置 projectId，让下面的代码创建新项目
         } else {
           return NextResponse.json(
@@ -584,7 +538,6 @@ Please generate the complete story outline and detailed character information ac
         }
       } else if (updatedProject) {
         projectId = updatedProject.id;
-        console.log("Project updated successfully:", projectId);
       }
     }
     
@@ -608,7 +561,6 @@ Please generate the complete story outline and detailed character information ac
         .single();
 
       if (insertError) {
-        console.error("Error creating project:", insertError);
         return NextResponse.json(
           {
             success: false,
@@ -619,7 +571,6 @@ Please generate the complete story outline and detailed character information ac
       }
 
       if (!newProject || !newProject.id) {
-        console.error("Project created but no ID returned:", newProject);
         return NextResponse.json(
           {
             success: false,
@@ -630,7 +581,6 @@ Please generate the complete story outline and detailed character information ac
       }
 
       projectId = newProject.id;
-      console.log("Project created successfully with ID:", projectId);
     }
 
     // 2. 保存故事文本到 anim_story_scripts 表（upsert）
@@ -646,7 +596,6 @@ Please generate the complete story outline and detailed character information ac
       });
 
     if (scriptError) {
-      console.error("Error saving story script:", scriptError);
       return NextResponse.json(
         {
           success: false,
@@ -655,13 +604,7 @@ Please generate the complete story outline and detailed character information ac
         { status: 500 }
       );
     }
-    console.log("Story script saved successfully");
-
     // 3. 保存故事大纲和角色信息到 anim_story_outlines 表（upsert）
-    console.log("=== 保存到 anim_story_outlines 表 ===");
-    console.log("story_outline 字段内容:", JSON.stringify(storyOutline, null, 2).substring(0, 500));
-    console.log("characters 字段内容:", JSON.stringify(characters, null, 2).substring(0, 500));
-    
     const { error: outlineError } = await supabase
       .from("anim_story_outlines")
       .upsert({
@@ -674,7 +617,6 @@ Please generate the complete story outline and detailed character information ac
       });
 
     if (outlineError) {
-      console.error("Error saving story outline:", outlineError);
       return NextResponse.json(
         {
           success: false,
@@ -683,10 +625,6 @@ Please generate the complete story outline and detailed character information ac
         { status: 500 }
       );
     }
-    console.log("Story outline and characters saved successfully");
-    console.log("保存的 story_outline 字段包含:", Object.keys(storyOutline));
-    console.log("保存的 characters 字段包含:", characters.length, "个角色");
-
     return NextResponse.json({
       success: true,
       data: {
@@ -695,7 +633,6 @@ Please generate the complete story outline and detailed character information ac
       },
     });
   } catch (error) {
-    console.error("Error in create-project API:", error);
     return NextResponse.json(
       {
         success: false,

@@ -16,24 +16,21 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json(
-        { success: false, error: 'Unauthorized' },
+        { success: false, error: 'Unauthorized. Please login first.' },
         { status: 401 }
       );
     }
-
     // 获取当前用户的客户信息
     const customer = await getCurrentCustomer();
     if (!customer) {
       return NextResponse.json(
-        { success: false, error: 'Customer not found' },
+        { success: false, error: 'Customer not found. Please contact support.' },
         { status: 404 }
       );
     }
-
     // 解析请求体
     const body: CreatePaymentOrderRequest = await request.json();
     const { order_type, plan_name, credit_package_name, credits_amount } = body;
-
     // 验证订单类型和参数
     if (order_type === 'subscription') {
       if (!plan_name || !SUBSCRIPTION_PLANS[plan_name]) {
@@ -94,14 +91,17 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (orderError || !order) {
-      console.error('Error creating payment order:', orderError);
       return NextResponse.json(
-        { success: false, error: 'Failed to create payment order' },
+        { success: false, error: `Failed to create payment order: ${orderError?.message || 'Unknown error'}` },
         { status: 500 }
       );
     }
-
     // 调用Cream API创建支付订单
+    const productId = order_type === 'subscription' && plan_name
+      ? SUBSCRIPTION_PLANS[plan_name]?.product_id
+      : order_type === 'credits' && credit_package_name
+      ? CREDIT_PACKAGES[credit_package_name]?.product_id
+      : undefined;
     const creemResult = await createCreemOrder(
       order.id,
       amount,
@@ -113,15 +113,9 @@ export async function POST(request: NextRequest) {
         plan_name: order_type === 'subscription' ? plan_name : null,
         credit_package_name: order_type === 'credits' ? credit_package_name : null,
         credits_amount: creditsToAdd,
-        // 传递产品ID（订阅和积分包都需要）
-        product_id: order_type === 'subscription' && plan_name
-          ? SUBSCRIPTION_PLANS[plan_name]?.product_id
-          : order_type === 'credits' && credit_package_name
-          ? CREDIT_PACKAGES[credit_package_name]?.product_id
-          : undefined,
+        product_id: productId,
       }
     );
-
     if (!creemResult.success) {
       // 如果Cream订单创建失败，更新订单状态
       await supabase
@@ -130,7 +124,7 @@ export async function POST(request: NextRequest) {
         .eq('id', order.id);
 
       return NextResponse.json(
-        { success: false, error: creemResult.error || 'Failed to create Cream order' },
+        { success: false, error: creemResult.error || 'Failed to create payment order with payment provider' },
         { status: 500 }
       );
     }
@@ -153,7 +147,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Error in POST /api/payment/create-order:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

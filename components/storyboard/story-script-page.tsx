@@ -3,13 +3,15 @@
 import React, { useState, useEffect, useLayoutEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Sparkles, ArrowRight, Edit2, Check, X } from "lucide-react";
+import { Sparkles, ArrowRight, Edit2, Check, X, Diamond } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import Header from "@/components/header/header";
 import Footer from "@/components/footer/footer";
 import StoryboardNav from "./storyboard-nav";
 import { useToast } from "@/components/ui/toast-notification";
+import { checkCreditsBalance, deductCredits } from "@/lib/credits/deduct";
+import { InsufficientCreditsDialog } from "@/components/ui/insufficient-credits-dialog";
 
 interface StoryScriptPageProps {
   projectId?: string;
@@ -34,6 +36,13 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
   const [statusSettings, setStatusSettings] = useState(false); // Settings step completion status
   const [statusStoryboard, setStatusStoryboard] = useState(false); // Storyboard step completion status
   const [statusVideo, setStatusVideo] = useState(false); // Video creation step completion status
+  // 积分不足弹窗状态
+  const [showInsufficientCreditsDialog, setShowInsufficientCreditsDialog] = useState(false);
+  const [insufficientCreditsData, setInsufficientCreditsData] = useState<{
+    required: number;
+    current: number;
+    action: string;
+  } | null>(null);
 
   // Helper functions for safe sessionStorage access
   const getSessionStorage = (key: string): string | null => {
@@ -79,7 +88,15 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
       return;
     }
     
-    // 3. If no project ID, check script content JSON in sessionStorage
+    // 3. If no project ID in URL (creating new project), clear old project ID from sessionStorage
+    // This ensures we create a new project instead of updating an old one
+    if (!urlProjectId) {
+      removeSessionStorage("storyboardProjectId");
+      setSessionProjectId(null);
+      setCurrentProjectId(null);
+    }
+    
+    // 4. If no project ID, check script content JSON in sessionStorage
     const savedContentJson = getSessionStorage("storyboardContentJson");
     const savedContent = getSessionStorage("storyboardContent");
     
@@ -97,7 +114,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
           setHasProject(true);
         }
       } catch (e) {
-        console.error("Failed to parse saved content JSON:", e);
       }
     } else if (savedContent) {
       // Compatible with old format
@@ -106,7 +122,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
         setStoryContent(content);
         setHasProject(true);
       } catch (e) {
-        console.error("Failed to parse saved content:", e);
       }
     }
   }, [projectId, searchParams]);
@@ -139,7 +154,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
       
       // If project doesn't exist (404), clear project ID and show input box
       if (response.status === 404) {
-        console.warn("Project not found:", id);
         setCurrentProjectId(null);
         removeSessionStorage("storyboardProjectId");
         setSessionProjectId(null);
@@ -174,7 +188,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
         }
       }
     } catch (error) {
-      console.error("Error loading project:", error);
     }
   };
 
@@ -188,20 +201,37 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
     setStoryContent(null);
 
     try {
+      // 打印客户端请求参数（浏览器控制台）
+      const requestData = {
+        prompt: ideaText.trim(),
+        style: "2d", // Default style, can be obtained from project settings later
+      };
       const response = await fetch("/api/storyboard/generate-content", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          prompt: ideaText.trim(),
-          style: "2d", // Default style, can be obtained from project settings later
-        }),
+        body: JSON.stringify(requestData),
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate script");
+        // Check if response is JSON
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to generate script");
+        } else {
+          // Response is HTML (error page)
+          const errorText = await response.text();
+          throw new Error(`Server error (${response.status}): Please try again later`);
+        }
+      }
+
+      // Check if response is JSON before parsing
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const errorText = await response.text();
+        throw new Error("Invalid response from server. Please try again.");
       }
 
       const result = await response.json();
@@ -227,7 +257,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
         // This avoids creating unnecessary projects when there's no project ID
       }
     } catch (error) {
-      console.error("Error generating story:", error);
       showError(error instanceof Error ? error.message : "Failed to generate script");
     } finally {
       setIsGenerating(false);
@@ -291,7 +320,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
 
       return finalProjectId;
     } catch (error) {
-      console.error("Error saving project to database:", error);
       return null;
     }
   };
@@ -300,10 +328,41 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
     if (!storyContent) return;
 
     try {
+      // Check credits balance before proceeding
+      const creditsCheck = await checkCreditsBalance(2);
+      if (!creditsCheck.sufficient) {
+        setInsufficientCreditsData({
+          required: 2,
+          current: creditsCheck.balance || 0,
+          action: "proceed to next step"
+        });
+        setShowInsufficientCreditsDialog(true);
+        return;
+      }
+
       setIsCreatingProject(true);
 
+      // Deduct credits before creating project
+      const deductResult = await deductCredits(
+        2,
+        "Proceed to project settings",
+        { type: "story_script_next_step", project_id: currentProjectId || sessionProjectId }
+      );
+
+      if (!deductResult.success) {
+        showError("Failed to deduct credits. Please try again.");
+        setIsCreatingProject(false);
+        return;
+      }
+
+      // Trigger credits update event to refresh header balance
+      window.dispatchEvent(new Event("credits-updated"));
+
       // Call create project API to generate story outline and character information
-      const existingProjectId = currentProjectId || sessionProjectId;
+      // Only use existing project ID if it comes from URL (editing existing project)
+      // If no URL projectId, we're creating a new project, so don't pass project_id
+      const urlProjectId = searchParams.get("projectId") || projectId;
+      const existingProjectId = urlProjectId ? (currentProjectId || sessionProjectId) : null;
       
       const response = await fetch("/api/storyboard/create-project", {
         method: "POST",
@@ -317,11 +376,55 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
       });
 
       if (!response.ok) {
-        const error = await response.json();
+        let error;
+        try {
+          const errorText = await response.text();
+          try {
+            error = JSON.parse(errorText);
+          } catch (parseError) {
+            // If JSON parsing fails, use the raw text as error message
+            throw new Error(errorText.substring(0, 200) || `HTTP ${response.status}: ${response.statusText}`);
+          }
+        } catch (textError) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
         throw new Error(error.error || "Failed to create project");
       }
 
-      const result = await response.json();
+      // Parse response with better error handling
+      let result;
+      try {
+        const responseText = await response.text();
+        try {
+          result = JSON.parse(responseText);
+        } catch (parseError) {
+          // Try to find the problematic character position
+          if (parseError instanceof SyntaxError && parseError.message.includes("position")) {
+            const match = parseError.message.match(/position (\d+)/);
+            if (match) {
+              const pos = parseInt(match[1]);
+              const start = Math.max(0, pos - 50);
+              const end = Math.min(responseText.length, pos + 50);
+            }
+          }
+          // Create a more detailed error message
+          let errorMessage = `Failed to parse server response: ${parseError instanceof Error ? parseError.message : "Invalid JSON format"}`;
+          
+          // If the error includes position information, add it to the message
+          if (parseError instanceof SyntaxError && parseError.message.includes("position")) {
+            const match = parseError.message.match(/position (\d+)/);
+            if (match) {
+              const pos = parseInt(match[1]);
+              errorMessage += ` (at position ${pos})`;
+            }
+          }
+          
+          // Log the problematic area for debugging
+          throw new Error(errorMessage);
+        }
+      } catch (textError) {
+        throw new Error(`Failed to read server response: ${textError instanceof Error ? textError.message : "Unknown error"}`);
+      }
 
       if (result.success && result.data) {
         const projectId = result.data.project_id;
@@ -340,6 +443,24 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
           setSessionStorage("storyboardOutline", JSON.stringify(result.data.story_outline));
         }
         
+        // 更新故事剧本步骤完成状态
+        try {
+          const statusResponse = await fetch('/api/storyboard/project-step-status', {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              project_id: projectId,
+              step_script: true,
+            }),
+          });
+          if (statusResponse.ok) {
+          }
+        } catch (error) {
+          // 不阻止导航，即使状态更新失败也继续
+        }
+        
         // Wait a short time to ensure database write completes, then navigate to project settings page
         await new Promise(resolve => setTimeout(resolve, 500));
         
@@ -349,7 +470,6 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
         throw new Error(result.error || "Failed to create project");
       }
     } catch (error) {
-      console.error("Error in handleNextStep:", error);
       showError(error instanceof Error ? error.message : "Failed to create project");
       setIsCreatingProject(false);
     }
@@ -389,7 +509,10 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                   exit={{ opacity: 0 }}
                   className="space-y-6"
                 >
-                  <h2 className="text-3xl md:text-4xl font-bold mb-8 text-center">
+                  <h1 className="text-3xl md:text-4xl font-bold mb-8 text-center">
+                    AI Storyboard Generator
+                  </h1>
+                  <h2 className="text-xl md:text-2xl font-semibold mb-6 text-center text-gray-300">
                     Hi! Video maker, share your ideas or creative concepts
                   </h2>
 
@@ -477,6 +600,8 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                 >
                   {/* 固定标题栏 - 包含标题和下一步按钮，移出内容区域 */}
                   <div className="flex-shrink-0 bg-gray-900 pb-4 border-b border-gray-800 mb-4">
+                    {/* SEO H1 - 固定用于SEO */}
+                    <h1 className="sr-only">AI Storyboard Generator</h1>
                     {editingField === "title" ? (
                       <div className="flex gap-2 items-start">
                         <Textarea
@@ -518,7 +643,7 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-4">
-                        <div
+                        <h2
                           className="text-3xl md:text-4xl font-bold cursor-pointer hover:text-[#FFDA2A] transition-colors flex items-center gap-2 group flex-1"
                           onClick={() => {
                             setEditingTitle(storyContent.title);
@@ -527,7 +652,7 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                         >
                           {storyContent.title}
                           <Edit2 className="w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
+                        </h2>
                         {/* 下一步按钮在标题右侧 */}
                         <motion.div
                           whileHover={!isCreatingProject && editingField === null ? { scale: 1.05 } : {}}
@@ -554,6 +679,10 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
                             ) : (
                               <>
                                 Next Step
+                                <div className="flex items-center gap-1 ml-1">
+                                  <Diamond className="w-4 h-4" />
+                                  <span className="text-sm font-semibold">2</span>
+                                </div>
                                 <ArrowRight className="w-5 h-5" />
                               </>
                             )}
@@ -626,6 +755,17 @@ export default function StoryScriptPage({ projectId }: StoryScriptPageProps) {
           </motion.div>
         </div>
       </div>
+      
+      {/* Insufficient Credits Dialog */}
+      {insufficientCreditsData && (
+        <InsufficientCreditsDialog
+          open={showInsufficientCreditsDialog}
+          onOpenChange={setShowInsufficientCreditsDialog}
+          requiredCredits={insufficientCreditsData.required}
+          currentBalance={insufficientCreditsData.current}
+          action={insufficientCreditsData.action}
+        />
+      )}
     </div>
   );
 }

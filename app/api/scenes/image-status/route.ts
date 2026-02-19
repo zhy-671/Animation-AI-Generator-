@@ -36,7 +36,6 @@ export async function GET(request: NextRequest) {
             const filename = `${userId}/scene-${Date.now()}-${taskId}-${index}.png`;
             return await tosClient.uploadImageFromUrl(imageUrl, filename);
           } catch (uploadError) {
-            console.error(`Error uploading image ${index + 1}:`, uploadError);
             // 如果上传失败，返回原始URL
             return imageUrl;
           }
@@ -44,7 +43,6 @@ export async function GET(request: NextRequest) {
         
         uploadedImageUrls = await Promise.all(uploadPromises);
       } catch (uploadError) {
-        console.error("Error uploading images:", uploadError);
         // 如果批量上传失败，返回原始URLs
         uploadedImageUrls = status.images.slice(0, 4);
       }
@@ -61,7 +59,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error getting image status:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to get image status",

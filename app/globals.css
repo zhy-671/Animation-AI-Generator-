@@ -2,6 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+  @keyframes waveMove {
+  0%, 100% {
+    transform: translateX(-20px);
+  }
+  50% {
+    transform: translateX(20px);
+  }
+}
+
+.wave-path-1 {
+  animation: waveMove 3s ease-in-out infinite;
+}
+
+.wave-path-2 {
+  animation: waveMove 3s ease-in-out infinite 0.6s;
+}
+
+.wave-path-3 {
+  animation: waveMove 3s ease-in-out infinite 1.2s;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -55,6 +76,42 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* Shimmer animation - progressive shimmer effect */
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%) skewX(-15deg);
+    }
+    100% {
+      transform: translateX(200%) skewX(-15deg);
+    }
+  }
+
+  /* Flow animation - flowing wave effect */
+  @keyframes flow {
+    0% {
+      transform: translateX(-100%) translateY(-100%) rotate(0deg);
+      opacity: 0.2;
+    }
+    50% {
+      transform: translateX(50%) translateY(50%) rotate(180deg);
+      opacity: 0.4;
+    }
+    100% {
+      transform: translateX(200%) translateY(200%) rotate(360deg);
+      opacity: 0.2;
+    }
+  }
+
+  .animate-shimmer {
+    animation: shimmer 2.5s ease-in-out infinite;
+  }
+
+  .animate-flow {
+    animation: flow 5s ease-in-out infinite;
   }
 }
 

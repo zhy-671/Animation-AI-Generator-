@@ -58,7 +58,6 @@ class DashScopeClient {
     this.tasksBaseUrl = "https://dashscope.aliyuncs.com/api/v1/tasks"; // 任务查询端点
     
     if (!this.apiKey) {
-      console.warn("DASHSCOPE_API_KEY is not set");
     }
   }
 
@@ -193,18 +192,6 @@ class DashScopeClient {
       };
 
       // 打印最终发送给DashScope API的完整请求
-      console.log("=== 发送给DashScope API的最终请求 ===");
-      console.log("模型 (model):", model);
-      console.log("输入 (input):", JSON.stringify(input, null, 2));
-      console.log("参数 (parameters):", JSON.stringify(parameters, null, 2));
-      console.log("完整请求体:", JSON.stringify(requestBody, null, 2));
-      console.log("提示词内容 (input.prompt):", input.prompt);
-      console.log("图片URL (input.img_url):", input.img_url);
-      console.log("分辨率 (parameters.resolution):", parameters.resolution);
-      console.log("时长 (parameters.duration):", parameters.duration);
-      console.log("音频 (parameters.audio):", parameters.audio);
-      console.log("提示词扩展 (parameters.prompt_extend):", parameters.prompt_extend);
-
       const response = await fetch(`${this.baseUrl}/video-synthesis`, {
         method: "POST",
         headers: {
@@ -217,11 +204,6 @@ class DashScopeClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("DashScope API request details:", {
-          url: `${this.baseUrl}/video-synthesis`,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`DashScope API error: ${response.status} - ${errorText}`);
       }
 
@@ -239,7 +221,6 @@ class DashScopeClient {
         requestId: data.request_id || "",
       };
     } catch (error) {
-      console.error("Error generating video:", error);
       throw error;
     }
   }
@@ -263,18 +244,10 @@ class DashScopeClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error("DashScope status API error:", {
-          url: endpoint,
-          status: response.status,
-          error: errorText,
-        });
         throw new Error(`DashScope API error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json();
-      
-      console.log("DashScope status response:", JSON.stringify(data, null, 2));
-      
       // DashScope 状态查询返回格式：
       // {
       //   "request_id": "...",
@@ -315,7 +288,6 @@ class DashScopeClient {
         message: data.message || data.output?.message || data.error?.message,
       };
     } catch (error) {
-      console.error("Error getting video status:", error);
       throw error;
     }
   }

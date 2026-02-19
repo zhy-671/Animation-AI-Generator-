@@ -50,17 +50,13 @@ export async function POST(request: NextRequest) {
         const isTosUrl = imageUrl.includes('tos-') || imageUrl.includes('.volces.com') || imageUrl.includes('volces.com');
         
         if (isTosUrl) {
-          console.log("Detected TOS URL, generating presigned URL for DashScope API:", imageUrl);
           // 生成预签名 URL（有效期 7 天，确保视频生成过程中不会过期）
           // 视频生成可能需要较长时间，所以使用较长的有效期
           // getImagePresignedUrl 内部会处理错误，如果失败会返回原始 URL
           finalImageUrl = await tosClient.getImagePresignedUrl(imageUrl, 7 * 24 * 3600); // 7 天 = 604800 秒
-          console.log("Generated presigned URL:", finalImageUrl);
         } else {
-          console.log("Not a TOS URL, using original URL:", imageUrl);
         }
       } catch (presignError) {
-        console.error("Error generating presigned URL, using original URL:", presignError);
         // 如果生成预签名 URL 失败，使用原始 URL（可能 bucket 是公开的）
         finalImageUrl = imageUrl;
       }
@@ -84,15 +80,6 @@ export async function POST(request: NextRequest) {
     };
 
     // 打印API路由接收到的参数
-    console.log("=== API路由接收到的视频生成参数 ===");
-    console.log("提示词 (prompt):", prompt);
-    console.log("画面描述 (sceneDetail):", sceneDetail);
-    console.log("图片URL (imageUrl):", finalImageUrl || imageUrl);
-    console.log("模型 (model):", model);
-    console.log("分辨率 (resolution):", resolution);
-    console.log("时长 (duration):", duration);
-    console.log("完整请求对象:", JSON.stringify(videoRequest, null, 2));
-
     // 提交视频生成任务
     const result = await dashScopeClient.generateVideo(videoRequest);
 
@@ -104,7 +91,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error("Error generating video:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to generate video",
@@ -129,9 +115,6 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
-
-    console.log("Querying video status for taskId:", taskId);
-
     const status = await dashScopeClient.getVideoStatus(taskId);
 
     return NextResponse.json({
@@ -139,7 +122,6 @@ export async function GET(request: NextRequest) {
       data: status,
     });
   } catch (error) {
-    console.error("Error getting video status:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to get video status",
